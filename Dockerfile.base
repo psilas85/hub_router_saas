@@ -1,0 +1,38 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Instala compiladores, bibliotecas numéricas e suporte a locale pt_BR
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    build-essential \
+    python3-dev \
+    libopenblas-dev \
+    liblapack-dev \
+    locales \
+    wget \
+    unzip \
+    curl \
+    gnupg \
+    ca-certificates \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && sed -i '/pt_BR.UTF-8/s/^# //g' /etc/locale.gen \
+    && locale-gen
+
+# Define o locale como padrão
+ENV LANG=pt_BR.UTF-8
+ENV LANGUAGE=pt_BR:pt
+ENV LC_ALL=pt_BR.UTF-8
+
+# Copia requirements.txt para instalar dependências Python
+COPY requirements.txt .
+
+# Instala dependências Python e força versão correta do PyJWT
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip uninstall -y jwt || true && \
+    pip install --force-reinstall PyJWT==2.10.1
+
+CMD ["python"]

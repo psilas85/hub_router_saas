@@ -1,0 +1,93 @@
+
+==============================
+REGRAS DE NEGÓCIO - SIMULAÇÃO
+==============================
+
+------------------------------
+1. MÓDULO: CLUSTERIZATION
+------------------------------
+
+✅ REGRAS IMPLEMENTADAS:
+
+- Algoritmo principal: KMeans
+- Clusterização por coordenadas (latitude/longitude) com random_state fixo
+- Para cada cluster:
+  • Cálculo do centro mais denso (ponto com maior densidade de entregas)
+  • Ajuste do centro para área urbana próxima usando reverse geocoding
+  • Busca de novas coordenadas via API/caching
+- Fusão de clusters pequenos:
+  • Clusters com menos de N entregas (default: 10) são fundidos
+  • Escolha do cluster mais próximo (distância euclidiana entre centros)
+  • Após fusão, centros são recalculados e revalidados
+- Persistência:
+  • Salva `entregas_clusterizadas` com tenant_id, envio_data, k_clusters, simulation_id
+  • Gera e salva resumo por cluster (peso, volumes, valor, cidade)
+
+⚠️ PONTOS DE MELHORIA:
+- Heurísticas alternativas de definição de `k`
+- Análise automática de outliers espaciais
+- Cálculo do aproveitamento do cluster em termos de eficiência espacial
+
+
+------------------------------
+2. MÓDULO: LAST-MILE ROUTING
+------------------------------
+
+✅ REGRAS IMPLEMENTADAS:
+
+- Roteirização feita para cada cluster individual
+- Busca coordenadas atualizadas para cada entrega (via cache)
+- Heurística `k_sub` para subdivisão de rotas:
+  • Usa método do cotovelo (elbow) para sugerir subdivisão dentro do cluster
+  • Aplica KMeans dentro do cluster com até 15 tentativas
+- Para cada subcluster:
+  • Divisão por capacidade de veículo e tempo máximo de rota (via `subdividir_subcluster_por_veiculo`)
+  • Sequenciamento com heurística de "ferradura"
+  • Roteirização com cache + Google Maps API
+- Cálculo do tempo total da rota:
+  • Tempo de trânsito entre pontos
+  • Tempo de parada: 10 min (peso ≤ limite) ou 20 min (peso > limite)
+  • Tempo de descarga: 0.4 min por volume
+  • Tempo de retorno ao centro do cluster
+- Atribuição do tipo de veículo por peso total
+- Geração de detalhes por entrega (ordem, coordenadas, rota, tipo de veículo)
+- Persistência:
+  • Salva entregas da rota em `rotas_last_mile`
+  • Salva resumo por rota em `resumo_rotas_last_mile`
+
+⚠️ PONTOS DE MELHORIA:
+- Incluir cálculo de aproveitamento (capacidade usada vs disponível)
+- Sinalizar entregas que causam violação mesmo isoladas
+- Melhorar a distribuição em clusters densos com variação de peso
+
+
+------------------------------
+3. MÓDULO: TRANSFER ROUTING
+------------------------------
+
+✅ REGRAS IMPLEMENTADAS:
+
+- Consulta de entregas clusterizadas por tenant, data e k_clusters
+- Agrupamento por cluster com somatório de peso, volumes, valores
+- Fracionamento dos clusters com `expandir_pontos_por_capacidade_veiculo`
+  • Garante que nenhum ponto ultrapasse capacidade máxima dos veículos
+- Planejamento de rotas com Savings Algorithm:
+  • Gera rotas otimizadas a partir do hub para os clusters
+  • Considera peso, tempo, volumes e capacidades
+  • Roteirização com cache/API via função `obter_rota_real`
+  • Validação: rota precisa começar e terminar no hub
+- Cálculo da distância total e tempo total de cada rota
+- Geração de coordenadas sequenciais da rota
+- Determinação do tipo de veículo por peso total
+- Geração de:
+  • `TransferenciaResumo` (resumo de rota)
+  • `detalhes_transferencias` (CTEs por rota)
+- Persistência:
+  • Salva `rotas_transferencia`
+  • Salva `detalhes_transferencias`
+
+⚠️ PONTOS DE MELHORIA:
+- Heurística alternativa para rotas que violam limite de tempo/peso
+- Identificação de clusters que causam excesso de rotas
+- Cálculo de aproveitamento de rota (volume útil/km percorrido)
+

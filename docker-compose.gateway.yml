@@ -1,0 +1,21 @@
+services:
+  api_gateway:
+    container_name: api_gateway   # 👈 nome fixo para resolver no DNS
+    build:
+      context: ./src/api_gateway
+      dockerfile: Dockerfile.api_gateway
+    ports:
+      - "8010:8000"
+    volumes:
+      - ./src:/app/src   # 👈 monta o src inteiro
+      - ./exports:/app/exports
+    env_file:
+      - ./src/api_gateway/.env
+    environment:
+      - PYTHONPATH=/app/src   # 👈 garante que todos os pacotes sejam encontrados
+    networks:
+      - hub_router_network   # 👈 força na rede correta
+
+networks:
+  hub_router_network:
+    external: true

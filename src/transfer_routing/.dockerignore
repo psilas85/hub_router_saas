@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.log
+*.db
+*.xlsx
+*.csv
+*.json
+*.png
+output/
+data_input/
+cache_routes/
+.env
+postgres_data/
+

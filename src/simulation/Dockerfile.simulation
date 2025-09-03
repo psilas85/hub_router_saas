@@ -1,0 +1,17 @@
+FROM psilas85/hub_router-base:latest
+
+# Define o diretório de trabalho
+WORKDIR /app
+
+# Copia o código fonte
+COPY src/ /app/src
+
+# Variável de ambiente para encontrar módulos Python
+ENV PYTHONPATH=/app/src
+
+# Porta padrão do serviço de simulação
+EXPOSE 8006
+
+# Comando de inicialização do serviço de simulação
+CMD ["uvicorn", "simulation.api.main_simulation_service:app", "--host", "0.0.0.0", "--port", "8006"]
+

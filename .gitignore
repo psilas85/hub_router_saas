@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs e bancos locais
+*.log
+*.db
+*.sqlite*
+
+# Artefatos e relatórios
+output/
+exports/
+cache_routes/
+data/output/
+models/
+
+# Dados brutos e sensíveis
+src/data_input/tenants/
+src/data_input/data_input/
+osrm-data/
+*.osrm*
+
+# Tokens e credenciais
+.token
+token.txt
+
+# Configuração local
+.env
+.vscode/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Node / Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

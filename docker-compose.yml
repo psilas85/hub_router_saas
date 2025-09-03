@@ -1,0 +1,303 @@
+version: "3.9"
+
+services:
+
+  base_image:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    image: psilas85/hub_router-base:latest
+
+  postgres:
+    image: postgis/postgis:17-3.4
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Psilas@85
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - hub_router_network
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  authentication_service:
+    build:
+      context: .
+      dockerfile: src/authentication/Dockerfile.authentication
+    image: psilas85/hub_router-authentication:latest
+    ports:
+      - "8001:8000"
+    volumes: # Apenas para desenvolvimento
+      - ./src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app/src
+      - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
+    env_file:
+      - ./src/authentication/.env   # ✅ Adicionado para manter padrão
+    networks:
+      - hub_router_network
+    restart: always
+
+
+  clusterization_service:
+    build:
+      context: .
+      dockerfile: src/clusterization/Dockerfile.clusterization
+    image: psilas85/hub_router-clusterization:latest
+    ports:
+      - "8012:8001"
+    volumes:
+      - ./src:/app/src
+      - ./exports/clusterization:/app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app/src
+    env_file:
+      - ./src/clusterization/.env
+    networks:
+      - hub_router_network
+    restart: always
+
+  last_mile_routing_service:
+    build:
+      context: .
+      dockerfile: src/last_mile_routing/Dockerfile.last_mile_routing
+    image: psilas85/hub_router-last_mile_routing:latest
+    ports:
+      - "8003:8002"
+    volumes:
+      - ./src:/app/src
+      - ./exports:/app/exports
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app/src
+    env_file:
+      - ./src/last_mile_routing/.env
+    networks:
+      - hub_router_network
+    restart: always
+
+  transfer_routing_service:
+    build:
+      context: .
+      dockerfile: src/transfer_routing/Dockerfile.transfer_routing
+    image: psilas85/hub_router-transfer_routing:latest
+    ports:
+      - "8004:8003"
+    volumes:
+      - ./src:/app/src
+      - ./exports/transfer_routing:/app/output
+    env_file:
+      - ./src/transfer_routing/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app/src
+    networks:
+      - hub_router_network
+    restart: always
+
+  costs_last_mile_service:
+    build:
+      context: .
+      dockerfile: src/costs_last_mile/Dockerfile.costs_last_mile
+    image: psilas85/hub_router-costs_last_mile:latest
+    ports:
+      - "8005:8004"
+    volumes:
+      - ./src:/app/src
+      - ./exports/costs_last_mile:/app/exports/costs_last_mile
+    env_file:
+      - ./src/costs_last_mile/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app/src
+    networks:
+      - hub_router_network
+    restart: always
+
+  costs_transfer_service:
+    build:
+      context: .
+      dockerfile: src/costs_transfer/Dockerfile.costs_transfer
+    image: psilas85/hub_router-costs_transfer:latest
+    ports:
+      - "8006:8005"
+    volumes:
+      - ./src:/app/src
+      - ./exports/costs_transfer:/app/exports/costs_transfer   # 👈 ajuste aqui
+    env_file:
+      - ./src/costs_transfer/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app/src
+    networks:
+      - hub_router_network
+    restart: always
+
+
+  simulation_service:
+    build:
+      context: .
+      dockerfile: src/simulation/Dockerfile.simulation
+    image: psilas85/hub_router-simulation:latest
+    ports:
+      - "8007:8006"
+    volumes:
+      - ./src:/app/src
+      - ./exports/simulation:/app/exports/simulation
+    env_file:
+      - ./src/simulation/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app/src
+    networks:
+      - hub_router_network
+    restart: always
+
+  data_input_service:
+    build:
+      context: .
+      dockerfile: src/data_input/Dockerfile.data_input
+    image: psilas85/hub_router-data_input:latest
+    ports:
+      - "8008:8008"
+    volumes:
+      - ./src:/app/src
+      - ./src/data_input/tenants:/app/src/data_input/tenants
+    env_file:
+      - ./src/data_input/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=/app/src
+      - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
+    networks:
+      - hub_router_network
+    restart: always
+
+  exploratory_analysis_api_service:
+    build:
+      context: .
+      dockerfile: src/exploratory_analysis/Dockerfile.exploratory_api
+    image: psilas85/hub_router-exploratory_api:latest
+    ports:
+      - "8013:8010"     # 🔁 antes era "8010:8010"
+    volumes:                          # 👇 adicionar
+      - ./src:/app/src
+      - ./exports/exploratory_analysis:/app/exploratory_analysis/output
+    env_file:
+      - ./src/exploratory_analysis/.env
+    networks:
+      - hub_router_network
+    depends_on:
+      - authentication_service
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/"]  # mantém 8010 (porta interna)
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+
+  exploratory_analysis_ui_service:
+    build:
+      context: .
+      dockerfile: src/exploratory_analysis/Dockerfile.exploratory_ui
+    image: psilas85/hub_router-exploratory_ui:latest
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./exports/exploratory_analysis:/app/exploratory_analysis/output   # 👈 monta a pasta de gráficos/relatórios
+    networks:
+      - hub_router_network
+    depends_on:
+      - authentication_service
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8501 | grep -q '200'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: osrm_service
+    command: osrm-routed --algorithm ch /data/nordeste-latest.osrm
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./osrm-data:/data
+    networks:
+      - hub_router_network
+    restart: always
+
+
+  ml_pipeline_service:
+    build:
+      context: .
+      dockerfile: src/ml_pipeline/Dockerfile.ml_pipeline
+    image: psilas85/hub_router-ml_pipeline:latest
+    container_name: hub_router_101-ml_pipeline_service
+    ports:
+      - "8011:8011"
+    volumes:
+      - ./src:/app/src
+      - ./models:/app/models                       # ✅ persistência dos modelos
+      - ./exports/ml_pipeline:/app/exports/ml_pipeline   # ✅ novos exports (forecasts e planos)
+    env_file:
+      - ./src/ml_pipeline/.env   # carrega POSTGRES_* e SERVICE_PORT
+    environment:
+      - PYTHONPATH=/app/src      # garante PYTHONPATH mesmo se env_file não aplicar
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - hub_router_network
+
+
+
+  frontend_service:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    image: psilas85/hub_router-frontend:latest
+    ports:
+      - "80:80"
+    volumes:
+      - ./exports:/app/exports
+    networks:
+      - hub_router_network
+    restart: always
+
+
+networks:
+  hub_router_network:
+    external: true
+
+volumes:
+  postgres_data:

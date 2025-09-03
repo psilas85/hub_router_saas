@@ -1,0 +1,2 @@
+3bd591c2805fbd2ed13acce09ba2e48f1c42d286 1913412126 brazil-latest.osm.pbf
+7e7efd273ba1a2c81a4cc759853fb0855e44ba64 411664108 nordeste-latest.osm.pbf

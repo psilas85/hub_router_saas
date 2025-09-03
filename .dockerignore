@@ -1,0 +1,43 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ==========================
+# Logs e bancos locais
+# ==========================
+*.log
+*.db
+*.sqlite*
+
+# ==========================
+# Pastas de saída e artefatos
+# ==========================
+output/
+exports/
+cache_routes/
+data/output/
+postgres_data/
+
+# ==========================
+# Dados de input (não devem ir para o build)
+# ==========================
+data/input/
+
+# ==========================
+# Configurações locais
+# ==========================
+.env
+.vscode/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ==========================
+# Mapas grandes (OSRM)
+# ==========================
+osrm-data/*.osm.pbf

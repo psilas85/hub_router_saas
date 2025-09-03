@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.log
+*.db
+*.xlsx
+*.csv
+*.json
+*.png
+cache_routes/
+postgres_data/
+

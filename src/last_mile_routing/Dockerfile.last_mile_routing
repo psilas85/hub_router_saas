@@ -1,0 +1,35 @@
+FROM psilas85/hub_router-base:latest
+
+# Define diretório de trabalho
+WORKDIR /app
+
+# Copia o código fonte
+COPY src/ /app/src
+
+# Variável de ambiente para encontrar módulos Python
+ENV PYTHONPATH=/app/src
+
+# Porta padrão do serviço
+EXPOSE 8002
+
+# 🛠 Instala wkhtmltopdf a partir do release oficial
+USER root
+# Instala dependências do wkhtmltopdf
+USER root
+USER root
+RUN apt-get update && apt-get install -y \
+    xfonts-75dpi \
+    xfonts-base \
+    wget \
+ && wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6-1/wkhtmltox_0.12.6-1.bionic_amd64.deb -O wkhtmltox.deb \
+ && dpkg -i wkhtmltox.deb || true \
+ && apt-get install -f -y \
+ && rm -rf /var/lib/apt/lists/* wkhtmltox.deb
+
+
+
+
+
+# Comando de inicialização do serviço de roteirização last-mile
+CMD ["uvicorn", "last_mile_routing.api.main:app", "--host", "0.0.0.0", "--port", "8002"]
+

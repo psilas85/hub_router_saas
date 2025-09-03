@@ -1,0 +1,21 @@
+FROM psilas85/hub_router-base:latest
+
+WORKDIR /app
+
+# Copia apenas requirements para cache do build
+COPY src/ml_pipeline/requirements.txt /app/ml_pipeline/requirements.txt
+RUN pip install --no-cache-dir -r /app/ml_pipeline/requirements.txt
+
+# Copia todo código fonte
+COPY src/ /app/src
+
+# Adiciona src no PYTHONPATH para evitar import errors
+ENV PYTHONPATH=/app/src
+
+# Porta default, pode ser sobrescrita no docker-compose ou .env
+ENV SERVICE_PORT=8011
+
+EXPOSE 8011
+
+# Usa a porta da env (se alterada no .env, não precisa rebuildar imagem)
+CMD ["sh", "-c", "uvicorn ml_pipeline.api.main_ml_service:app --host 0.0.0.0 --port ${SERVICE_PORT}"]

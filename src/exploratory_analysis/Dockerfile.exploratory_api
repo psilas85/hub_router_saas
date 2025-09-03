@@ -1,0 +1,22 @@
+FROM psilas85/hub_router-base:latest
+
+WORKDIR /app
+
+# Copia TODO o código
+COPY src/ /app/src
+
+ENV PYTHONPATH=/app/src
+
+# Instala curl para healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Porta interna da API
+EXPOSE 8010
+
+# Healthcheck para verificar se a API está respondendo
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8010/ || exit 1
+
+
+# Serviço FastAPI para processar a análise
+CMD ["uvicorn", "exploratory_analysis.api.main:app", "--host", "0.0.0.0", "--port", "8010"]

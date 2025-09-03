@@ -1,0 +1,135 @@
+# 📦 HubRouter - Onboarding para Tenants (Clientes)
+
+Bem-vindo ao sistema HubRouter! Este guia rápido ajudará você a estruturar corretamente seus dados, realizar o upload e rodar o sistema para visualizar os clusters de entrega gerados.
+
+---
+
+## ✅ Etapa 1: Estrutura de Pastas por Tenant
+
+Ao cadastrar um novo cliente (tenant), você deve criar as seguintes pastas:
+
+```
+clusterization/
+  └── tenants/
+       └── <tenant_id>/
+            ├── input/
+            │    └── dados_input.csv   # Arquivo de entrada
+            ├── output/               # Saída com registros inválidos (se houver)
+            └── maps/                 # Mapas HTML gerados
+```
+
+O sistema criará automaticamente essas pastas ao rodar os scripts principais ou o atalho de upload.
+
+---
+
+## 📝 Etapa 2: Estrutura do CSV de Entrada
+
+O arquivo `dados_input.csv` deve estar no diretório:
+```
+tenants/<tenant_id>/input/dados_input.csv
+```
+
+### Colunas obrigatórias (mínimas para processamento):
+| Coluna Original         | Significado                        |
+|-------------------------|-------------------------------------|
+| Filial                  | Nome da transportadora              |
+| Remetente               | Nome do remetente                   |
+| CNPJ/CPF                | CNPJ do remetente                   |
+| Origem / UF Origem      | Cidade/UF de origem                 |
+| Destinatário            | Nome do destinatário                |
+| CNPJ/CPF.1              | CNPJ do destinatário                |
+| Endereço entrega        | Rua/Avenida da entrega              |
+| Bairro / Cidade / UF Entrega | Informações do destino          |
+| CEP                     | CEP da entrega                      |
+| NF                      | Número da nota fiscal               |
+| Volumes                 | Quantidade de volumes               |
+| Kg Taxado               | Peso total                          |
+| Valor NF / Valor Frete  | Valores em reais                    |
+| Doc/Min                 | Identificador do CT-e               |
+| Data Frete              | Data de envio da carga              |
+
+> O delimitador do arquivo deve ser `;` (ponto e vírgula) e a codificação deve ser UTF-8.
+
+---
+
+## ⚙️ Etapa 3A: Executar o Pré-Processamento Manual
+
+No terminal, rode:
+```bash
+python main_preprocessing.py
+```
+Você será solicitado a informar o ID do tenant:
+```
+Informe o ID do tenant: dev_tenant
+```
+
+---
+
+## ⚡ Etapa 3B: (Alternativa) Upload + Processamento com 1 comando
+
+Use o atalho gerado automaticamente ou rode diretamente:
+```bash
+python upload_csv_cli.py --csv "Caminho/do/seu/arquivo.csv" --tenant dev_tenant
+```
+Ou utilize o atalho, por exemplo:
+```
+upload_csv_dev_tenant.bat  (Windows)
+upload_csv_dev_tenant.sh   (Linux/macOS)
+```
+Este comando:
+- Cria a estrutura do tenant
+- Copia o CSV
+- Executa o pré-processamento
+- Grava os dados no banco
+
+---
+
+## 🧠 Etapa 4: Rodar Clusterização
+
+No terminal, rode:
+```bash
+python main_clusterization.py
+```
+O sistema solicitará a data e o tenant:
+```
+Informe a data inicial (YYYY-MM-DD): 2025-03-31
+Informe a data final (YYYY-MM-DD): 2025-03-31
+Informe o ID do tenant: dev_tenant
+```
+
+Os clusters serão salvos no banco e os centros recalculados automaticamente.
+
+---
+
+## 🗺️ Etapa 5: Visualizar Mapas
+
+Execute:
+```bash
+python main_cluster_plotting.py
+```
+Será solicitado:
+```
+Informe a data inicial (YYYY-MM-DD): 2025-03-31
+Informe a data final (YYYY-MM-DD): 2025-03-31
+Informe o ID do tenant: dev_tenant
+```
+
+O mapa será gerado e salvo em:
+```
+tenants/dev_tenant/maps/cluster_map_2025-03-31.html
+```
+Abra esse arquivo em qualquer navegador.
+
+---
+
+## 🧼 Dicas
+- Sempre valide os campos obrigatórios antes de subir o CSV.
+- Utilize nomes curtos e sem espaços para `tenant_id` (ex: `cliente1`, `logistica_x`).
+- O log de execução é exibido diretamente no terminal para facilitar testes.
+- Se quiser testar tudo com um comando só, utilize os atalhos `.bat` ou `.sh` gerados automaticamente após rodar `gerar_atalhos_upload.py`.
+
+---
+
+Para dúvidas ou suporte técnico, entre em contato com o time de tecnologia do Cluster Router.
+
+---

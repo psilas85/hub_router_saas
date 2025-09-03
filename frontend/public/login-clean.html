@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Login HubRouter - Responsivo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="min-h-screen flex flex-col md:flex-row">
+  <!-- Lado esquerdo -->
+  <div class="md:w-1/2 w-full bg-gray-50 flex flex-col items-center justify-center p-8 md:p-12">
+    <img src="hubrouter_logo.png" alt="HubRouter Logo" class="h-24 md:h-32 mb-4" />
+    <h2 class="text-lg md:text-2xl font-bold text-gray-800 text-center max-w-md">
+      Inteligência Artificial para redes logísticas mais eficientes.
+    </h2>
+  </div>
+
+  <!-- Lado direito -->
+  <div class="md:w-1/2 w-full flex items-center justify-center bg-white">
+    <div class="shadow-lg rounded-xl p-6 md:p-8 w-full max-w-md">
+      <h1 class="text-xl md:text-2xl font-bold text-center text-gray-800 mb-6">
+        HubRouter – Login
+      </h1>
+
+      <form class="space-y-4">
+        <input type="email" placeholder="E-mail"
+          class="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500" />
+        <input type="password" placeholder="Senha"
+          class="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500" />
+        <button type="submit"
+          class="w-full bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 transition">
+          Entrar
+        </button>
+      </form>
+    </div>
+  </div>
+</body>
+
+</html>
