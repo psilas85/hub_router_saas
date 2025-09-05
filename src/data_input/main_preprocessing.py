@@ -17,6 +17,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # Carrega .env
 load_dotenv()
 
+def detectar_separador(caminho_arquivo):
+    with open(caminho_arquivo, "r", encoding="utf-8-sig") as f:
+        primeira_linha = f.readline()
+        return ";" if ";" in primeira_linha else ","
+
 def main():
     parser = argparse.ArgumentParser(description="Pré-processamento de dados por tenant.")
     parser.add_argument("--tenant", help="ID do tenant (pode vir do .env)")
@@ -60,7 +65,12 @@ def main():
             path_saida_invalidos=output_invalidos_path
         )
 
-        resultado = preprocessor.execute(input_path)
+        # Detecta separador automaticamente
+        sep = detectar_separador(input_path)
+        logging.info(f"🔎 Separador detectado: '{sep}'")
+
+        resultado = preprocessor.execute(input_path, sep=sep)
+
 
         if resultado is None:
             logging.warning("⚠ Nenhum registro válido foi processado.")

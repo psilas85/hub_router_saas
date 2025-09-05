@@ -1,0 +1,24 @@
+/* src/styles/ui.css */
+
+/* === Botões principais === */
+.btn {
+    @apply bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors duration-200 disabled:opacity-60;
+}
+
+.btn-secondary {
+    @apply bg-sky-600 hover:bg-sky-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors duration-200 disabled:opacity-60;
+}
+
+.btn-danger {
+    @apply bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors duration-200 disabled:opacity-60;
+}
+
+/* === Inputs e selects === */
+.input {
+    @apply w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm;
+}
+
+/* === Cartões e containers === */
+.card {
+    @apply bg-white rounded-xl shadow-sm border border-gray-200 p-4;
+}

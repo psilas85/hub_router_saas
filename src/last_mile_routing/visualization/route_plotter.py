@@ -139,9 +139,9 @@ def plotar_rotas(tenant_id, envio_data):
     mapa.get_root().add_child(legenda)
 
 
-    output_folder = f"exports/last_mile_routing/maps/{tenant_id}"
+    # 🔧 Corrigido para /app/exports
+    output_folder = f"/app/exports/last_mile_routing/maps/{tenant_id}"
     os.makedirs(output_folder, exist_ok=True)
-
     output_path = f"{output_folder}/mapa_rotas_{envio_data}.html"
     mapa.save(output_path)
 

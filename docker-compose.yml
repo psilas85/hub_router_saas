@@ -27,6 +27,62 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - hub_router_network
+    restart: always
+
+  data_input_service:
+    build:
+      context: .
+      dockerfile: src/data_input/Dockerfile.data_input
+    image: psilas85/hub_router-data_input:latest
+    ports:
+      - "8008:8008"
+    volumes:
+      - ./src:/app/src
+      - ./src/data_input/tenants:/app/src/data_input/tenants
+    env_file:
+      - ./src/data_input/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      - PYTHONPATH=/app/src
+      - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
+    networks:
+      - hub_router_network
+    restart: always
+
+  data_input_worker:
+    build:
+      context: .
+      dockerfile: src/data_input/Dockerfile.data_input
+    image: psilas85/hub_router-data_input:latest
+    command: rq worker -u redis://redis:6379 data_input   # ✅ remove --job-timeout
+
+    volumes:
+      - ./src:/app/src
+      - ./src/data_input/tenants:/app/src/data_input/tenants
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      - PYTHONPATH=/app/src
+      - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
+    env_file:
+      - ./src/data_input/.env
+    networks:
+      - hub_router_network
+    restart: always
+
+
   authentication_service:
     build:
       context: .
@@ -176,27 +232,6 @@ services:
       - hub_router_network
     restart: always
 
-  data_input_service:
-    build:
-      context: .
-      dockerfile: src/data_input/Dockerfile.data_input
-    image: psilas85/hub_router-data_input:latest
-    ports:
-      - "8008:8008"
-    volumes:
-      - ./src:/app/src
-      - ./src/data_input/tenants:/app/src/data_input/tenants
-    env_file:
-      - ./src/data_input/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - PYTHONPATH=/app/src
-      - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
-    networks:
-      - hub_router_network
-    restart: always
 
   exploratory_analysis_api_service:
     build:

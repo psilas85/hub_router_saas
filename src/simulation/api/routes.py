@@ -264,7 +264,8 @@ def visualizar_simulacao(
     if otimo_k is not None and str(otimo_k) in response["cenarios"]:
         response["cenarios"][str(otimo_k)]["otimo"] = True
 
-    if not response["relatorio_pdf"] and not response["cenarios"] and not response.get("graficos"):
+    # 🔑 Se não achou nada, responde 404
+    if not response.get("relatorio_pdf") and not response.get("cenarios") and not response.get("graficos"):
         raise HTTPException(status_code=404, detail="Nenhum artefato encontrado para esta data.")
 
     return response

@@ -1,4 +1,5 @@
 // frontend/src/pages/Planner/ResultsTab.tsx
+// frontend/src/pages/Planner/ResultsTab.tsx
 import { useEffect, useState } from "react";
 import { plan } from "@/services/ml";
 import {
@@ -22,7 +23,6 @@ type ScenarioResult = {
     hubs: [string, string][];
 };
 
-// 🔎 mapa para exibir rótulos amigáveis
 const SCENARIO_LABELS: Record<string, string> = {
     base: "Base (Referência)",
     baixo: "Otimista (Baixo)",
@@ -43,7 +43,6 @@ export default function ResultsTab() {
             setError(null);
 
             try {
-                // timeout defensivo
                 timeoutId = window.setTimeout(() => controller.abort(), 20000);
 
                 const raw = await plan({
@@ -123,8 +122,7 @@ export default function ResultsTab() {
             "Cenário,Mês,Custo Transferência,Custo Last Mile,Custo Total,Frota,Hubs\n";
         const rows = results.map(
             (r) =>
-                `${SCENARIO_LABELS[r.cenario] ?? r.cenario},${r.mes},${r.custo_transferencia
-                },${r.custo_last_mile},${r.custo_total},"${JSON.stringify(
+                `${SCENARIO_LABELS[r.cenario] ?? r.cenario},${r.mes},${r.custo_transferencia},${r.custo_last_mile},${r.custo_total},"${JSON.stringify(
                     r.frota
                 )}","${r.hubs.map((h) => h.join(" ")).join("; ")}"`
         );
@@ -141,47 +139,56 @@ export default function ResultsTab() {
             <h2 className="text-xl font-bold">📊 Resultados Consolidados</h2>
 
             {loading && (
-                <div className="p-3 bg-yellow-100 text-yellow-800 rounded-md">
+                <div className="p-3 bg-yellow-50 text-yellow-800 border border-yellow-200 rounded-lg">
                     ⏳ Carregando resultados consolidados...
                 </div>
             )}
 
             {!loading && error && (
-                <div className="p-3 bg-red-100 text-red-800 rounded-md">{error}</div>
+                <div className="p-3 bg-red-50 text-red-800 border border-red-200 rounded-lg">
+                    {error}
+                </div>
             )}
 
             {!loading && !error && results.length > 0 && (
                 <>
-                    <div className="p-3 bg-emerald-100 text-emerald-800 rounded-md">
+                    <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg">
                         ✅ Resultados carregados com sucesso!
                     </div>
 
-                    <ResponsiveContainer width="100%" height={300}>
-                        <BarChart
-                            data={results.map((r) => ({
-                                ...r,
-                                cenario_label: SCENARIO_LABELS[r.cenario] ?? r.cenario,
-                            }))}
-                        >
-                            <XAxis dataKey="cenario_label" />
-                            <YAxis tickFormatter={(v) => fmtCompact.format(Number(v))} />
-                            <Tooltip
-                                formatter={(v: any, n) => [fmtMoeda.format(Number(v)), n]}
-                            />
-                            <Legend />
-                            <Bar
-                                dataKey="custo_transferencia"
-                                fill="#3b82f6"
-                                name="Transferência"
-                            />
-                            <Bar dataKey="custo_last_mile" fill="#f59e0b" name="Last Mile" />
-                            <Bar dataKey="custo_total" fill="#10b981" name="Total" />
-                        </BarChart>
-                    </ResponsiveContainer>
+                    {/* === Gráfico === */}
+                    <div className="bg-white rounded-xl shadow p-4">
+                        <h3 className="font-semibold mb-3">Comparativo de Custos</h3>
+                        <ResponsiveContainer width="100%" height={320}>
+                            <BarChart
+                                data={results.map((r) => ({
+                                    ...r,
+                                    cenario_label: SCENARIO_LABELS[r.cenario] ?? r.cenario,
+                                }))}
+                            >
+                                <XAxis dataKey="cenario_label" />
+                                <YAxis tickFormatter={(v) => fmtCompact(Number(v))} />
+                                <Tooltip formatter={(v: any, n) => [fmtMoeda(Number(v)), n]} />
+                                <Legend />
+                                <Bar
+                                    dataKey="custo_transferencia"
+                                    fill="#3b82f6"
+                                    name="Transferência"
+                                />
+                                <Bar
+                                    dataKey="custo_last_mile"
+                                    fill="#f59e0b"
+                                    name="Last Mile"
+                                />
+                                <Bar dataKey="custo_total" fill="#10b981" name="Total" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
 
-                    <div className="overflow-auto">
-                        <table className="w-full text-sm border">
-                            <thead className="bg-gray-100">
+                    {/* === Tabela === */}
+                    <div className="bg-white rounded-xl shadow p-4 overflow-x-auto">
+                        <table className="min-w-full text-sm border border-gray-200 divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
                                 <tr>
                                     <th className="p-2 text-left">Cenário</th>
                                     <th className="p-2">Mês</th>
@@ -194,19 +201,19 @@ export default function ResultsTab() {
                             </thead>
                             <tbody>
                                 {results.map((r, i) => (
-                                    <tr key={i} className="border-t">
+                                    <tr key={i} className="border-t hover:bg-gray-50">
                                         <td className="p-2 font-medium">
                                             {SCENARIO_LABELS[r.cenario] ?? r.cenario}
                                         </td>
                                         <td className="p-2">{r.mes}</td>
                                         <td className="p-2 text-blue-600">
-                                            {fmtMoeda.format(r.custo_transferencia)}
+                                            {fmtMoeda(r.custo_transferencia)}
                                         </td>
                                         <td className="p-2 text-orange-600">
-                                            {fmtMoeda.format(r.custo_last_mile)}
+                                            {fmtMoeda(r.custo_last_mile)}
                                         </td>
                                         <td className="p-2 font-bold text-emerald-600">
-                                            {fmtMoeda.format(r.custo_total)}
+                                            {fmtMoeda(r.custo_total)}
                                         </td>
                                         <td className="p-2">
                                             {Object.entries(r.frota)
@@ -222,27 +229,24 @@ export default function ResultsTab() {
                         </table>
                     </div>
 
+                    {/* === Botões Exportação === */}
                     <div className="flex gap-3">
-                        <button
-                            onClick={() => handleExport("csv")}
-                            className="px-4 py-2 bg-blue-600 text-white rounded"
-                        >
-                            ⬇️ Exportar como CSV
+                        <button onClick={() => handleExport("csv")} className="btn">
+                            ⬇️ Exportar CSV
                         </button>
                         <button
                             onClick={() => handleExport("json")}
-                            className="px-4 py-2 bg-gray-700 text-white rounded"
+                            className="btn-secondary"
                         >
-                            ⬇️ Exportar como JSON
+                            ⬇️ Exportar JSON
                         </button>
                     </div>
                 </>
             )}
 
             {!loading && !error && results.length === 0 && (
-                <div className="p-3 bg-gray-100 text-gray-700 rounded-md">
-                    ⚠️ Nenhum resultado disponível. Gere um planejamento para visualizar
-                    resultados.
+                <div className="p-3 bg-gray-50 text-gray-700 border border-gray-200 rounded-lg">
+                    ⚠️ Nenhum resultado disponível. Gere um planejamento para visualizar.
                 </div>
             )}
         </div>

@@ -1,10 +1,12 @@
 // src/pages/LastMile/LastMileRoutingPage.tsx
+// src/pages/LastMile/LastMileRoutingPage.tsx
 import { useState } from "react";
-import {
-    lmProcessRouting,
-    lmBuscarArtefatos,
-} from "@/services/lastMileApi";
+import { lmProcessRouting, lmBuscarArtefatos } from "@/services/lastMileApi";
 import type { Artefato } from "@/services/lastMileApi";
+import toast from "react-hot-toast";
+import { Loader2, PlayCircle, FileText, Map } from "lucide-react";
+import api from "@/services/api";
+
 
 function todayISO() {
     const d = new Date();
@@ -26,12 +28,14 @@ export default function LastMileRoutingPage() {
 
     const [loading, setLoading] = useState(false);
     const [artefatos, setArtefatos] = useState<Artefato[]>([]);
-    const [mensagem, setMensagem] = useState<string | null>(null);
 
     const dataValida = () => Boolean(data);
 
     async function processar() {
-        if (!dataValida()) return alert("Informe a data.");
+        if (!dataValida()) {
+            toast.error("Informe a data.");
+            return;
+        }
         setLoading(true);
         try {
             await lmProcessRouting({
@@ -45,33 +49,44 @@ export default function LastMileRoutingPage() {
                 restricao_veiculo_leve_municipio: restricaoLeve,
                 modo_forcar: modoForcar,
             });
-            setMensagem("✅ Roteirização processada.");
+            toast.success("Roteirização processada!");
         } catch (err) {
             console.error(err);
-            setMensagem("❌ Erro ao processar roteirização.");
+            toast.error("Erro ao processar roteirização.");
         } finally {
             setLoading(false);
         }
     }
 
     async function gerarArtefatos() {
-        if (!dataValida()) return alert("Informe a data.");
+        if (!dataValida()) {
+            toast.error("Informe a data.");
+            return;
+        }
         setLoading(true);
         try {
+            // 1️⃣ dispara geração no backend
+            await api.get("/last_mile_routing/visualizar", {
+                params: { data_inicial: data }
+            });
+
+            // 2️⃣ busca os arquivos gerados
             const resp = await lmBuscarArtefatos(data);
             setArtefatos(resp?.artefatos ?? []);
+
             if (!resp?.artefatos || resp.artefatos.length === 0) {
-                setMensagem("⚠️ Nenhum artefato encontrado para esta data.");
+                toast("Nenhum artefato encontrado para esta data.", { icon: "⚠️" });
             } else {
-                setMensagem("✅ Artefatos carregados.");
+                toast.success("Artefatos gerados e carregados!");
             }
         } catch (err) {
             console.error(err);
-            setMensagem("❌ Erro ao buscar artefatos.");
+            toast.error("Erro ao gerar artefatos.");
         } finally {
             setLoading(false);
         }
     }
+
 
     async function baixarPDF(url: string) {
         try {
@@ -81,15 +96,19 @@ export default function LastMileRoutingPage() {
             link.href = URL.createObjectURL(blob);
             link.download = url.split("/").pop() || "relatorio.pdf";
             link.click();
+            toast.success("PDF baixado!");
         } catch (err) {
             console.error("Erro ao baixar PDF:", err);
-            alert("❌ Não foi possível baixar o PDF.");
+            toast.error("Não foi possível baixar o PDF.");
         }
     }
 
     return (
         <div className="p-6 max-w-6xl mx-auto">
-            <h1 className="text-2xl font-semibold mb-6">Last-Mile • Roteirização</h1>
+            <h1 className="text-2xl font-semibold mb-6 flex items-center gap-2">
+                <PlayCircle className="w-6 h-6 text-emerald-600" />
+                Last-Mile • Roteirização
+            </h1>
 
             {/* 🔹 Formulário */}
             <div className="bg-white rounded-2xl shadow p-4 grid grid-cols-1 md:grid-cols-6 gap-3 mb-6">
@@ -186,48 +205,71 @@ export default function LastMileRoutingPage() {
                 </div>
 
                 <div className="md:col-span-6 flex gap-3">
-                    <button className="btn" onClick={processar} disabled={loading}>
-                        {loading ? "Processando…" : "Processar Roteirização"}
+                    <button
+                        className="btn flex items-center gap-2"
+                        onClick={processar}
+                        disabled={loading}
+                    >
+                        {loading ? (
+                            <>
+                                <Loader2 className="w-4 h-4 animate-spin" /> Processando…
+                            </>
+                        ) : (
+                            <>
+                                <PlayCircle className="w-4 h-4" /> Processar Roteirização
+                            </>
+                        )}
                     </button>
                     <button
-                        className="btn-secondary"
+                        className="btn-secondary flex items-center gap-2"
                         onClick={gerarArtefatos}
                         disabled={loading}
                     >
-                        {loading ? "Gerando…" : "Gerar Mapas & Relatórios"}
+                        {loading ? (
+                            <>
+                                <Loader2 className="w-4 h-4 animate-spin" /> Gerando…
+                            </>
+                        ) : (
+                            <>
+                                <Map className="w-4 h-4" /> Gerar Mapas & Relatórios
+                            </>
+                        )}
                     </button>
                 </div>
-
-                {mensagem && (
-                    <div className="md:col-span-6 text-sm text-emerald-700">{mensagem}</div>
-                )}
             </div>
 
             {/* 🔹 Lista de Artefatos */}
-            {artefatos.length > 0 && artefatos.map((a) => (
-                <div key={a.data} className="bg-white rounded-xl shadow p-4 mb-6">
-                    <h2 className="font-semibold mb-3">Artefatos {a.data}</h2>
-                    <div className="flex gap-3 mb-4">
-                        <a
-                            href={a.map_html_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn"
-                        >
-                            Baixar Mapa HTML
-                        </a>
-                        <button className="btn" onClick={() => baixarPDF(a.pdf_url)}>
-                            Baixar PDF
-                        </button>
+            {artefatos.length > 0 &&
+                artefatos.map((a) => (
+                    <div key={a.data} className="bg-white rounded-xl shadow p-4 mb-6">
+                        <h2 className="font-semibold mb-3 flex items-center gap-2">
+                            <Map className="w-5 h-5 text-emerald-600" />
+                            Artefatos {a.data}
+                        </h2>
+                        <div className="flex gap-3 mb-4">
+                            <a
+                                href={a.map_html_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn flex items-center gap-2"
+                            >
+                                <Map className="w-4 h-4" /> Baixar Mapa HTML
+                            </a>
+                            <button
+                                className="btn flex items-center gap-2"
+                                onClick={() => baixarPDF(a.pdf_url)}
+                            >
+                                <FileText className="w-4 h-4" /> Baixar PDF
+                            </button>
+                        </div>
+                        <iframe
+                            src={a.map_html_url}
+                            title={`Mapa ${a.data}`}
+                            className="w-full rounded-lg border"
+                            style={{ height: "70vh" }}
+                        />
                     </div>
-                    <iframe
-                        src={a.map_html_url}
-                        title={`Mapa ${a.data}`}
-                        className="w-full"
-                        style={{ height: "70vh" }}
-                    />
-                </div>
-            ))}
+                ))}
         </div>
     );
 }

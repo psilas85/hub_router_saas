@@ -15,7 +15,18 @@ DIRETORIO_ENTRADA = os.environ.get("EDA_OUTPUT_DIR", "/app/exploratory_analysis/
 RELATORIO_CAMINHO = f"{DIRETORIO_ENTRADA}/relatorios/relatorio_eda.pdf"
 API_GATEWAY_URL = os.environ.get("API_GATEWAY_URL", "http://api_gateway:8000")
 
-st.set_page_config(page_title="Análise Exploratória", layout="wide")
+st.set_page_config(page_title="Análise Exploratória - HubRouter", layout="wide")
+
+# CSS customizado para esconder menu e rodapé
+hide_streamlit_style = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+</style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 st.title("📊 Análise Exploratória de Entregas")
 
 # =========================
@@ -31,7 +42,7 @@ def carregar_dados():
     return carregar_csv(f"{DIRETORIO_ENTRADA}/csvs/dados_filtrados.csv")
 
 def executar_analise_via_api(data_inicial, data_final, token):
-    url = f"{API_GATEWAY_URL}/exploratory/eda/"
+    url = f"{API_GATEWAY_URL}/exploratory/eda"  # 🔧 sem a barra no final
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     params = {
         "data_inicial": data_inicial,
@@ -39,15 +50,22 @@ def executar_analise_via_api(data_inicial, data_final, token):
         "granularidade": "mensal",
         "incluir_outliers": "true"
     }
+
+    # 🔎 Debug: log no container
+    print("🌍 Chamando API Gateway:", url)
+    print("📦 Params:", params)
+    print("🔑 Header Authorization:", headers.get("Authorization", "NENHUM"))
+
     try:
         resp = requests.post(url, headers=headers, params=params, timeout=300)
         return resp.json()
     except Exception as e:
         return {"status": "erro", "mensagem": str(e)}
 
+
 def exibir_imagem(img_path, legenda=None):
     if os.path.exists(img_path):
-        st.image(img_path, caption=legenda, use_column_width=True)
+        st.image(img_path, caption=legenda, use_container_width=True)
     else:
         st.warning(f"⚠️ Arquivo não encontrado: {os.path.basename(img_path)}")
 
@@ -70,12 +88,33 @@ def exibir_download_relatorio():
 st.sidebar.header("⚙️ Executar Nova Análise")
 data_inicial = st.sidebar.date_input("Data inicial", pd.to_datetime("2025-08-01"))
 data_final = st.sidebar.date_input("Data final", pd.to_datetime("2025-08-20"))
-token = st.sidebar.text_input("Token JWT", type="password")
+
+# =========================
+# Token JWT (PROD)
+# =========================
+token = None
+if "token" in st.query_params:
+    t = st.query_params.get("token")
+    if isinstance(t, list):
+        token = t[0]
+    else:
+        token = t
+
+# 🔎 Debug: imprime no log do container
+print("🔑 Token recebido via querystring:", token[:30] + "..." if token else "NENHUM TOKEN")
+
+if not token:
+    st.error("⚠️ Nenhum token JWT recebido. Acesse este dashboard via painel autenticado.")
+    st.stop()
 
 if st.sidebar.button("🚀 Rodar análise via API Gateway"):
-    resultado = executar_analise_via_api(str(data_inicial), str(data_final), token)
+    with st.spinner("Rodando análise, aguarde..."):
+        resultado = executar_analise_via_api(str(data_inicial), str(data_final), token)
+
     if resultado.get("status") == "ok":
         st.sidebar.success(resultado.get("mensagem"))
+        st.cache_data.clear()   # limpa cache
+        st.experimental_rerun() # reinicia para atualizar tudo
     else:
         st.sidebar.error(resultado.get("mensagem"))
 
@@ -90,8 +129,8 @@ tabs = st.tabs([
     "📍 Mapas",
     "📑 CSVs Auxiliares",
     "🖼️ Gráficos Prontos",
-    "📊 Dashboard Interativo",   # 👈
-    "📥 Relatório"               # 👈
+    "📊 Dashboard Interativo",
+    "📥 Relatório"
 ])
 
 
@@ -102,7 +141,6 @@ with tabs[0]:
     if os.path.exists(pasta_graficos):
         arquivos = sorted([f for f in os.listdir(pasta_graficos) if f.endswith(".png")])
 
-        # Categorias baseadas nos nomes dos arquivos
         categorias = {
             "📦 Boxplots": [a for a in arquivos if a.startswith("boxplot")],
             "📈 Distribuições": [a for a in arquivos if a.startswith("distribuicao")],
@@ -123,11 +161,9 @@ with tabs[0]:
                 for i, arq in enumerate(lista):
                     caminho = os.path.join(pasta_graficos, arq)
                     with cols[i % 2]:
-                        st.image(caminho, caption=arq, use_column_width=True)
+                        st.image(caminho, caption=arq, use_container_width=True)  # 🔧 corrigido
     else:
         st.warning("⚠️ Pasta de gráficos não encontrada.")
-
-
 
 with tabs[1]:
     if not df.empty:
@@ -194,18 +230,23 @@ with tabs[6]:  # posição da nova aba
         # -----------------------
         st.sidebar.markdown("## 🔍 Filtros do Dashboard Interativo")
 
+        # Valores padrão para reset
+        min_nf, max_nf = (0, 0)
+        if "cte_valor_nf" in df.columns and not df["cte_valor_nf"].dropna().empty:
+            min_nf, max_nf = float(df["cte_valor_nf"].min()), float(df["cte_valor_nf"].max())
+
         # Botão reset
         if st.sidebar.button("🔄 Resetar Filtros"):
             st.session_state["uf_sel"] = []
             st.session_state["cidades_sel"] = []
-            st.session_state["faixa_nf"] = None
+            st.session_state["faixa_nf"] = (min_nf, max_nf)
 
         # Filtro por UF
         ufs = df["cte_uf"].dropna().unique().tolist() if "cte_uf" in df.columns else []
         uf_sel = st.sidebar.multiselect(
             "Selecionar UF",
             ufs,
-            default=ufs if "uf_sel" not in st.session_state or not st.session_state["uf_sel"] else st.session_state["uf_sel"],
+            default=st.session_state.get("uf_sel", ufs),
             key="uf_sel"
         )
 
@@ -214,23 +255,26 @@ with tabs[6]:  # posição da nova aba
         cidades_sel = st.sidebar.multiselect(
             "Selecionar Cidade",
             cidades,
-            default=cidades if "cidades_sel" not in st.session_state or not st.session_state["cidades_sel"] else st.session_state["cidades_sel"],
+            default=st.session_state.get("cidades_sel", cidades),
             key="cidades_sel"
         )
 
         # Filtro por faixa de valores de NF
         if "cte_valor_nf" in df.columns:
-            min_nf, max_nf = float(df["cte_valor_nf"].min()), float(df["cte_valor_nf"].max())
+            default_faixa = (min_nf, max_nf)
             faixa_nf = st.sidebar.slider(
                 "Faixa de Valor NF",
-                min_nf, max_nf,
-                (min_nf, max_nf) if "faixa_nf" not in st.session_state or not st.session_state["faixa_nf"] else st.session_state["faixa_nf"],
+                min_value=min_nf,
+                max_value=max_nf,
+                value=st.session_state.get("faixa_nf", default_faixa),
                 key="faixa_nf"
             )
         else:
             faixa_nf = (0, float("inf"))
 
-        # Aplicando filtros
+        # -----------------------
+        # 📊 Aplicando filtros
+        # -----------------------
         df_filtrado = df.copy()
         if "cte_uf" in df_filtrado.columns and uf_sel:
             df_filtrado = df_filtrado[df_filtrado["cte_uf"].isin(uf_sel)]
@@ -238,7 +282,8 @@ with tabs[6]:  # posição da nova aba
             df_filtrado = df_filtrado[df_filtrado["cte_cidade"].isin(cidades_sel)]
         if "cte_valor_nf" in df_filtrado.columns and faixa_nf:
             df_filtrado = df_filtrado[
-                (df_filtrado["cte_valor_nf"] >= faixa_nf[0]) & (df_filtrado["cte_valor_nf"] <= faixa_nf[1])
+                (df_filtrado["cte_valor_nf"] >= faixa_nf[0]) &
+                (df_filtrado["cte_valor_nf"] <= faixa_nf[1])
             ]
 
         # -----------------------

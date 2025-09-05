@@ -1,24 +1,29 @@
-//hub_router_1.0.1/frontend/src/App.tsx
+// hub_router_1.0.1/frontend/src/App.tsx
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import HomePage from "@/pages/Home/HomePage";
 import LoginPage from "@/pages/Login/LoginPage";
 import DataInputPage from "@/pages/Data_input/DataInputPage";
 import ClusterizationPage from "@/pages/Clusterization/ClusterizationPage";
 import ProfilePage from "@/pages/Profile/ProfilePage";
-import HomePage from "@/pages/Home/HomePage";
 import UsersPage from "@/pages/Users/UsersPage";
 import TenantsPage from "@/pages/Tenants/TenantsPage";
 import ProtectedRoute from "@/routes/ProtectedRoute";
 import Layout from "@/components/Layout";
+
+// Middle-Mile
 import VehiclesPage from "@/pages/middle_mile/VehiclesPage";
 import MmRoutingPage from "@/pages/middle_mile/RoutingPage";
-import CostsPage from "@/pages/middle_mile/CostsPage";   // 👈 importar a nova página
-// imports no topo
+import CostsPage from "@/pages/middle_mile/CostsPage";
+
+// Last-Mile
 import LastMileVehiclesPage from "@/pages/LastMile/LastMileVehiclesPage";
 import LastMileRoutingPage from "@/pages/LastMile/LastMileRoutingPage";
 import LastMileCostsPage from "@/pages/LastMile/LastMileCostsPage";
+
+// Outros módulos
 import SimulationPage from "@/pages/Simulation/SimulationPage";
 import PlannerPage from "@/pages/Planner/PlannerPage";
-
+import ExploratoryDashboardPage from "@/pages/Exploratory/ExploratoryDashboardPage";
 
 
 export default function App() {
@@ -29,6 +34,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
 
         {/* Protegidas */}
+        {/* Página inicial agora abre a Home protegida */}
         <Route
           path="/"
           element={
@@ -39,6 +45,22 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
+        {/* Exploratory (Streamlit via iframe) */}
+        <Route
+          path="/exploratory_analysis_ui"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <ExploratoryDashboardPage />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        {/* Alias curto para EDA */}
+        <Route path="/eda" element={<Navigate to="/exploratory_analysis_ui" replace />} />
+
+
         <Route
           path="/data-input"
           element={
@@ -82,7 +104,7 @@ export default function App() {
           }
         />
         <Route
-          path="/middle-mile/costs"          // 👈 nova rota
+          path="/middle-mile/costs"
           element={
             <ProtectedRoute>
               <Layout>
@@ -124,6 +146,7 @@ export default function App() {
           }
         />
 
+        {/* Outros módulos */}
         <Route
           path="/simulation"
           element={
@@ -134,7 +157,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/planner"
           element={
@@ -145,7 +167,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/users"
           element={

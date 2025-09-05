@@ -3,19 +3,22 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-# Copia apenas os manifests primeiro (cache de dependências)
+# Copia apenas os manifests primeiro (melhora cache de dependências)
 COPY package*.json ./
 
-# Instala dependências
+# Instala dependências (resolve conflitos de peer deps automaticamente)
 RUN npm install --legacy-peer-deps
-
-# 🚀 Garante que o recharts esteja instalado (se não tiver no package.json)
-RUN npm install recharts@^2.12.7 --save
 
 # Copia o restante do código
 COPY . .
 
-# Compila o projeto
+# Define variáveis de ambiente para build
+ARG VITE_API_URL
+ARG VITE_APP_BUILD
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_APP_BUILD=$VITE_APP_BUILD
+
+# Compila o projeto (gera dist/)
 RUN npm run build
 
 # ---- Etapa 2: Servir estáticos com Nginx ----

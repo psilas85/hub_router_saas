@@ -28,8 +28,11 @@ class SimulationUseCase:
     def __init__(self, tenant_id, envio_data, parametros,
                  clusterization_db, simulation_db, logger,
                  modo_forcar=False, simulation_id=None,
-                 output_dir="output/maps", fundir_clusters_pequenos=True,
+                 # 🔑 corrigido: antes "output/maps"
+                 output_dir="exports/simulation/maps",
+                 fundir_clusters_pequenos=True,
                  permitir_rotas_excedentes=False):
+
 
         self.tenant_id = tenant_id
         self.envio_data = envio_data
@@ -95,8 +98,8 @@ class SimulationUseCase:
 
 
         # 🔍 Carregar hubs e aplicar filtro por raio
-        
-        
+
+
         from simulation.infrastructure.simulation_database_reader import carregar_hubs
 
         hubs = carregar_hubs(self.simulation_db, self.tenant_id)
@@ -202,7 +205,7 @@ class SimulationUseCase:
         df_clusterizado = self.cluster_service.ajustar_centros_dos_clusters(df_clusterizado)
         # ➕ Adicionar entregas do cluster 9999 ao resultado final
         if df_hub is not None and not df_hub.empty:
-            
+
             df_hub["simulation_id"] = self.simulation_id
             df_hub["k_clusters"] = k
             df_hub["is_ponto_otimo"] = False

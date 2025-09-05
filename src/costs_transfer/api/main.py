@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 from costs_transfer.api.routes import router as custos_router
-from costs_transfer.api.routes_tarifas import router as tarifas_router  # ✅ importa o router de tarifas
+from costs_transfer.api.routes_tarifas import router as tarifas_router
 
 app = FastAPI(
     title="HubRouter API - Custos Transferência",
@@ -11,12 +11,12 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     swagger_ui_parameters={"persistAuthorization": True},
-    root_path="/costs_transfer",  # mantém compatível com o Gateway/NGINX
+    root_path="/costs_transfer",
 )
 
 # ✅ inclui AMBOS os routers
-app.include_router(custos_router)
-app.include_router(tarifas_router)
+app.include_router(custos_router, prefix="")
+app.include_router(tarifas_router, prefix="")
 
 @app.get("/", tags=["Healthcheck"])
 def healthcheck():

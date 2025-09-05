@@ -1,3 +1,5 @@
+# hub_router_1.0.1/src/data_input/infrastructure/db.py
+
 import psycopg2
 import logging
 import os
@@ -44,7 +46,7 @@ class Database:
         if self.conexao:
             self.conexao.close()
             logging.info("🔒 Conexão com clusterization_db encerrada.")
-   
+
 
     def inserir_dados_entregas(self, df):
         """Insere os dados no banco garantindo que os tipos estão corretos."""
@@ -74,7 +76,7 @@ class Database:
             "cte_numero", "remetente_cnpj", "cte_rua", "cte_bairro", "cte_complemento", "cte_cidade",
             "cte_uf", "cte_cep", "cte_nf", "cte_volumes", "cte_peso", "cte_valor_nf", "cte_valor_frete",
             "envio_data", "endereco_completo", "transportadora", "remetente_nome", "destinatario_nome",
-            "destinatario_cnpj", "destino_latitude", "destino_longitude", "remetente_cidade", "remetente_uf", 
+            "destinatario_cnpj", "destino_latitude", "destino_longitude", "remetente_cidade", "remetente_uf",
             "doc_min"
         ]
         data_values = df[colunas_ordem].astype(object).where(pd.notna(df), None).to_records(index=False).tolist()
@@ -89,8 +91,8 @@ class Database:
             endereco_completo, transportadora, remetente_nome, destinatario_nome, destinatario_cnpj,
             destino_latitude, destino_longitude, remetente_cidade, remetente_uf, doc_min
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (cte_numero, transportadora) 
-        DO UPDATE SET 
+        ON CONFLICT (cte_numero, transportadora)
+        DO UPDATE SET
             remetente_cnpj = EXCLUDED.remetente_cnpj,
             cte_rua = EXCLUDED.cte_rua,
             cte_bairro = EXCLUDED.cte_bairro,
@@ -162,7 +164,7 @@ class Database:
             distancia_media_km, tempo_estimado_min, quantidade_volumes, centroid_lat, centroid_lon
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (envio_data, cluster)
-        DO UPDATE SET 
+        DO UPDATE SET
             quantidade_entregas = EXCLUDED.quantidade_entregas,
             peso_total_kg = EXCLUDED.peso_total_kg,
             distancia_media_km = EXCLUDED.distancia_media_km,
@@ -180,7 +182,7 @@ class Database:
             self.conexao.rollback()
             logging.error(f"❌ Erro ao salvar resumo da clusterização: {e}")
 
-    
+
     def buscar_localizacao(self, endereco):
         """Busca latitude e longitude de um endereço no banco de dados."""
         query = "SELECT latitude, longitude FROM localizacoes WHERE endereco = %s"
@@ -214,7 +216,7 @@ class Database:
         Filtra por transportadora, se especificado.
         """
         query = """
-        SELECT 
+        SELECT
             id AS id_entrega, cte_numero, transportadora, envio_data,
             cte_cidade, cte_uf, cte_cep, cte_volumes,
             cte_peso, cte_valor_nf, cte_valor_frete, destino_latitude, destino_longitude
@@ -235,8 +237,8 @@ class Database:
         except Exception as e:
             logging.error(f"❌ Erro ao buscar entregas para clusterização: {e}")
             return pd.DataFrame()
-    
-    
+
+
     def buscar_centro_urbano(self, lat, lon):
         """
         Busca um endereço na tabela 'localizacoes' baseado na latitude e longitude.
@@ -247,7 +249,7 @@ class Database:
             return None, None
 
         query = """
-        SELECT endereco, latitude, longitude 
+        SELECT endereco, latitude, longitude
         FROM localizacoes
         ORDER BY ST_Distance(
             ST_SetSRID(ST_MakePoint(longitude::double precision, latitude::double precision), 4326),
@@ -270,7 +272,7 @@ class Database:
             logging.error(f"❌ Erro ao buscar centro urbano: {e}")
             return None, None
 
-    
+
     def salvar_clusterizacao(self, clustered_data):
         """Salva os dados clusterizados garantindo integridade da `envio_data`."""
         if self.conexao is None:
@@ -288,11 +290,11 @@ class Database:
 
         insert_query = """
             INSERT INTO entregas_clusterizadas (
-                id_entrega, cte_numero, transportadora, envio_data, 
+                id_entrega, cte_numero, transportadora, envio_data,
                 cluster, cluster_cidade, centro_lat, centro_lon, data_hora
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT (cte_numero, transportadora)
-            DO UPDATE SET 
+            DO UPDATE SET
                 cluster = EXCLUDED.cluster,
                 cluster_cidade = EXCLUDED.cluster_cidade,
                 centro_lat = EXCLUDED.centro_lat,
@@ -333,7 +335,7 @@ class Database:
                     WHERE cte_numero = %s;
                     """
                     cursor.execute(query, (cte_numero,))
-            
+
             self.conexao.commit()
             logging.info(f"✅ Data de processamento atualizada para {len(df)} registros na tabela 'entregas'.")
         except Exception as e:

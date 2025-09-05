@@ -150,7 +150,13 @@ async def visualizar_simulacao(
         params={"data": data}
     )
 
-    if result["status_code"] >= 400:
-        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    # 🔑 Correção: checar se veio status de erro e propagar corretamente
+    status_code = result.get("status_code", 500)
+    content = result.get("content")
 
-    return result["content"]
+    if status_code >= 400:
+        # Se o serviço já mandou detail, repassa direto
+        detail = content if isinstance(content, str) else content or "Erro ao buscar artefatos."
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    return content

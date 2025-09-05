@@ -14,7 +14,7 @@ from authentication.utils.dependencies import obter_tenant_id_do_token
 from costs_last_mile.infrastructure.cost_repository_last_mile import CostRepository
 
 
-router = APIRouter(prefix="/custoslastmile", tags=["Custos Last Mile"])
+router = APIRouter(prefix="/costs_transfer", tags=["Costs Transfer"])
 logger = get_logger("costs_last_mile")
 
 

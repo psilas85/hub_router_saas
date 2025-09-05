@@ -1,6 +1,9 @@
 // src/pages/Middle_mile/VehiclesPage.tsx
+// src/pages/middle_mile/VehiclesPage.tsx
 import { useEffect, useMemo, useState } from "react";
 import api from "@/services/api";
+import toast from "react-hot-toast";
+import { Loader2, PlusCircle, Pencil, Trash2 } from "lucide-react";
 
 type Tarifa = {
     tipo_veiculo: string;
@@ -34,7 +37,7 @@ export default function VehiclesPage() {
             setTarifas(data);
         } catch (e) {
             console.error("Falha ao listar tarifas:", e);
-            alert("Não foi possível carregar as tarifas.");
+            toast.error("Não foi possível carregar as tarifas.");
         } finally {
             setLoading(false);
         }
@@ -46,7 +49,7 @@ export default function VehiclesPage() {
 
     async function adicionar() {
         if (!novo.tipo_veiculo.trim()) {
-            alert("Informe o tipo de veículo.");
+            toast.error("Informe o tipo de veículo.");
             return;
         }
         try {
@@ -63,61 +66,69 @@ export default function VehiclesPage() {
                 capacidade_min: 0,
                 capacidade_max: 0,
             });
+            toast.success("Veículo adicionado com sucesso!");
             await refresh();
         } catch (e) {
             console.error("Erro ao criar tarifa:", e);
-            alert("Erro ao criar tarifa.");
+            toast.error("Erro ao criar tarifa.");
         } finally {
             setLoading(false);
         }
     }
 
     async function remover(tipo_veiculo: string) {
-        if (!confirm(`Remover tarifa de '${tipo_veiculo}'?`)) return;
+        if (!window.confirm(`Remover tarifa de '${tipo_veiculo}'?`)) return;
         try {
             setLoading(true);
-            await api.delete(`/costs_transfer/tarifas/${encodeURIComponent(tipo_veiculo)}`);
+            await api.delete(
+                `/costs_transfer/tarifas/${encodeURIComponent(tipo_veiculo)}`
+            );
+            toast.success("Tarifa removida com sucesso!");
             await refresh();
         } catch (e) {
             console.error("Erro ao remover:", e);
-            alert("Erro ao remover.");
+            toast.error("Erro ao remover tarifa.");
         } finally {
             setLoading(false);
         }
     }
 
-    // (Opcional) edição inline simples
+    // Edição inline simples com prompt
     async function editar(item: Tarifa) {
         const custo = Number(
-            prompt("Novo R$/km:", String(item.custo_km)) ?? item.custo_km
+            window.prompt("Novo R$/km:", String(item.custo_km)) ?? item.custo_km
         );
         const min = Number(
-            prompt("Nova Cap. min (kg):", String(item.capacidade_min)) ??
+            window.prompt("Nova Cap. min (kg):", String(item.capacidade_min)) ??
             item.capacidade_min
         );
         const max = Number(
-            prompt("Nova Cap. max (kg):", String(item.capacidade_max)) ??
+            window.prompt("Nova Cap. max (kg):", String(item.capacidade_max)) ??
             item.capacidade_max
         );
         try {
             setLoading(true);
-            await api.put(`/costs_transfer/tarifas/${encodeURIComponent(item.tipo_veiculo)}`, {
-                tipo_veiculo: item.tipo_veiculo,
-                custo_km: custo,
-                capacidade_min: min,
-                capacidade_max: max,
-            });
+            await api.put(
+                `/costs_transfer/tarifas/${encodeURIComponent(item.tipo_veiculo)}`,
+                {
+                    tipo_veiculo: item.tipo_veiculo,
+                    custo_km: custo,
+                    capacidade_min: min,
+                    capacidade_max: max,
+                }
+            );
+            toast.success("Tarifa atualizada!");
             await refresh();
         } catch (e) {
             console.error("Erro ao editar:", e);
-            alert("Erro ao editar.");
+            toast.error("Erro ao editar tarifa.");
         } finally {
             setLoading(false);
         }
     }
 
     return (
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-6xl mx-auto p-6">
             <h1 className="text-2xl font-semibold text-gray-800 mb-6">
                 Middle-Mile • Cadastro de Veículos (Tarifas)
             </h1>
@@ -208,9 +219,17 @@ export default function VehiclesPage() {
                     <button
                         onClick={adicionar}
                         disabled={loading}
-                        className="inline-flex items-center bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg shadow-sm disabled:opacity-60"
+                        className="inline-flex items-center bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg shadow-sm gap-2 disabled:opacity-60"
                     >
-                        {loading ? "Salvando..." : "Adicionar"}
+                        {loading ? (
+                            <>
+                                <Loader2 className="w-4 h-4 animate-spin" /> Salvando...
+                            </>
+                        ) : (
+                            <>
+                                <PlusCircle className="w-4 h-4" /> Adicionar
+                            </>
+                        )}
                     </button>
                 </div>
             </div>
@@ -245,17 +264,30 @@ export default function VehiclesPage() {
                 <table className="min-w-full">
                     <thead className="bg-gray-50 text-gray-700">
                         <tr>
-                            <th className="px-4 py-3 text-left text-sm font-medium">Tipo de veículo</th>
-                            <th className="px-4 py-3 text-right text-sm font-medium">R$/km</th>
-                            <th className="px-4 py-3 text-right text-sm font-medium">Cap. min (kg)</th>
-                            <th className="px-4 py-3 text-right text-sm font-medium">Cap. max (kg)</th>
-                            <th className="px-4 py-3 text-center text-sm font-medium">Ações</th>
+                            <th className="px-4 py-3 text-left text-sm font-medium">
+                                Tipo de veículo
+                            </th>
+                            <th className="px-4 py-3 text-right text-sm font-medium">
+                                R$/km
+                            </th>
+                            <th className="px-4 py-3 text-right text-sm font-medium">
+                                Cap. min (kg)
+                            </th>
+                            <th className="px-4 py-3 text-right text-sm font-medium">
+                                Cap. max (kg)
+                            </th>
+                            <th className="px-4 py-3 text-center text-sm font-medium">
+                                Ações
+                            </th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                         {filtradas.length === 0 && (
                             <tr>
-                                <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
+                                <td
+                                    colSpan={5}
+                                    className="px-4 py-6 text-center text-gray-500"
+                                >
                                     Nenhuma tarifa.
                                 </td>
                             </tr>
@@ -263,22 +295,28 @@ export default function VehiclesPage() {
                         {filtradas.map((t) => (
                             <tr key={t.tipo_veiculo}>
                                 <td className="px-4 py-3">{t.tipo_veiculo}</td>
-                                <td className="px-4 py-3 text-right">{t.custo_km.toLocaleString("pt-BR")}</td>
-                                <td className="px-4 py-3 text-right">{t.capacidade_min.toLocaleString("pt-BR")}</td>
-                                <td className="px-4 py-3 text-right">{t.capacidade_max.toLocaleString("pt-BR")}</td>
+                                <td className="px-4 py-3 text-right">
+                                    {t.custo_km.toLocaleString("pt-BR")}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                    {t.capacidade_min.toLocaleString("pt-BR")}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                    {t.capacidade_max.toLocaleString("pt-BR")}
+                                </td>
                                 <td className="px-4 py-2">
                                     <div className="flex gap-2 justify-center">
                                         <button
                                             onClick={() => editar(t)}
-                                            className="px-3 py-1 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200"
+                                            className="px-3 py-1 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 flex items-center gap-1"
                                         >
-                                            Editar
+                                            <Pencil className="w-4 h-4" /> Editar
                                         </button>
                                         <button
                                             onClick={() => remover(t.tipo_veiculo)}
-                                            className="px-3 py-1 text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-200"
+                                            className="px-3 py-1 text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-200 flex items-center gap-1"
                                         >
-                                            Excluir
+                                            <Trash2 className="w-4 h-4" /> Excluir
                                         </button>
                                     </div>
                                 </td>
@@ -287,12 +325,6 @@ export default function VehiclesPage() {
                     </tbody>
                 </table>
             </div>
-
-            {loading && (
-                <div className="text-sm text-gray-500 mt-3">
-                    Processando…
-                </div>
-            )}
         </div>
     );
 }

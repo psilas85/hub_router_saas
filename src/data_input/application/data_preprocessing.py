@@ -57,9 +57,9 @@ class DataPreprocessing:
             "Data Frete": "envio_data",
         }
 
-    def execute(self, filepath):
+    def execute(self, filepath, sep=","):
         try:
-            df = self.carregar_dados(filepath)
+            df = self.carregar_dados(filepath, sep=sep)
             df = self.criar_cte_numero(df)
             df = self.criar_endereco_completo(df)
             df = self.formatar_dados(df)
@@ -102,11 +102,12 @@ class DataPreprocessing:
             return None
 
 
-    def carregar_dados(self, filepath):
+    def carregar_dados(self, filepath, sep=","):
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Arquivo não encontrado: {filepath}")
 
-        df = pd.read_csv(filepath, delimiter=";", encoding="utf-8", dtype=str)
+        df = pd.read_csv(filepath, sep=sep, encoding="utf-8-sig", dtype=str)
+
 
         # 🔧 Padroniza nomes das colunas para evitar problemas com espaços e símbolos
         df.columns = df.columns.str.strip()

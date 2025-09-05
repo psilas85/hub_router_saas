@@ -100,7 +100,8 @@ def gerar_mapa_estatico(tenant_id: str, envio_data: str):
 
     # Salvar
 
-    output_folder = f"exports/last_mile_routing/maps/{tenant_id}"
+    # 🔧 Corrigido para /app/exports
+    output_folder = f"/app/exports/last_mile_routing/maps/{tenant_id}"
     os.makedirs(output_folder, exist_ok=True)
     caminho_png = f"{output_folder}/mapa_rotas_{envio_data}.png"
     plt.savefig(caminho_png, dpi=300, bbox_inches="tight")

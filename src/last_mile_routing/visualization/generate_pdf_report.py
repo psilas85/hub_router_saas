@@ -30,8 +30,8 @@ def formatar_numero(valor, inteiro=False):
 
 
 def generate_pdf_report(tenant_id, envio_data):
-
-    output_folder = f"exports/last_mile_routing/relatorios/{tenant_id}"
+    # 🔧 Corrigido para /app/exports
+    output_folder = f"/app/exports/last_mile_routing/relatorios/{tenant_id}"
     os.makedirs(output_folder, exist_ok=True)
 
     file_name = f"{output_folder}/relatorio_last_mile_{envio_data}.pdf"

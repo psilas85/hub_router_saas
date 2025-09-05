@@ -1,6 +1,7 @@
 services:
   api_gateway:
     container_name: api_gateway   # 👈 nome fixo para resolver no DNS
+    image: psilas85/hub_router-api_gateway:latest
     build:
       context: ./src/api_gateway
       dockerfile: Dockerfile.api_gateway

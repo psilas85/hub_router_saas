@@ -1,9 +1,9 @@
 // src/pages/Login/LoginPage.tsx
-
-// src/pages/Login/LoginPage.tsx
 import { useState } from "react";
 import { useAuthStore } from "@/store/authStore";
 import { useNavigate } from "react-router-dom";
+import { Mail, Lock } from "lucide-react";
+import { motion } from "framer-motion";
 
 export default function LoginPage() {
     const [email, setEmail] = useState("");
@@ -27,15 +27,13 @@ export default function LoginPage() {
         try {
             setLoading(true);
             await login(email, senha);
-            navigate("/"); // ✅ redireciona após login
+            navigate("/");
         } catch (err: any) {
             console.error("❌ Erro no login:", err);
-
             if (err?.response?.status === 401) {
                 setErrors({ email: "Usuário ou senha inválidos" });
             } else {
-                alert("⚠️ Erro inesperado no login. Verifique sua conexão ou tente novamente.");
-                setErrors({ email: "Erro inesperado" });
+                setErrors({ email: "Erro inesperado. Tente novamente." });
             }
         } finally {
             setLoading(false);
@@ -43,49 +41,75 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="flex h-screen">
+        <motion.div
+            className="flex h-screen bg-gray-50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.8 }}
+        >
             {/* Coluna Esquerda */}
-            <div className="hidden md:flex w-1/2 bg-emerald-600 text-white flex-col items-center justify-center p-8">
-                <img src="/hubrouter_logo.png" alt="HubRouter Logo" className="h-24 mb-6" />
-                <h1 className="text-3xl font-bold mb-2">HubRouter</h1>
-                <p className="text-lg text-center max-w-md">
-                    Inteligência Artificial para redes logísticas
-                </p>
-            </div>
+            <motion.div
+                className="hidden md:flex w-1/2 bg-gradient-to-br from-emerald-600 to-emerald-800 text-white items-center justify-center relative overflow-hidden"
+                initial={{ x: -80, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                transition={{ duration: 0.9, ease: "easeOut" }}
+            >
+                <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" />
+                <div className="relative z-10 text-center px-8">
+                    <img src="/hubrouter_logo.png" alt="HubRouter Logo" className="h-28 mx-auto mb-6 drop-shadow-lg" />
+                    <h1 className="text-4xl font-extrabold mb-4 tracking-tight">HubRouter</h1>
+                    <p className="text-lg opacity-90 max-w-md mx-auto">
+                        Inteligência Artificial para redes logísticas
+                    </p>
+                </div>
+            </motion.div>
 
             {/* Coluna Direita */}
-            <div className="w-full md:w-1/2 flex items-center justify-center bg-white">
-                <div className="w-full max-w-md p-8 border rounded-lg shadow-lg">
-                    <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-                        Acessar Conta
-                    </h2>
+            <motion.div
+                className="w-full md:w-1/2 flex items-center justify-center p-6"
+                initial={{ x: 80, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                transition={{ duration: 0.9, ease: "easeOut" }}
+            >
+                <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8">
+                    <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">Acessar Conta</h2>
 
-                    <form className="space-y-4" onSubmit={handleSubmit}>
+                    <form className="space-y-5" onSubmit={handleSubmit}>
                         {/* Email */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                            <input
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                placeholder="seu@email.com"
-                                className={`w-full p-3 border rounded-md focus:ring-2 focus:outline-none ${errors.email ? "border-red-500 focus:ring-red-500" : "focus:ring-emerald-500"
-                                    }`}
-                            />
+                            <div className="relative">
+                                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                                <input
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="seu@email.com"
+                                    className={`w-full pl-10 pr-3 p-3 border rounded-lg focus:ring-2 focus:outline-none ${errors.email
+                                            ? "border-red-500 focus:ring-red-500"
+                                            : "border-gray-300 focus:ring-emerald-500"
+                                        }`}
+                                />
+                            </div>
                             {errors.email && <p className="text-red-500 text-sm mt-1">{errors.email}</p>}
                         </div>
 
                         {/* Senha */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
-                            <input
-                                type="password"
-                                value={senha}
-                                onChange={(e) => setSenha(e.target.value)}
-                                placeholder="********"
-                                className={`w-full p-3 border rounded-md focus:ring-2 focus:outline-none ${errors.senha ? "border-red-500 focus:ring-red-500" : "focus:ring-emerald-500"
-                                    }`}
-                            />
+                            <div className="relative">
+                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                                <input
+                                    type="password"
+                                    value={senha}
+                                    onChange={(e) => setSenha(e.target.value)}
+                                    placeholder="********"
+                                    className={`w-full pl-10 pr-3 p-3 border rounded-lg focus:ring-2 focus:outline-none ${errors.senha
+                                            ? "border-red-500 focus:ring-red-500"
+                                            : "border-gray-300 focus:ring-emerald-500"
+                                        }`}
+                                />
+                            </div>
                             {errors.senha && <p className="text-red-500 text-sm mt-1">{errors.senha}</p>}
                         </div>
 
@@ -100,21 +124,13 @@ export default function LoginPage() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full bg-emerald-600 text-white p-3 rounded-md hover:bg-emerald-700 transition disabled:opacity-50"
+                            className="w-full bg-emerald-600 text-white p-3 rounded-lg font-medium hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md disabled:opacity-50"
                         >
                             {loading ? "Entrando..." : "Entrar"}
                         </button>
-
-                        {/* Botão criar conta */}
-                        <button
-                            type="button"
-                            className="w-full border border-emerald-600 text-emerald-600 p-3 rounded-md hover:bg-emerald-50 transition"
-                        >
-                            Criar Conta
-                        </button>
                     </form>
                 </div>
-            </div>
-        </div>
+            </motion.div>
+        </motion.div>
     );
 }

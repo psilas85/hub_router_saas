@@ -1,4 +1,5 @@
 // frontend/src/pages/Planner/WhatIfTab.tsx
+// frontend/src/pages/Planner/WhatIfTab.tsx
 import { useState } from "react";
 import { predict } from "@/services/ml";
 import type { TrainTarget } from "@/services/ml";
@@ -57,12 +58,13 @@ export default function WhatIfTab() {
     const custoTotal = feat.custo_transfer_total + feat.custo_last_mile;
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-6">
             <h2 className="text-xl font-bold">🔮 Simulação What-if</h2>
 
-            <div className="grid md:grid-cols-4 gap-3">
+            {/* 🔹 Formulário */}
+            <div className="bg-white rounded-xl shadow p-4 grid md:grid-cols-4 gap-4">
                 <div>
-                    <label className="block text-sm mb-1">Target</label>
+                    <label className="block text-sm text-gray-600 mb-1">Target</label>
                     <select
                         className="input"
                         value={target}
@@ -74,7 +76,9 @@ export default function WhatIfTab() {
                 </div>
 
                 <div>
-                    <label className="block text-sm mb-1">Quantidade de Clusters</label>
+                    <label className="block text-sm text-gray-600 mb-1">
+                        Quantidade de Clusters
+                    </label>
                     <input
                         className="input"
                         type="number"
@@ -84,7 +88,9 @@ export default function WhatIfTab() {
                 </div>
 
                 <div>
-                    <label className="block text-sm mb-1">Total de Entregas</label>
+                    <label className="block text-sm text-gray-600 mb-1">
+                        Total de Entregas
+                    </label>
                     <input
                         className="input"
                         type="number"
@@ -94,7 +100,9 @@ export default function WhatIfTab() {
                 </div>
 
                 <div>
-                    <label className="block text-sm mb-1">Custo de Transferência (R$)</label>
+                    <label className="block text-sm text-gray-600 mb-1">
+                        Custo Transferência (R$)
+                    </label>
                     <input
                         className="input"
                         type="number"
@@ -104,7 +112,9 @@ export default function WhatIfTab() {
                 </div>
 
                 <div>
-                    <label className="block text-sm mb-1">Custo Last Mile (R$)</label>
+                    <label className="block text-sm text-gray-600 mb-1">
+                        Custo Last Mile (R$)
+                    </label>
                     <input
                         className="input"
                         type="number"
@@ -114,7 +124,9 @@ export default function WhatIfTab() {
                 </div>
 
                 <div>
-                    <label className="block text-sm mb-1">Peso Total (kg)</label>
+                    <label className="block text-sm text-gray-600 mb-1">
+                        Peso Total (kg)
+                    </label>
                     <input
                         className="input"
                         type="number"
@@ -124,7 +136,9 @@ export default function WhatIfTab() {
                 </div>
 
                 <div>
-                    <label className="block text-sm mb-1">Total de Volumes</label>
+                    <label className="block text-sm text-gray-600 mb-1">
+                        Total de Volumes
+                    </label>
                     <input
                         className="input"
                         type="number"
@@ -134,7 +148,9 @@ export default function WhatIfTab() {
                 </div>
 
                 <div>
-                    <label className="block text-sm mb-1">Valor Total NF (R$)</label>
+                    <label className="block text-sm text-gray-600 mb-1">
+                        Valor Total NF (R$)
+                    </label>
                     <input
                         className="input"
                         type="number"
@@ -144,17 +160,21 @@ export default function WhatIfTab() {
                 </div>
             </div>
 
-            <div className="p-3 bg-gray-100 rounded text-sm">
+            {/* 🔹 Custo total calculado */}
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded text-sm">
                 <b>Custo Total (auto):</b>{" "}
-                <span className="text-emerald-700">{fmtMoeda.format(custoTotal)}</span>
+                <span className="text-emerald-700 font-medium">
+                    {fmtMoeda(custoTotal)}
+                </span>
             </div>
 
             <button className="btn" onClick={onRun} disabled={loading}>
                 {loading ? "Calculando..." : "Rodar Simulação What-if"}
             </button>
 
+            {/* 🔹 Saída */}
             {out && (
-                <div className="mt-4 p-4 border rounded-xl bg-gray-50 space-y-2">
+                <div className="mt-4 p-4 border rounded-xl bg-gray-50 space-y-3">
                     <div>
                         <b>Algoritmo Selecionado:</b> {out.algorithm ?? "-"}
                     </div>
@@ -162,9 +182,7 @@ export default function WhatIfTab() {
                     {target === "custo_total" ? (
                         <div>
                             <b>Predição de Custo:</b>{" "}
-                            {out.prediction != null
-                                ? fmtMoeda.format(out.prediction)
-                                : "-"}
+                            {out.prediction != null ? fmtMoeda(out.prediction) : "-"}
                         </div>
                     ) : (
                         <div>
@@ -180,7 +198,9 @@ export default function WhatIfTab() {
                     {out.probability !== null && (
                         <div>
                             <b>Probabilidade:</b>{" "}
-                            {(out.probability * 100).toFixed(1)}%
+                            <span className="text-blue-600 font-medium">
+                                {(out.probability * 100).toFixed(1)}%
+                            </span>
                         </div>
                     )}
                 </div>
