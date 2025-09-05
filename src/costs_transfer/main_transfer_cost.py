@@ -13,7 +13,6 @@ def main():
     parser.add_argument("--tenant", required=True, help="Tenant ID")
     parser.add_argument("--data_inicial", required=True, help="Data inicial no formato YYYY-MM-DD")
     parser.add_argument("--data_final", required=False)
-    parser.add_argument("--modo_forcar", action="store_true", help="Forçar sobrescrita de dados existentes")
 
     args = parser.parse_args()
 

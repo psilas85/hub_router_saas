@@ -48,9 +48,11 @@ def executar_geracao_relatorio_final(
                     print(f"⚠️ Erro ao converter {html_path} para PNG: {e}")
 
     # Caminho do gráfico consolidado
+
     grafico_custo_path = os.path.join(
-        base_dir, "graphs", tenant_id, f"grafico_simulacao_{tenant_id}_{envio_data}.png"
+        base_dir, "graphs", tenant_id, f"grafico_simulacao_{envio_data}.png"
     )
+
 
     # 🔹 Se não existir, gera automaticamente o gráfico consolidado
     if not os.path.exists(grafico_custo_path):

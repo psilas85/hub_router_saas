@@ -36,7 +36,6 @@ async def calcular_custos(
     request: Request,
     data_inicial: date = Query(..., description="Data inicial (AAAA-MM-DD)"),
     data_final: date | None = Query(None, description="Data final (AAAA-MM-DD)"),
-    modo_forcar: bool = Query(False, description="Forçar sobrescrita dos dados existentes"),
     tenant_id: str = Depends(obter_tenant_id_do_token)
 ):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
@@ -44,17 +43,16 @@ async def calcular_custos(
 
     params = {
         "data_inicial": data_inicial,
-        "data_final": data_final or data_inicial,  # 🔑 default
-        "modo_forcar": str(modo_forcar).lower(),
+        "data_final": data_final or data_inicial,
+        "modo_forcar": "true",  # 🔒 sempre força
     }
 
     result = await forward_request(
         "POST",
-        f"{COSTS_LAST_MILE_URL}/costs_last_mile/custoslastmile/",
+        f"{COSTS_LAST_MILE_URL}/costs_last_mile/",
         headers=headers,
         params=params,
     )
-
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
@@ -76,7 +74,7 @@ async def visualizar_custos(
 
     result = await forward_request(
         "GET",
-        f"{COSTS_LAST_MILE_URL}/costs_last_mile/custoslastmile/visualizar",
+        f"{COSTS_LAST_MILE_URL}/costs_last_mile/visualizar",
         headers=headers,
         params=params,
     )
@@ -89,7 +87,6 @@ async def visualizar_custos(
 # CRUD de veículos
 # -------------------------
 
-# Listar
 @router.get("/vehicles", summary="Listar veículos Last-Mile")
 async def listar_veiculos(request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
@@ -97,7 +94,7 @@ async def listar_veiculos(request: Request, tenant_id: str = Depends(obter_tenan
 
     result = await forward_request(
         "GET",
-        f"{COSTS_LAST_MILE_URL}/costs_last_mile/custoslastmile/vehicles",
+        f"{COSTS_LAST_MILE_URL}/costs_last_mile/vehicles",
         headers=headers
     )
     if result["status_code"] >= 400:
@@ -105,7 +102,6 @@ async def listar_veiculos(request: Request, tenant_id: str = Depends(obter_tenan
     return result["content"]
 
 
-# Adicionar
 @router.post("/vehicles", summary="Adicionar veículo Last-Mile")
 async def adicionar_veiculo(request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
@@ -114,7 +110,7 @@ async def adicionar_veiculo(request: Request, tenant_id: str = Depends(obter_ten
 
     result = await forward_request(
         "POST",
-        f"{COSTS_LAST_MILE_URL}/costs_last_mile/custoslastmile/vehicles",
+        f"{COSTS_LAST_MILE_URL}/costs_last_mile/vehicles",
         headers=headers,
         json=body
     )
@@ -123,7 +119,6 @@ async def adicionar_veiculo(request: Request, tenant_id: str = Depends(obter_ten
     return result["content"]
 
 
-# Editar
 @router.put("/vehicles/{veiculo}", summary="Editar veículo Last-Mile")
 async def editar_veiculo(veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
@@ -132,7 +127,7 @@ async def editar_veiculo(veiculo: str, request: Request, tenant_id: str = Depend
 
     result = await forward_request(
         "PUT",
-        f"{COSTS_LAST_MILE_URL}/costs_last_mile/custoslastmile/vehicles/{veiculo}",
+        f"{COSTS_LAST_MILE_URL}/costs_last_mile/vehicles/{veiculo}",
         headers=headers,
         json=body
     )
@@ -141,7 +136,6 @@ async def editar_veiculo(veiculo: str, request: Request, tenant_id: str = Depend
     return result["content"]
 
 
-# Remover
 @router.delete("/vehicles/{veiculo}", summary="Remover veículo Last-Mile")
 async def remover_veiculo(veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
@@ -149,7 +143,7 @@ async def remover_veiculo(veiculo: str, request: Request, tenant_id: str = Depen
 
     result = await forward_request(
         "DELETE",
-        f"{COSTS_LAST_MILE_URL}/costs_last_mile/custoslastmile/vehicles/{veiculo}",
+        f"{COSTS_LAST_MILE_URL}/costs_last_mile/vehicles/{veiculo}",
         headers=headers
     )
     if result["status_code"] >= 400:

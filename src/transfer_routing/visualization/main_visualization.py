@@ -45,11 +45,11 @@ def main():
         logger.info(f"🗺️ Gerando mapa de {envio_data} para tenant '{tenant_id}'...")
 
         # HTML
-        caminho_mapa_html = gerar_mapa(tenant_id, data, data, output_path=f"output/{tenant_id}/maps")
+        caminho_mapa_html = gerar_mapa(tenant_id, data, data, output_path=caminho_output(tenant_id, "maps"))
 
         # PNG
         logger.info("📸 Gerando mapa estático (PNG)...")
-        caminho_mapa_png = gerar_mapa_estatico_transferencias(tenant_id, data, data, output_path=f"output/{tenant_id}/maps")
+        caminho_mapa_png = gerar_mapa_estatico_transferencias(tenant_id, data, data, output_path=caminho_output(tenant_id, "maps"))
 
         # PDF
         conn = conectar_banco_routing()
@@ -58,7 +58,7 @@ def main():
             tenant_id=tenant_id,
             envio_data=envio_data,
             data_final=envio_data,
-            output_path=f"output/{tenant_id}/relatorios",
+            output_path=caminho_output(tenant_id, "relatorios"),
             caminho_mapa_html=caminho_mapa_html,
             caminho_mapa_png=caminho_mapa_png,
             conn=conn,

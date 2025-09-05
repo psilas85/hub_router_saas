@@ -34,7 +34,6 @@ async def calcular_custos_transferencia(
     request: Request,
     data_inicial: date = Query(...),
     data_final: date = Query(None),
-    modo_forcar: bool = Query(False),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
@@ -42,7 +41,7 @@ async def calcular_custos_transferencia(
 
     params = {
         "data_inicial": data_inicial.isoformat(),
-        "modo_forcar": str(modo_forcar).lower(),
+        "modo_forcar": "true",  # 🔒 fixo
     }
     if data_final:
         params["data_final"] = data_final.isoformat()
@@ -50,6 +49,7 @@ async def calcular_custos_transferencia(
     result = await forward_request(
         "POST", f"{COSTS_TRANSFER_URL}/", headers=headers, params=params
     )
+
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
@@ -60,17 +60,17 @@ async def calcular_custos_transferencia(
 async def visualizar_custos_transferencia(
     request: Request,
     data: date = Query(...),
-    modo_forcar: bool = Query(False),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
 
-    params = {"data": data.isoformat(), "modo_forcar": str(modo_forcar).lower()}
+    params = {"data": data.isoformat(), "modo_forcar": "true"}  # 🔒 fixo
 
     result = await forward_request(
         "GET", f"{COSTS_TRANSFER_URL}/visualizar", headers=headers, params=params
     )
+
 
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
@@ -96,53 +96,40 @@ async def visualizar_custos_transferencia(
 async def listar_tarifas(request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
-    result = await forward_request("GET", f"{COSTS_TRANSFER_URL}/tarifas", headers=headers)
+    # ⬇️ acrescentar /custos_transferencia
+    result = await forward_request("GET", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas", headers=headers)
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
-
 
 @router.post("/tarifas", summary="Criar tarifa")
 async def criar_tarifa(request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
     body = await request.json()
-    result = await forward_request(
-        "POST", f"{COSTS_TRANSFER_URL}/tarifas", headers=headers, json=body
-    )
+    result = await forward_request("POST", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas", headers=headers, json=body)
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
 
-
 @router.put("/tarifas/{tipo_veiculo}", summary="Atualizar tarifa")
-async def atualizar_tarifa(
-    tipo_veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)
-):
+async def atualizar_tarifa(tipo_veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
     body = await request.json()
-    result = await forward_request(
-        "PUT", f"{COSTS_TRANSFER_URL}/tarifas/{tipo_veiculo}", headers=headers, json=body
-    )
+    result = await forward_request("PUT", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas/{tipo_veiculo}", headers=headers, json=body)
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
-
 
 @router.delete("/tarifas/{tipo_veiculo}", summary="Remover tarifa")
-async def remover_tarifa(
-    tipo_veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)
-):
+async def remover_tarifa(tipo_veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
-    result = await forward_request(
-        "DELETE", f"{COSTS_TRANSFER_URL}/tarifas/{tipo_veiculo}", headers=headers
-    )
+    result = await forward_request("DELETE", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas/{tipo_veiculo}", headers=headers)
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
-
 
 # ---------- Artefatos ----------
 @router.get("/artefatos", summary="Links e dados dos artefatos (CSV/JSON/PDF)")

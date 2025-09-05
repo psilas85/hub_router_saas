@@ -12,7 +12,6 @@ export default function ClusterizationPage() {
     const [fundirClusters, setFundirClusters] = useState(false);
     const [desativarHub, setDesativarHub] = useState(false);
     const [raioHub, setRaioHub] = useState(80.0);
-    const [modoForcar, setModoForcar] = useState(false);
 
     const [loading, setLoading] = useState(false);
     const [resultado, setResultado] = useState<any>(null);
@@ -40,7 +39,6 @@ export default function ClusterizationPage() {
                     fundir_clusters_pequenos: fundirClusters,
                     desativar_cluster_hub_central: desativarHub,
                     raio_cluster_hub_central: raioHub,
-                    modo_forcar: modoForcar,
                 },
             });
 
@@ -167,15 +165,6 @@ export default function ClusterizationPage() {
                             onChange={(e) => setRaioHub(Number(e.target.value))}
                             className="border rounded px-3 py-2 w-full"
                         />
-                    </label>
-
-                    <label className="flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={modoForcar}
-                            onChange={(e) => setModoForcar(e.target.checked)}
-                        />
-                        Forçar reprocessamento
                     </label>
 
                     <button

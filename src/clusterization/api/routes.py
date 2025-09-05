@@ -41,10 +41,10 @@ def clusterizar(
     fundir_clusters_pequenos: bool = Query(False, description="Fundir clusters pequenos"),
     desativar_cluster_hub_central: bool = Query(False, description="Desativar cluster do hub central"),
     raio_cluster_hub_central: float = Query(80.0, description="Raio (km) para cluster do hub central"),
-    modo_forcar: bool = Query(False, description="Sobrescrever clusterização existente"),
     usuario: UsuarioToken = Depends(get_current_user)
 ):
     tenant_id = usuario.tenant_id
+    modo_forcar = True  # 🔒 sempre força sobrescrita
 
     # Se não vier data_final, assume igual à inicial
     if data_final is None:
@@ -135,7 +135,7 @@ def clusterizar(
                 "fundir_clusters_pequenos": fundir_clusters_pequenos,
                 "desativar_cluster_hub_central": desativar_cluster_hub_central,
                 "raio_cluster_hub_central": raio_cluster_hub_central,
-                "modo_forcar": modo_forcar
+                "modo_forcar": True
             }
         }
 

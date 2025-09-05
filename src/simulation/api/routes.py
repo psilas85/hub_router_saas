@@ -182,7 +182,7 @@ def visualizar_simulacao(
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
     """
-    Retorna os artefatos gerados (mapas, tabelas, gráficos e relatório PDF)
+    Retorna os artefatos gerados (mapas, tabelas, gráficos, CSVs e relatório PDF)
     para a data informada, organizados por k_clusters.
     Marca também o cenário ótimo (is_ponto_otimo).
     """
@@ -199,7 +199,7 @@ def visualizar_simulacao(
         graficos = [
             f"/exports/simulation/graphs/{tenant_id}/{f}"
             for f in os.listdir(graficos_dir)
-            if f.startswith(f"grafico_simulacao_") or f.startswith(f"grafico_custos_{data}_")
+            if f.startswith("grafico_simulacao_") or f.startswith(f"grafico_custos_{data}_")
         ]
         response["graficos"] = sorted(graficos)
 
@@ -228,7 +228,14 @@ def visualizar_simulacao(
                 if len(parts) > 1:
                     k = parts[-1].split(".")[0]
                     response["cenarios"].setdefault(
-                        k, {"mapas": [], "tabelas_lastmile": [], "tabelas_transferencias": []}
+                        k,
+                        {
+                            "mapas": [],
+                            "tabelas_lastmile": [],
+                            "tabelas_transferencias": [],
+                            "tabelas_resumo": [],
+                            "tabelas_detalhes": []
+                        }
                     )
                     response["cenarios"][k]["mapas"].append(
                         f"/exports/simulation/maps/{tenant_id}/{f}"
@@ -241,7 +248,14 @@ def visualizar_simulacao(
             if f.endswith(".png") and f"_{data}_" in f:
                 k = f.split("_k")[-1].split(".")[0]
                 response["cenarios"].setdefault(
-                    k, {"mapas": [], "tabelas_lastmile": [], "tabelas_transferencias": []}
+                    k,
+                    {
+                        "mapas": [],
+                        "tabelas_lastmile": [],
+                        "tabelas_transferencias": [],
+                        "tabelas_resumo": [],
+                        "tabelas_detalhes": []
+                    }
                 )
                 response["cenarios"][k]["tabelas_lastmile"].append(
                     f"/exports/simulation/tabelas_lastmile/{tenant_id}/{f}"
@@ -254,10 +268,57 @@ def visualizar_simulacao(
             if f.endswith(".png") and f"_{data}_" in f:
                 k = f.split("_k")[-1].split("_")[0]
                 response["cenarios"].setdefault(
-                    k, {"mapas": [], "tabelas_lastmile": [], "tabelas_transferencias": []}
+                    k,
+                    {
+                        "mapas": [],
+                        "tabelas_lastmile": [],
+                        "tabelas_transferencias": [],
+                        "tabelas_resumo": [],
+                        "tabelas_detalhes": []
+                    }
                 )
                 response["cenarios"][k]["tabelas_transferencias"].append(
                     f"/exports/simulation/tabelas_transferencias/{tenant_id}/{f}"
+                )
+
+    # Tabelas resumo CSV
+    resumo_dir = f"./exports/simulation/resumos/{tenant_id}"
+    if os.path.isdir(resumo_dir):
+        for f in os.listdir(resumo_dir):
+            if f.endswith(".csv") and f"_{data}_" in f:
+                k = f.split("_k")[-1].split(".")[0]
+                response["cenarios"].setdefault(
+                    k,
+                    {
+                        "mapas": [],
+                        "tabelas_lastmile": [],
+                        "tabelas_transferencias": [],
+                        "tabelas_resumo": [],
+                        "tabelas_detalhes": []
+                    }
+                )
+                response["cenarios"][k]["tabelas_resumo"].append(
+                    f"/exports/simulation/resumos/{tenant_id}/{f}"
+                )
+
+    # Tabelas detalhes CSV
+    detalhes_dir = f"./exports/simulation/detalhes/{tenant_id}"
+    if os.path.isdir(detalhes_dir):
+        for f in os.listdir(detalhes_dir):
+            if f.endswith(".csv") and f"_{data}_" in f:
+                k = f.split("_k")[-1].split(".")[0]
+                response["cenarios"].setdefault(
+                    k,
+                    {
+                        "mapas": [],
+                        "tabelas_lastmile": [],
+                        "tabelas_transferencias": [],
+                        "tabelas_resumo": [],
+                        "tabelas_detalhes": []
+                    }
+                )
+                response["cenarios"][k]["tabelas_detalhes"].append(
+                    f"/exports/simulation/detalhes/{tenant_id}/{f}"
                 )
 
     # Marca o cenário ótimo

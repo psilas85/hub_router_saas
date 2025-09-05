@@ -57,7 +57,8 @@ def main():
     parser = argparse.ArgumentParser(description="📊 Geração de visualizações da clusterização")
     parser.add_argument("--tenant", required=True, help="Tenant ID")
     parser.add_argument("--data", required=True, help="Data de envio (YYYY-MM-DD)")
-    parser.add_argument("--modo-forcar", action="store_true", help="Sobrescreve relatórios existentes")
+    # (mantido por compatibilidade, porém ignorado)
+    parser.add_argument("--modo-forcar", action="store_true", help="(Ignorado) Agora sempre sobrescreve")
     parser.add_argument(
         "--formato",
         choices=["pdf", "csv", "json", "all"],
@@ -68,13 +69,11 @@ def main():
     args = parser.parse_args()
     tenant_id = args.tenant
     envio_data = args.data
-    modo_forcar = args.modo_forcar
+    modo_forcar = True  # 🔒 sempre sobrescreve
     formato = args.formato
 
-    # 📂 Estrutura padronizada (usando volume /app/output)
     BASE_OUTPUT_DIR = "/app/output"
     tenant_base = os.path.join(BASE_OUTPUT_DIR, tenant_id)
-
 
     maps_dir = os.path.join(tenant_base, "maps")
     graphs_dir = os.path.join(tenant_base, "graphs")
@@ -83,6 +82,7 @@ def main():
     os.makedirs(maps_dir, exist_ok=True)
     os.makedirs(graphs_dir, exist_ok=True)
     os.makedirs(relatorios_dir, exist_ok=True)
+
 
     logger.info(f"🔎 Carregando dados para tenant '{tenant_id}' e data '{envio_data}'...")
     df_clusterizado, df_resumo = carregar_dados_para_visualizacao(tenant_id, envio_data)

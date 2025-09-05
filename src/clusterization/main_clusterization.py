@@ -46,13 +46,10 @@ parser.add_argument(
     help="Raio em km para definir entregas que serão atribuídas ao cluster Hub Central."
 )
 
-parser.add_argument(
-    "--modo-forcar",
-    action="store_true",
-    help="Força reprocessamento limpando dados antigos para data e tenant."
-)
-
 args = parser.parse_args()
+
+# === PARÂMETRO PADRÃO GLOBAL ===
+MODO_FORCAR = True  # 🔒 sempre forçar reprocessamento
 
 # === PARÂMETROS ===
 tenant_id = args.tenant
@@ -76,7 +73,7 @@ logger.info(
     f"k_min={args.k_min}, k_max={args.k_max}, "
     f"min_entregas_por_cluster={args.min_entregas_por_cluster}, "
     f"fundir_clusters_pequenos={args.fundir_clusters_pequenos}, "
-    f"modo_forcar={args.modo_forcar}"
+    f"modo_forcar={MODO_FORCAR}"
 )
 
 # === CONEXÃO COM BANCO ===
@@ -125,12 +122,12 @@ for envio_data in datas_envio:
     existe_resumo = writer.existe_resumo_clusterizacao(envio_data, tenant_id)
 
     if existe_resumo:
-        if args.modo_forcar:
+        if MODO_FORCAR:
             logger.info(f"♻️ Modo forçar ativo: limpando dados antigos para {envio_data} e tenant {tenant_id}...")
             writer.excluir_clusterizacao_por_data_tenant(envio_data, tenant_id)
             logger.info("✅ Dados antigos removidos com sucesso.")
         else:
-            logger.info(f"⚠️ Dados já existem para {envio_data} e tenant {tenant_id} e modo-forcar não ativado. Pulando processamento.")
+            logger.info(f"⚠️ Dados já existem para {envio_data} e tenant {tenant_id}. Pulando processamento.")
             continue
 
     df_envio = df_entregas[df_entregas["envio_data"] == envio_data]

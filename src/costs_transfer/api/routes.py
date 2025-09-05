@@ -17,7 +17,6 @@ logger = logging.getLogger("costs_transfer")
 def calcular_custos_transferencia(
     data_inicial: date = Query(...),
     data_final: date = Query(None),
-    modo_forcar: bool = Query(False),
     tenant_id: str = Depends(obter_tenant_id_do_token)
 ):
     if not data_final:
@@ -28,8 +27,11 @@ def calcular_custos_transferencia(
     try:
         service = TransferCostService(tenant_id=tenant_id)
         service.processar_custos(
-            data_inicial=data_inicial, data_final=data_final, modo_forcar=modo_forcar
+            data_inicial=data_inicial,
+            data_final=data_final,
+            modo_forcar=True  # 🔒 fixo
         )
+
         return {
             "status": "ok",
             "mensagem": f"✅ Transfer costs processed for {data_inicial} → {data_final}"
@@ -42,8 +44,7 @@ def calcular_custos_transferencia(
 @router.get("/visualizar", summary="Generate, save and return transfer costs")
 def visualizar_custos_transferencia(
     data: date = Query(...),
-    modo_forcar: bool = Query(False),
-    tenant_id: str = Depends(obter_tenant_id_do_token)
+    tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
     envio_data = data.isoformat()
     base = "/app/exports/costs_transfer"
@@ -56,7 +57,7 @@ def visualizar_custos_transferencia(
         logger.warning("⚠️ No data found to generate reports.")
         raise HTTPException(status_code=404, detail="No data found to generate reports.")
 
-    # Generate files
+    # Generate files (sempre sobrescreve 🔒)
     csv_path = salvar_csv(df, tenant_id, envio_data)
     json_path = salvar_json(df, tenant_id, envio_data)
     pdf_path = gerar_relatorio_transferencias(envio_data, tenant_id, df)
@@ -76,5 +77,5 @@ def visualizar_custos_transferencia(
         "csv_url": _to_public_url(csv_path),
         "json_url": _to_public_url(json_path),
         "pdf_url": _to_public_url(pdf_path),
-        "json_dados": json_dados
+        "json_dados": json_dados,
     }

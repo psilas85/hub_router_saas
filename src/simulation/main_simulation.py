@@ -67,7 +67,7 @@ def parse_args():
         type=float,
         default=50.0,
         help="Peso máximo (kg) para considerar que um veículo é leve para efeito de restrição municipal. "
-             "Se --restricao-veiculo-leve-municipio estiver ativo, veículos leves só podem operar dentro da cidade do centro do cluster. (Default: 300kg)"
+             "Se --restricao-veiculo-leve-municipio estiver ativo, veículos leves só podem operar dentro da cidade do centro do cluster. (Default: 50kg)"
     )
 
     parser.add_argument("--desativar_cluster_hub", action="store_true", help="Desativa o cluster automático para entregas próximas ao hub central")

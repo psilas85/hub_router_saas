@@ -15,7 +15,7 @@ SIMULATION_URL = settings.SIMULATION_URL
 @router.get("/health", summary="Healthcheck Simulation")
 async def healthcheck(request: Request):
     headers = {"authorization": request.headers.get("authorization")}
-    result = await forward_request("GET", f"{SIMULATION_URL}/simulation/health", headers=headers)
+    result = await forward_request("GET", f"{SIMULATION_URL}/simulacao/health", headers=headers)
 
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
@@ -30,7 +30,6 @@ async def executar_simulacao(
     # 📅 Datas e controle
     data_inicial: date = Query(..., description="Data inicial (YYYY-MM-DD)"),
     data_final: date = Query(..., description="Data final (YYYY-MM-DD)"),
-    modo_forcar: bool = Query(False, description="Força reexecução mesmo com simulações existentes"),
 
     # 🔢 Clusterização
     k_min: int = Query(2, description="Valor mínimo de k_clusters"),
@@ -71,25 +70,25 @@ async def executar_simulacao(
     usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
 ):
     """
-    Encaminha requisição do API Gateway → Simulation Service,
-    mantendo todos os parâmetros alinhados com main_simulation.py
+    Encaminha requisição do API Gateway → Simulation Service.
+    Todos os parâmetros do main_simulation.py, exceto modo_forcar (fixo = True).
     """
 
     params = {
         # 📅 Datas
         "data_inicial": data_inicial,
         "data_final": data_final,
-        "modo_forcar": str(modo_forcar).lower(),
+        "modo_forcar": True,  # 🔒 fixo no Gateway
 
         # 🔢 Clusterização
         "k_min": k_min,
         "k_max": k_max,
         "k_inicial_transferencia": k_inicial_transferencia,
         "min_entregas_cluster": min_entregas_cluster,
-        "fundir_clusters_pequenos": str(fundir_clusters_pequenos).lower(),
+        "fundir_clusters_pequenos": fundir_clusters_pequenos,
 
         # 🔗 Cluster hub
-        "desativar_cluster_hub": str(desativar_cluster_hub).lower(),
+        "desativar_cluster_hub": desativar_cluster_hub,
         "raio_hub_km": raio_hub_km,
 
         # ⏱️ Tempos
@@ -102,7 +101,7 @@ async def executar_simulacao(
         "limite_peso": limite_peso,
 
         # ⚙️ Restrições
-        "restricao_veiculo_leve_municipio": str(restricao_veiculo_leve_municipio).lower(),
+        "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
         "peso_leve_max": peso_leve_max,
 
         # 🔗 Transferências
@@ -115,14 +114,14 @@ async def executar_simulacao(
         "tempo_max_k1": tempo_max_k1,
 
         # ⚙️ Rotas excedentes
-        "permitir_rotas_excedentes": str(permitir_rotas_excedentes).lower(),
+        "permitir_rotas_excedentes": permitir_rotas_excedentes,
     }
 
     headers = {"authorization": request.headers.get("authorization")}
 
     result = await forward_request(
         "POST",
-        f"{SIMULATION_URL}/simulation/simulacao/executar",  # ✅ corrigido para alinhar com root_path
+        f"{SIMULATION_URL}/simulacao/executar",
         headers=headers,
         params=params
     )
@@ -131,6 +130,7 @@ async def executar_simulacao(
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
 
     return result["content"]
+
 
 @router.get("/simulacao/visualizar", summary="Visualizar artefatos da simulação")
 async def visualizar_simulacao(
@@ -145,7 +145,7 @@ async def visualizar_simulacao(
 
     result = await forward_request(
         "GET",
-        f"{SIMULATION_URL}/simulation/simulacao/visualizar",
+        f"{SIMULATION_URL}/simulacao/visualizar",
         headers=headers,
         params={"data": data}
     )

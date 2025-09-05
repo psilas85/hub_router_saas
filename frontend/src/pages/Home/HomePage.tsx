@@ -32,10 +32,19 @@ import "leaflet/dist/leaflet.css";
 import { fmtCompact } from "@/utils/format";
 import L from "leaflet";
 
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8010").replace(
-    /\/+$/,
-    ""
-);
+// 🔧 Força API Gateway (porta 8010)
+let apiBase = import.meta.env.VITE_API_URL || window.location.origin;
+try {
+    const u = new URL(apiBase);
+    u.port = "8010"; // sempre usar porta 8010 do gateway
+    apiBase = u.toString().replace(/\/+$/, "");
+} catch {
+    apiBase = "http://localhost:8010";
+}
+const API_URL = apiBase;
+console.log("🌍 Home API_URL:", API_URL);
+
+
 
 export default function HomePage() {
     const navigate = useNavigate();
@@ -200,20 +209,17 @@ export default function HomePage() {
                                 zoom={6}
                                 center={[-15, -47]} // fallback Brasil
                             >
-                                {/* Fundo clean Carto Light */}
                                 <TileLayer
                                     attribution='&copy; <a href="https://carto.com/">CARTO</a>'
                                     url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
                                 />
                                 <AutoZoom pontos={entregasMapa} />
 
-                                {/* Clusters customizados */}
                                 <MarkerClusterGroup
                                     chunkedLoading
                                     iconCreateFunction={(cluster: any) => {
                                         const count = cluster.getChildCount();
                                         let color = "bg-blue-500";
-
                                         if (count > 1000) color = "bg-red-500";
                                         else if (count > 500) color = "bg-orange-500";
                                         else if (count > 100) color = "bg-green-500";
@@ -243,7 +249,6 @@ export default function HomePage() {
                                         </CircleMarker>
                                     ))}
                                 </MarkerClusterGroup>
-
                             </MapContainer>
                         ) : (
                             <EmptyMessage icon={<Package className="w-5 h-5 mr-2" />} />

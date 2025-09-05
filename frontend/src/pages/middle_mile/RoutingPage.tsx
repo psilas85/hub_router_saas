@@ -1,5 +1,4 @@
-// frontend/src/pages/middle_mile/RoutingPage.tsx
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
 import { Loader2, PlayCircle, FileText, Map } from "lucide-react";
@@ -10,6 +9,13 @@ type Artefatos = {
     data_final?: string | null;
     map_html_url?: string | null;
     pdf_url?: string | null;
+};
+
+// 🔧 helper para normalizar URLs (aceita absoluta ou relativa)
+const resolveUrl = (path: string | null | undefined) => {
+    if (!path) return null;
+    if (path.startsWith("http")) return path;
+    return `${import.meta.env.VITE_API_URL}/${path.replace(/^\/+/, "")}`;
 };
 
 export default function RoutingPage() {
@@ -47,7 +53,7 @@ export default function RoutingPage() {
                 },
             });
             toast.success("Roteirização processada com sucesso!");
-            await buscarArtefatos();
+            // 🔴 Não busca artefatos aqui
         } catch (e: any) {
             console.error(e);
             toast.error("Erro ao processar a roteirização.");
@@ -79,6 +85,8 @@ export default function RoutingPage() {
             URL.revokeObjectURL(url);
 
             toast.success("PDF gerado e baixado!");
+
+            // ✅ Só aqui atualizamos o mapa/artefatos
             await buscarArtefatos();
         } catch (e) {
             console.error(e);
@@ -93,9 +101,7 @@ export default function RoutingPage() {
         try {
             const { data: resp } = await api.get<Artefatos>(
                 "/transfer_routing/artefatos",
-                {
-                    params: { data_inicial: data },
-                }
+                { params: { data_inicial: data } }
             );
             setArtefatos(resp);
             setIframeKey((k) => k + 1);
@@ -103,11 +109,6 @@ export default function RoutingPage() {
             setArtefatos(null);
         }
     }
-
-    useEffect(() => {
-        buscarArtefatos();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [data]);
 
     return (
         <div className="max-w-7xl mx-auto p-6">
@@ -155,10 +156,7 @@ export default function RoutingPage() {
                             min={0}
                             value={params.tempo_parada_leve}
                             onChange={(e) =>
-                                setParams((s) => ({
-                                    ...s,
-                                    tempo_parada_leve: Number(e.target.value),
-                                }))
+                                setParams((s) => ({ ...s, tempo_parada_leve: Number(e.target.value) }))
                             }
                             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-right"
                         />
@@ -186,10 +184,7 @@ export default function RoutingPage() {
                             min={0}
                             value={params.tempo_parada_pesada}
                             onChange={(e) =>
-                                setParams((s) => ({
-                                    ...s,
-                                    tempo_parada_pesada: Number(e.target.value),
-                                }))
+                                setParams((s) => ({ ...s, tempo_parada_pesada: Number(e.target.value) }))
                             }
                             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-right"
                         />
@@ -204,10 +199,7 @@ export default function RoutingPage() {
                             min={0}
                             value={params.tempo_por_volume}
                             onChange={(e) =>
-                                setParams((s) => ({
-                                    ...s,
-                                    tempo_por_volume: Number(e.target.value),
-                                }))
+                                setParams((s) => ({ ...s, tempo_por_volume: Number(e.target.value) }))
                             }
                             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-right"
                         />
@@ -274,7 +266,7 @@ export default function RoutingPage() {
                     <div className="flex flex-wrap items-center gap-3">
                         {artefatos.map_html_url && (
                             <a
-                                href={artefatos.map_html_url}
+                                href={resolveUrl(artefatos.map_html_url) || "#"}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center gap-2"
@@ -285,7 +277,7 @@ export default function RoutingPage() {
                         )}
                         {artefatos.pdf_url && (
                             <a
-                                href={artefatos.pdf_url}
+                                href={resolveUrl(artefatos.pdf_url) || "#"}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center gap-2"
@@ -296,20 +288,16 @@ export default function RoutingPage() {
                         )}
                     </div>
 
-                    {artefatos.map_html_url ? (
+                    {artefatos.map_html_url && (
                         <div className="mt-4 border rounded-lg overflow-hidden">
                             <iframe
                                 key={iframeKey}
-                                src={artefatos.map_html_url}
+                                src={`${resolveUrl(artefatos.map_html_url) || ""}?v=${iframeKey}`}
                                 title="Mapa Interativo - Transferências"
                                 className="w-full"
                                 style={{ height: "70vh" }}
                             />
                         </div>
-                    ) : (
-                        <p className="mt-4 text-sm text-gray-500">
-                            Nenhum mapa disponível para a data selecionada.
-                        </p>
                     )}
                 </div>
             )}

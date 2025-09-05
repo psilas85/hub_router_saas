@@ -1,7 +1,7 @@
-# costs_last_mile/api/routes.py
+# src/costs_last_mile/api/routes.py
 from fastapi import APIRouter, Depends, Query, HTTPException
 from datetime import date
-import os   # 👈 ADICIONEI AQUI
+import os
 from typing import List
 from pydantic import BaseModel
 
@@ -14,7 +14,7 @@ from authentication.utils.dependencies import obter_tenant_id_do_token
 from costs_last_mile.infrastructure.cost_repository_last_mile import CostRepository
 
 
-router = APIRouter(prefix="/costs_transfer", tags=["Costs Transfer"])
+router = APIRouter(prefix="/costs_last_mile", tags=["Costs Last Mile"])
 logger = get_logger("costs_last_mile")
 
 
@@ -22,18 +22,16 @@ logger = get_logger("costs_last_mile")
 def calcular_custos_last_mile(
     data_inicial: date = Query(..., description="Data inicial no formato YYYY-MM-DD"),
     data_final: date | None = Query(None, description="Data final no formato YYYY-MM-DD (opcional)"),
-    modo_forcar: bool = Query(False, description="Força sobrescrita de dados existentes"),
     tenant_id: str = Depends(obter_tenant_id_do_token)
 ):
     if not data_final:
         data_final = data_inicial
-
     if data_final < data_inicial:
         raise HTTPException(status_code=400, detail="Data final não pode ser anterior à data inicial")
 
     try:
         service = CostService(tenant_id=tenant_id)
-        service.processar_custos(data_inicial, data_final, modo_forcar=modo_forcar)
+        service.processar_custos(data_inicial, data_final, modo_forcar=True)  # 🔒 força processamento
         return {
             "status": "ok",
             "mensagem": f"✅ Cálculo de custos de last-mile concluído de {data_inicial} até {data_final}",
@@ -51,7 +49,7 @@ def visualizar_relatorios_last_mile(
 ):
     logger.info(f"🔍 Visualizando relatórios de custos para tenant '{tenant_id}' na data '{data}'")
     try:
-        # 🔹 Gera DataFrames
+        # 🔹 Gera DataFrames (detalhe + resumo)
         df_detalhes = gerar_detalhes_last_mile(tenant_id, data)
         df_resumo = gerar_resumo_last_mile(tenant_id, data)
 
@@ -72,11 +70,11 @@ def visualizar_relatorios_last_mile(
         resumo_file = os.path.join(resumos_dir, f"resumo_last_mile_{data}.csv")
         pdf_file = os.path.join(relatorios_dir, f"costs_last_mile_{data}.pdf")
 
-        # 🔹 Exportar CSVs
+        # 🔹 Exportar CSVs (sempre sobrescreve)
         df_detalhes.to_csv(detalhes_file, index=False, encoding="utf-8-sig")
         df_resumo.to_csv(resumo_file, index=False, encoding="utf-8-sig")
 
-        # 🔹 Gerar PDF sobrescrevendo sempre
+        # 🔹 Gerar PDF (sempre sobrescreve)
         gerar_relatorio_last_mile(
             envio_data=str(data),
             tenant_id=tenant_id,
@@ -85,16 +83,16 @@ def visualizar_relatorios_last_mile(
             modo_forcar=True
         )
 
-        # 🔹 Retorno completo
+        # 🔹 Retorno para o frontend
         return {
             "tenant_id": tenant_id,
             "envio_data": str(data),
             "detalhes_url": f"/exports/costs_last_mile/detalhes/{tenant_id}/detalhes_last_mile_{data}.csv",
             "resumo_url": f"/exports/costs_last_mile/resumos/{tenant_id}/resumo_last_mile_{data}.csv",
             "pdf_url": f"/exports/costs_last_mile/relatorios/{tenant_id}/costs_last_mile_{data}.pdf",
-            "json_dados": df_resumo.to_dict(orient="records"),
+            # 👇 Agora a tela recebe o MESMO detalhamento do PDF
+            "json_dados": df_detalhes.to_dict(orient="records"),
         }
-
     except Exception as e:
         logger.error(f"❌ Erro na visualização de custos last mile: {e}")
         raise HTTPException(status_code=500, detail="Erro ao gerar visualizações de custos.")

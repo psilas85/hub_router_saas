@@ -1,11 +1,10 @@
-//hub_router_1.0.1/frontend/src/services/simulationApi.ts
+// hub_router_1.0.1/frontend/src/services/simulationApi.ts
 
 import api from "@/services/api";
 
 export type RunSimulationParams = {
     data_inicial: string;        // yyyy-mm-dd
     data_final?: string;         // opcional no front; se não vier, usamos a mesma do inicial
-    modo_forcar?: boolean;
 
     // Clusterização
     k_min?: number;
@@ -53,6 +52,7 @@ export async function runSimulation(params: RunSimulationParams) {
             data_inicial,
             data_final: df,
             ...rest,
+            // 🔒 não inclui modo_forcar → Gateway já injeta sempre como True
         },
     });
 
@@ -69,7 +69,7 @@ export async function runSimulation(params: RunSimulationParams) {
 export type VisualizeSimulationResponse = {
     data: string;
     relatorio_pdf?: string;
-    graficos?: string[]; // 👈 inclui os gráficos no nível raiz
+    graficos?: string[];
     cenarios: Record<
         string,
         {
@@ -77,11 +77,12 @@ export type VisualizeSimulationResponse = {
             mapas?: string[];
             tabelas_lastmile?: string[];
             tabelas_transferencias?: string[];
-            otimo?: boolean; // 👈 marca se é o cenário ótimo
+            tabelas_resumo?: string[];       // 👈 CSVs de resumo
+            tabelas_detalhes?: string[];     // 👈 CSVs de detalhes
+            otimo?: boolean;
         }
     >;
 };
-
 
 // Novo método
 export async function visualizeSimulation(data: string) {

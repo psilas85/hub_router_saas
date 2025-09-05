@@ -9,6 +9,7 @@ from reportlab.lib import colors
 
 from transfer_routing.visualization.mapa_estatico import gerar_mapa_estatico_transferencias
 from transfer_routing.infrastructure.database_connection import conectar_banco_routing, fechar_conexao
+from transfer_routing.visualization.utils_output import caminho_output
 
 
 def format_number(valor):
@@ -40,8 +41,10 @@ def gerar_relatorio_transferencias(
 
     # 📂 Define pasta de saída
     if output_path is None:
-        output_path = f"output/relatorios/{tenant_id}"
+        output_path = caminho_output(tenant_id, "relatorios")
+
     os.makedirs(output_path, exist_ok=True)
+    nome_arquivo = os.path.join(output_path, f"relatorio_transferencias_{envio_data}_{data_final}.pdf")
 
     # 🗺️ Usa mapa PNG já gerado ou cria um novo
     mapa_path = caminho_mapa_png

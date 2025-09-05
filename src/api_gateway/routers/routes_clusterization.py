@@ -39,7 +39,6 @@ async def processar_clusterizacao(
     fundir_clusters_pequenos: bool = Query(False, description="Fundir clusters pequenos"),
     desativar_cluster_hub_central: bool = Query(False, description="Desativar cluster do hub central"),
     raio_cluster_hub_central: float = Query(80.0, description="Raio em km para cluster do hub central"),
-    modo_forcar: bool = Query(False, description="Forçar reprocessamento"),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
     url = f"{CLUSTERIZATION_URL}/cluster/clusterizar"
@@ -51,10 +50,9 @@ async def processar_clusterizacao(
         "fundir_clusters_pequenos": str(fundir_clusters_pequenos).lower(),
         "desativar_cluster_hub_central": str(desativar_cluster_hub_central).lower(),
         "raio_cluster_hub_central": raio_cluster_hub_central,
-        "modo_forcar": str(modo_forcar).lower(),
+        # 🚫 não aceitar mais 'modo_forcar' do usuário
     }
 
-    # só envia se vier
     if data_final:
         params["data_final"] = data_final
 

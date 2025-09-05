@@ -1,5 +1,4 @@
-//hub_router_1.0.1/frontend/src/pages/middle_mile/CostsPage.tsx
-
+// hub_router_1.0.1/frontend/src/pages/middle_mile/CostsPage.tsx
 import { useState } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
@@ -29,15 +28,15 @@ export default function CostsTransferPage() {
         try {
             setLoading(true);
 
-            // 1️⃣ Primeiro processa os custos
+            // 1️⃣ Primeiro processa os custos (sempre forçar no backend)
             await api.post("/costs_transfer/processar", null, {
-                params: { data_inicial: data, data_final: data, modo_forcar: true },
+                params: { data_inicial: data, data_final: data },
             });
 
             // 2️⃣ Depois busca os artefatos gerados
             const { data: resp } = await api.get<Artefatos>(
                 "/costs_transfer/visualizar",
-                { params: { data, modo_forcar: true } }
+                { params: { data } }
             );
 
             setArtefatos({
@@ -53,7 +52,6 @@ export default function CostsTransferPage() {
             setLoading(false);
         }
     }
-
 
     return (
         <div className="max-w-7xl mx-auto p-6">
@@ -158,9 +156,7 @@ export default function CostsTransferPage() {
                                     {artefatos.json_dados.map((row, i) => (
                                         <tr key={i} className="hover:bg-gray-50">
                                             <td className="px-3 py-2 border-b">{row.rota_transf}</td>
-                                            <td className="px-3 py-2 border-b">
-                                                {row.hub_central_nome}
-                                            </td>
+                                            <td className="px-3 py-2 border-b">{row.hub_central_nome}</td>
                                             <td className="px-3 py-2 border-b">{row.tipo_veiculo}</td>
                                             <td className="px-3 py-2 border-b text-right">
                                                 {row.cte_peso.toLocaleString("pt-BR")}
@@ -187,30 +183,17 @@ export default function CostsTransferPage() {
                                     ))}
                                 </tbody>
 
-                                {/* Rodapé com totais */}
+                                {/* Totais */}
                                 <tfoot className="bg-gray-100 font-semibold">
                                     {(() => {
-                                        const totalPeso = artefatos.json_dados.reduce(
-                                            (acc, r) => acc + (r.cte_peso || 0),
-                                            0
-                                        );
-                                        const totalFrete = artefatos.json_dados.reduce(
-                                            (acc, r) => acc + (r.cte_valor_frete || 0),
-                                            0
-                                        );
-                                        const totalCusto = artefatos.json_dados.reduce(
-                                            (acc, r) => acc + (r.custo_transferencia_total || 0),
-                                            0
-                                        );
-                                        const percentualTotal =
-                                            totalFrete > 0 ? (totalCusto / totalFrete) * 100 : 0;
+                                        const totalPeso = artefatos.json_dados.reduce((acc, r) => acc + (r.cte_peso || 0), 0);
+                                        const totalFrete = artefatos.json_dados.reduce((acc, r) => acc + (r.cte_valor_frete || 0), 0);
+                                        const totalCusto = artefatos.json_dados.reduce((acc, r) => acc + (r.custo_transferencia_total || 0), 0);
+                                        const percentualTotal = totalFrete > 0 ? (totalCusto / totalFrete) * 100 : 0;
 
                                         return (
                                             <tr>
-                                                <td
-                                                    colSpan={3}
-                                                    className="px-3 py-2 border-t text-right"
-                                                >
+                                                <td colSpan={3} className="px-3 py-2 border-t text-right">
                                                     Totais:
                                                 </td>
                                                 <td className="px-3 py-2 border-t text-right">

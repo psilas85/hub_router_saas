@@ -21,7 +21,6 @@ export type RoutingParams = {
     tempo_descarga_por_volume?: number;
     peso_leve_max?: number;
     restricao_veiculo_leve_municipio?: boolean;
-    modo_forcar?: boolean;
 };
 
 export type Artefato = {
@@ -77,18 +76,19 @@ export async function lmBuscarArtefatos(data_inicial: string) {
 // ——— Costs ———
 export async function lmProcessCosts(
     data_inicial: string,
-    data_final?: string,
-    modo_forcar = false
+    data_final?: string
 ) {
     const { data } = await api.post("/costs_last_mile/processar", null, {
-        params: { data_inicial, data_final: data_final ?? data_inicial, modo_forcar },
+        params: { data_inicial, data_final: data_final ?? data_inicial },
     });
     return data as { status: string; mensagem: string; datas?: string[] };
 }
 
 // 🔹 Visualizar custos (retorna CSV/PDF + JSON para tabela)
 export async function lmVisualizeCosts(data: string): Promise<VisualizeCostsResponse> {
-    const { data: resp } = await api.get("/costs_last_mile/visualizar", { params: { data } });
+    const { data: resp } = await api.get("/costs_last_mile/visualizar", {
+        params: { data, _t: Date.now() } // 👈 evita cache
+    });
     return resp as VisualizeCostsResponse;
 }
 

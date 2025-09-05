@@ -131,7 +131,7 @@ async def ultimos_30_dias(request: Request):
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.get(
-                f"{DATA_INPUT_URL}/data_input/dashboard/ultimos-30-dias",
+                f"{DATA_INPUT_URL}/dashboard/ultimos-30-dias",   # 👈 sem /data_input
                 headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
             )
         resp.raise_for_status()
@@ -140,12 +140,13 @@ async def ultimos_30_dias(request: Request):
         raise HTTPException(status_code=500, detail=f"Erro no proxy ultimos-30-dias: {str(e)}")
 
 
+
 @router.get("/dashboard/mensal")
 async def mensal(request: Request):
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.get(
-                f"{DATA_INPUT_URL}/data_input/dashboard/mensal",
+                f"{DATA_INPUT_URL}/dashboard/mensal",   # 👈 sem /data_input
                 headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
             )
         resp.raise_for_status()
@@ -154,12 +155,13 @@ async def mensal(request: Request):
         raise HTTPException(status_code=500, detail=f"Erro no proxy mensal: {str(e)}")
 
 
+
 @router.get("/dashboard/mapa")
 async def mapa(request: Request):
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.get(
-                f"{DATA_INPUT_URL}/data_input/dashboard/mapa",
+                f"{DATA_INPUT_URL}/dashboard/mapa",   # 👈 sem /data_input
                 headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
             )
         resp.raise_for_status()

@@ -1,5 +1,4 @@
 // src/pages/LastMile/LastMileCostsPage.tsx
-// src/pages/LastMile/LastMileCostsPage.tsx
 import { useState } from "react";
 import { lmProcessCosts, lmVisualizeCosts } from "@/services/lastMileApi";
 import type { VisualizeCostsResponse } from "@/services/lastMileApi";
@@ -15,9 +14,7 @@ export default function LastMileCostsPage() {
     const [data, setData] = useState("");
     const [dataVisualizar, setDataVisualizar] = useState("");
     const [loading, setLoading] = useState(false);
-    const [artefatos, setArtefatos] = useState<VisualizeCostsResponse | null>(
-        null
-    );
+    const [artefatos, setArtefatos] = useState<VisualizeCostsResponse | null>(null);
 
     const processar = async () => {
         if (!data) {
@@ -26,8 +23,13 @@ export default function LastMileCostsPage() {
         }
         setLoading(true);
         try {
-            const r = await lmProcessCosts(data, data);
-            toast.success(r?.mensagem ?? "Cálculo de custos processado.");
+            await lmProcessCosts(data, data);
+
+            // 👇 já busca o resumo atualizado após processar
+            const r = await lmVisualizeCosts(data);
+            setArtefatos(r);
+
+            toast.success("Custos processados e carregados!");
         } catch (err) {
             console.error(err);
             toast.error("Erro ao processar custos.");
@@ -78,7 +80,11 @@ export default function LastMileCostsPage() {
                     />
                 </div>
                 <div className="flex items-end gap-2 md:col-span-2">
-                    <button className="btn flex items-center gap-2" onClick={processar} disabled={loading}>
+                    <button
+                        className="btn flex items-center gap-2"
+                        onClick={processar}
+                        disabled={loading}
+                    >
                         {loading ? (
                             <>
                                 <Loader2 className="w-4 h-4 animate-spin" /> Processando…

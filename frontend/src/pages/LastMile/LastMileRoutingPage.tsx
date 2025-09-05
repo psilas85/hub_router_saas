@@ -47,7 +47,7 @@ export default function LastMileRoutingPage() {
                 tempo_descarga_por_volume: tempoVol,
                 peso_leve_max: pesoLeveMax,
                 restricao_veiculo_leve_municipio: restricaoLeve,
-                modo_forcar: modoForcar,
+
             });
             toast.success("Roteirização processada!");
         } catch (err) {

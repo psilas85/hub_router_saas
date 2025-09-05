@@ -221,7 +221,10 @@ with tabs[4]:
     else:
         st.warning("Pasta de gráficos não encontrada.")
 
-with tabs[6]:  # posição da nova aba
+# =========================
+# Dashboard Interativo (aba 6)
+# =========================
+with tabs[5]:  # 📊 Dashboard Interativo
     st.subheader("📊 Dashboard Interativo com Plotly")
 
     if not df.empty:
@@ -327,6 +330,9 @@ with tabs[6]:  # posição da nova aba
         st.warning("⚠️ Nenhum dado disponível para o Dashboard Interativo.")
 
 
-
-with tabs[5]:
+# =========================
+# Relatório PDF (aba 7)
+# =========================
+with tabs[6]:  # 📥 Relatório (última aba)
     exibir_download_relatorio()
+

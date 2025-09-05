@@ -59,7 +59,6 @@ def main():
     parser = argparse.ArgumentParser(description="Gerar relatório, CSV e JSON de custos de transferência por rota")
     parser.add_argument("--tenant", required=True, help="Tenant ID")
     parser.add_argument("--data", required=True, help="Data do envio no formato AAAA-MM-DD")
-    parser.add_argument("--modo-forcar", action="store_true", help="Força sobrescrita do PDF existente")
     args = parser.parse_args()
 
     tenant_id = args.tenant

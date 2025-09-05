@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from transfer_routing.infrastructure.database_connection import conectar_banco_routing, fechar_conexao
 from transfer_routing.infrastructure.cache import obter_rota_do_cache
+from transfer_routing.visualization.utils_output import caminho_output
 
 
 def gerar_cor():
@@ -158,11 +159,9 @@ def gerar_mapa_estatico_transferencias(tenant_id: str, data_inicial: str, data_f
 
     # Diretório de saída
     if output_path is None:
-        output_path = f"output/maps/{tenant_id}"
+        output_path = caminho_output(tenant_id, "maps")
 
-    os.makedirs(output_path, exist_ok=True)
     caminho_png = os.path.join(output_path, f"mapa_transferencias_{data_inicial}_{data_final}.png")
-
     plt.savefig(caminho_png, dpi=300, bbox_inches="tight")
     plt.close()
 

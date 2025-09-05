@@ -8,6 +8,7 @@ from folium import Element
 from folium.plugins import MarkerCluster
 from transfer_routing.infrastructure.database_connection import conectar_banco_routing, fechar_conexao
 from transfer_routing.infrastructure.cache import obter_rota_do_cache
+from transfer_routing.visualization.utils_output import caminho_output
 
 
 def decode_polyline(polyline_str):
@@ -151,14 +152,12 @@ def gerar_mapa(tenant_id, data_inicial, data_final=None, output_path=None):
 
     # Diretório de saída
     if output_path is None:
-        output_path = f"output/maps/{tenant_id}"
+        output_path = caminho_output(tenant_id, "maps")
 
-    os.makedirs(output_path, exist_ok=True)
     nome_arquivo = os.path.join(
         output_path,
         f"mapa_transferencias_{data_inicial}_{data_final}.html"
     )
-
     mapa.save(nome_arquivo)
     print(f"✅ Mapa salvo em {nome_arquivo}")
     return nome_arquivo
