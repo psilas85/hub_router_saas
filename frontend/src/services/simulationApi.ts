@@ -2,6 +2,7 @@
 
 import api from "@/services/api";
 
+// ===== Execução de simulação =====
 export type RunSimulationParams = {
     data_inicial: string;        // yyyy-mm-dd
     data_final?: string;         // opcional no front; se não vier, usamos a mesma do inicial
@@ -65,7 +66,7 @@ export async function runSimulation(params: RunSimulationParams) {
     };
 }
 
-// Novo tipo de resposta
+// ===== Visualização de simulação (artefatos por data) =====
 export type VisualizeSimulationResponse = {
     data: string;
     relatorio_pdf?: string;
@@ -77,17 +78,56 @@ export type VisualizeSimulationResponse = {
             mapas?: string[];
             tabelas_lastmile?: string[];
             tabelas_transferencias?: string[];
-            tabelas_resumo?: string[];       // 👈 CSVs de resumo
-            tabelas_detalhes?: string[];     // 👈 CSVs de detalhes
+            tabelas_resumo?: string[];
+            tabelas_detalhes?: string[];
             otimo?: boolean;
         }
     >;
 };
 
-// Novo método
 export async function visualizeSimulation(data: string) {
     const resp = await api.get("/simulation/simulacao/visualizar", {
         params: { data },
     });
     return resp.data as VisualizeSimulationResponse;
+}
+
+// ===== Distribuição de k_clusters =====
+export type DistribuicaoKResponse = {
+    status: string;
+    data_inicial: string;
+    data_final: string;
+    grafico: string; // caminho relativo do backend
+    dados: { k_clusters: number; qtd: number }[];
+};
+
+export async function getDistribuicaoK(params: {
+    data_inicial: string;
+    data_final: string;
+}) {
+    const resp = await api.get("/simulation/distribuicao_k", {
+        params,
+    });
+
+    return resp.data as DistribuicaoKResponse;
+}
+
+// ===== Frequência de cidades em pontos ótimos =====
+export type FrequenciaCidadesResponse = {
+    status: string;
+    data_inicial: string;
+    data_final: string;
+    grafico: string; // caminho relativo do backend
+    dados: { cluster_cidade: string; qtd: number }[];
+};
+
+export async function getFrequenciaCidades(params: {
+    data_inicial: string;
+    data_final: string;
+}) {
+    const resp = await api.get("/simulation/frequencia_cidades", {
+        params,
+    });
+
+    return resp.data as FrequenciaCidadesResponse;
 }

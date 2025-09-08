@@ -1,7 +1,7 @@
 // frontend/src/pages/Planner/PlanTab.tsx
-// frontend/src/pages/Planner/PlanTab.tsx
 import { useState } from "react";
-import api from "@/services/api";
+import { plan } from "@/services/ml";
+
 import {
     ResponsiveContainer,
     LineChart,
@@ -22,11 +22,7 @@ const SCENARIO_OPTIONS = [
 export default function PlanTab() {
     const [start, setStart] = useState("2025-06-01");
     const [months, setMonths] = useState(3);
-    const [scenarios, setScenarios] = useState<string[]>([
-        "base",
-        "baixo",
-        "alto",
-    ]);
+    const [scenarios, setScenarios] = useState<string[]>(["base", "baixo", "alto"]);
     const [data, setData] = useState<Record<string, any[]>>({});
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
@@ -36,16 +32,14 @@ export default function PlanTab() {
         setMsg("🔄 Gerando planejamento, por favor aguarde...");
 
         try {
-            const res = await api.get("/ml/plan", {
-                params: {
-                    start_date: start,
-                    months,
-                    scenarios: scenarios.join(","),
-                    fast: true,
-                },
+            const res = await plan({
+                start_date: start,
+                months,
+                scenarios: scenarios.join(","),
+                fast: true,
             });
 
-            setData(res.data?.content || {});
+            setData(res || {});
             setMsg("✅ Planejamento concluído com sucesso!");
         } catch (err: any) {
             console.error("❌ Erro ao buscar plano:", err);
@@ -61,7 +55,7 @@ export default function PlanTab() {
         <div className="space-y-6">
             <h2 className="text-xl font-bold">📅 Planejamento de Cenários</h2>
 
-            {/* 🔹 Formulário */}
+            {/* Formulário */}
             <div className="bg-white rounded-xl shadow p-4 grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                     <label className="text-sm text-gray-600">Data inicial</label>
@@ -88,9 +82,7 @@ export default function PlanTab() {
                         className="input w-full h-24"
                         value={scenarios}
                         onChange={(e) => {
-                            const selected = Array.from(e.target.selectedOptions).map(
-                                (o) => o.value
-                            );
+                            const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
                             setScenarios(selected);
                         }}
                     >
@@ -115,7 +107,7 @@ export default function PlanTab() {
                 </div>
             </div>
 
-            {/* 🔹 Mensagem */}
+            {/* Mensagem */}
             {msg && (
                 <div
                     className={`text-sm font-medium rounded-lg p-3 ${msg.startsWith("✅")
@@ -129,7 +121,7 @@ export default function PlanTab() {
                 </div>
             )}
 
-            {/* 🔹 Resultados */}
+            {/* Resultados */}
             {Object.keys(data).length > 0 && (
                 <>
                     {/* KPIs */}
@@ -168,12 +160,9 @@ export default function PlanTab() {
                             <Tooltip
                                 formatter={(value: any, name: any) => {
                                     const v = Number(value);
-                                    if (name === "custo_total")
-                                        return [fmtMoeda(v), "Custo Total"];
-                                    if (name === "custo_transferencia")
-                                        return [fmtMoeda(v), "Transferência"];
-                                    if (name === "custo_last_mile")
-                                        return [fmtMoeda(v), "Last Mile"];
+                                    if (name === "custo_total") return [fmtMoeda(v), "Custo Total"];
+                                    if (name === "custo_transferencia") return [fmtMoeda(v), "Transferência"];
+                                    if (name === "custo_last_mile") return [fmtMoeda(v), "Last Mile"];
                                     return [value, name];
                                 }}
                             />
@@ -190,9 +179,7 @@ export default function PlanTab() {
                                             dataKey="custo_total"
                                             data={dataset}
                                             name={`${scenario} • Total`}
-                                            stroke={["#10b981", "#3b82f6", "#f59e0b", "#ef4444"][
-                                                idx % 4
-                                            ]}
+                                            stroke={["#10b981", "#3b82f6", "#f59e0b", "#ef4444"][idx % 4]}
                                             strokeWidth={2}
                                         />
                                         <Line

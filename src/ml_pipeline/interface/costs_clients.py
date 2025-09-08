@@ -1,61 +1,71 @@
 # hub_router_1.0.1/src/ml_pipeline/interface/costs_clients.py
-
 import pandas as pd
-import numpy as np
+import psycopg2
 
 class CostsTransferClient:
     """
-    Cliente simplificado para estimar custos de transferências (middle mile).
+    Cliente real para custos de transferências (middle mile),
+    baseado nos dados de resumo_transferencias.
     """
-    def __init__(self, geo=None):
-        self.geo = geo
+    def __init__(self, db_config: dict, logger=None):
+        self.db_config = db_config
+        self.logger = logger
 
     def estimate(self, df: pd.DataFrame, tenant_id: str) -> float:
-        """
-        Recebe dataframe de cidades→hubs, devolve custo de transferência.
-        Aqui simulamos um custo simplificado: peso_total * 0.05.
-        """
         if df.empty:
             return 0.0
 
-        peso_total = df["peso"].astype(float).sum()
-        custo = peso_total * 0.05  # R$ por kg, só placeholder
-        return custo
+        start_date = str(df["data"].min())
+        end_date   = str(df["data"].max())
+
+        query = """
+            SELECT COALESCE(SUM(custo_total),0) AS custo
+            FROM resumo_transferencias
+            WHERE tenant_id = %s
+              AND envio_data BETWEEN %s AND %s
+        """
+        conn = psycopg2.connect(**self.db_config)
+        try:
+            custo_df = pd.read_sql(query, conn, params=(tenant_id, start_date, end_date))
+            custo = float(custo_df.iloc[0]["custo"])
+            if self.logger:
+                self.logger.info(f"💰 Transferência (real): {custo:.2f} | {tenant_id} {start_date}..{end_date}")
+            return custo
+        finally:
+            conn.close()
 
 
 class CostsLastMileClient:
     """
-    Cliente simplificado para estimar custos de last mile + gerar rotas.
+    Cliente real para custos de last mile,
+    baseado nos dados de resumo_rotas_last_mile.
     """
-    def __init__(self):
-        pass
+    def __init__(self, db_config: dict, logger=None):
+        self.db_config = db_config
+        self.logger = logger
 
     def estimate(self, df: pd.DataFrame, tenant_id: str) -> dict:
-        """
-        Recebe dataframe de cidades→hubs, devolve:
-        - custo_total: custo do last mile
-        - rotas_df: DataFrame com viagens (coluna 'peso_total_subrota')
-        """
         if df.empty:
-            return {"custo_total": 0.0, "rotas_df": pd.DataFrame(columns=["peso_total_subrota"])}
+            return {"custo_total": 0.0, "rotas_df": pd.DataFrame()}
 
-        rotas = []
-        for _, row in df.iterrows():
-            peso_total = float(row["peso"])
-            entregas = int(row["entregas"])
+        start_date = str(df["data"].min())
+        end_date   = str(df["data"].max())
 
-            # Dividimos em subrotas de até 200kg (moto/fiorino etc.)
-            capacidade_padrao = 200.0
-            n_viagens = max(1, int(np.ceil(peso_total / capacidade_padrao)))
-
-            # Cada viagem recebe uma fração do peso
-            peso_por_viagem = peso_total / n_viagens
-            for _ in range(n_viagens):
-                rotas.append({"peso_total_subrota": peso_por_viagem})
-
-        rotas_df = pd.DataFrame(rotas)
-
-        # custo = nº de viagens * R$50 (placeholder simples)
-        custo_total = len(rotas_df) * 50.0
-
-        return {"custo_total": custo_total, "rotas_df": rotas_df}
+        query = """
+            SELECT COALESCE(SUM(custo_total),0) AS custo
+            FROM resumo_rotas_last_mile
+            WHERE tenant_id = %s
+              AND envio_data BETWEEN %s AND %s
+        """
+        conn = psycopg2.connect(**self.db_config)
+        try:
+            custo_df = pd.read_sql(query, conn, params=(tenant_id, start_date, end_date))
+            custo = float(custo_df.iloc[0]["custo"])
+            if self.logger:
+                self.logger.info(f"🚚 Last-mile (real): {custo:.2f} | {tenant_id} {start_date}..{end_date}")
+            return {
+                "custo_total": custo,
+                "rotas_df": pd.DataFrame()  # podemos expandir se precisar das rotas detalhadas
+            }
+        finally:
+            conn.close()

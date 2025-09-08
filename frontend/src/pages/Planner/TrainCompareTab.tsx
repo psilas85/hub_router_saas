@@ -21,7 +21,7 @@ export default function TrainCompareTab() {
         setMsg("🔄 Executando comparação de algoritmos...");
         try {
             const out = await trainCompare({
-                dataset_name: "simulacoes",
+                dataset_name: "entregas",        // 👈 corrigido
                 target_column: target,
                 start_date: start,
                 end_date: end,
@@ -37,6 +37,7 @@ export default function TrainCompareTab() {
             setLoading(false);
         }
     }
+
 
     const metricKeys = Array.from(
         new Set(rows.flatMap((r) => Object.keys(r.metrics || {})))
@@ -100,10 +101,10 @@ export default function TrainCompareTab() {
             {msg && (
                 <div
                     className={`p-3 rounded-lg text-sm font-medium ${msg.startsWith("✅")
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : msg.startsWith("❌")
-                                ? "bg-red-50 text-red-700 border border-red-200"
-                                : "bg-gray-50 text-gray-600 border border-gray-200"
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : msg.startsWith("❌")
+                            ? "bg-red-50 text-red-700 border border-red-200"
+                            : "bg-gray-50 text-gray-600 border border-gray-200"
                         }`}
                 >
                     {msg}

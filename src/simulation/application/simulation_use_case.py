@@ -67,6 +67,33 @@ class SimulationUseCase:
         self.result_service = SimulationResultService(simulation_db, logger)
 
 
+    def _buscar_resultado_k1(self):
+        """
+        Lê o resultado do k=1 já salvo em resultados_simulacao pela _executar_simulacao_k1.
+        Retorna dict com custos ou None se não houver registro.
+        """
+        cursor = self.simulation_db.cursor()
+        cursor.execute("""
+            SELECT custo_total, custo_transferencia, custo_last_mile, custo_cluster
+            FROM resultados_simulacao
+            WHERE tenant_id = %s AND envio_data = %s AND k_clusters = 1 AND simulation_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (self.tenant_id, self.envio_data, self.simulation_id))
+        row = cursor.fetchone()
+        cursor.close()
+
+        if not row:
+            return None
+
+        custo_total_k1, custo_transf_k1, custo_lm_k1, custo_cluster_k1 = row
+        return {
+            "custo_total": float(custo_total_k1),
+            "custo_transferencia": float(custo_transf_k1 or 0.0),
+            "custo_last_mile": float(custo_lm_k1 or 0.0),
+            "custo_cluster": float(custo_cluster_k1 or 0.0),
+        }
+
     def executar_simulacao_completa(self):
         if not self.modo_forcar and self.simulation_service.simulacao_ja_existente():
             self.logger.warning(f"🚫 Simulação já existente para {self.envio_data}. Use --modo-forcar para sobrescrever.")
@@ -83,25 +110,18 @@ class SimulationUseCase:
         # 📥 Carregar entregas do clusterization_db
         df_entregas_original = self.cluster_service.carregar_entregas(self.tenant_id, self.envio_data)
 
-        # ✅ Verificar se as coordenadas já vieram preenchidas corretamente
         if "latitude" in df_entregas_original.columns and "longitude" in df_entregas_original.columns:
             n_coordenadas = df_entregas_original[["latitude", "longitude"]].dropna().shape[0]
             self.logger.info(f"📍 {n_coordenadas} entregas com coordenadas válidas carregadas do clusterization_db.")
         else:
             self.logger.warning("⚠️ Colunas latitude/longitude não encontradas ao carregar entregas.")
 
-
-
         if df_entregas_original.empty:
             self.logger.warning(f"⚠️ Nenhuma entrega encontrada para {self.envio_data}. Simulação será ignorada.")
             return None
 
-
         # 🔍 Carregar hubs e aplicar filtro por raio
-
-
         from simulation.infrastructure.simulation_database_reader import carregar_hubs
-
         hubs = carregar_hubs(self.simulation_db, self.tenant_id)
 
         if not self.parametros.get("desativar_cluster_hub", False):
@@ -116,22 +136,49 @@ class SimulationUseCase:
             df_entregas = df_entregas_original.copy()
             df_hub = pd.DataFrame(columns=df_entregas.columns)
 
-
         if df_entregas.empty:
             self.logger.warning(f"⚠️ Nenhuma entrega encontrada para {self.envio_data}. Simulação será ignorada.")
             return None
 
-        # Simulação inicial com k=1 partindo do hub central
+        # 🚀 Simulação baseline k=1 (partindo do hub central) – sempre executa e persiste
         self._executar_simulacao_k1(df_entregas, df_hub)
 
-        k_inicial = self.simulation_service.obter_k_inicial(df_entregas, self.parametros['k_min'], self.parametros['k_max'])
-        lista_k = self.simulation_service.gerar_lista_k(k_inicial, self.parametros['k_min'], self.parametros['k_max'])
-
-        custos_totais = []
+        # 🧮 Inicializa disputa do ótimo já considerando k=1
+        custos_totais: list[float] = []
         melhor_k = None
         menor_custo = float("inf")
         melhor_resultado = None
 
+        k1 = self._buscar_resultado_k1()
+        if k1:
+            qtd = int(df_entregas["cte_numero"].nunique())  # usa o df_entregas que foi passado ao k=1
+            custos_totais.append(k1["custo_total"])
+            melhor_k = 1
+            menor_custo = k1["custo_total"]
+            melhor_resultado = {
+                "simulation_id": self.simulation_id,
+                "tenant_id": self.tenant_id,
+                "envio_data": self.envio_data,
+                "k_clusters": 1,
+                "custo_total": k1["custo_total"],
+                "quantidade_entregas": qtd,
+                "custo_transferencia": k1["custo_transferencia"],
+                "custo_last_mile": k1["custo_last_mile"],
+                "custo_cluster": k1["custo_cluster"],
+            }
+            self.logger.info(f"🏁 k=1 incluído como candidato inicial: custo_total={k1['custo_total']:.2f}")
+        else:
+            self.logger.warning("⚠️ Não foi possível ler resultado do k=1 de resultados_simulacao; prosseguindo sem semear custos_totais.")
+
+        # 🔢 k_inicial pelo elbow e lista de variações
+        k_inicial = self.simulation_service.obter_k_inicial(
+            df_entregas, self.parametros['k_min'], self.parametros['k_max']
+        )
+        lista_k = self.simulation_service.gerar_lista_k(
+            k_inicial, self.parametros['k_min'], self.parametros['k_max']
+        )
+
+        # 🔁 Loop de avaliação para k≥2 (ou conforme k_min)
         for k in lista_k:
             resultado_k = self._executar_simulacao_para_k(k, df_entregas, df_hub)
             if resultado_k is None:
@@ -151,23 +198,28 @@ class SimulationUseCase:
                     "quantidade_entregas": len(df_entregas),
                     "custo_transferencia": resultado_k["custo_transferencia"],
                     "custo_last_mile": resultado_k["custo_last_mile"],
-                    "custo_cluster": resultado_k["custo_cluster"]
+                    "custo_cluster": resultado_k["custo_cluster"],
                 }
 
-
+            # 📉 Heurística de inflexão agora considera a série iniciada em k=1 (se disponível)
             if self.simulation_service.verificar_ponto_inflexao_com_tendencia(custos_totais):
                 self.logger.info("📉 Heurística de inflexão identificou ponto ótimo.")
                 break
 
+        # ✅ Finalização: marca o melhor_k (que pode ser 1) e persiste o vencedor
         if melhor_k is not None and melhor_resultado is not None:
             self.logger.info(f"📝 Atualizando flag is_ponto_otimo=True para k={melhor_k}")
             cursor = self.simulation_db.cursor()
             for tabela in ["entregas_clusterizadas", "resumo_transferencias", "detalhes_transferencias"]:
-                cursor.execute(f"""
-                    UPDATE {tabela}
-                    SET is_ponto_otimo = TRUE
-                    WHERE tenant_id = %s AND envio_data = %s AND simulation_id = %s AND k_clusters = %s
-                """, (self.tenant_id, self.envio_data, self.simulation_id, melhor_k))
+                try:
+                    cursor.execute(f"""
+                        UPDATE {tabela}
+                        SET is_ponto_otimo = TRUE
+                        WHERE tenant_id = %s AND envio_data = %s AND simulation_id = %s AND k_clusters = %s
+                    """, (self.tenant_id, self.envio_data, self.simulation_id, melhor_k))
+                except Exception as e:
+                    # Para k=1, é esperado que transfer não tenha registros – esse UPDATE apenas não fará nada.
+                    self.logger.debug(f"ℹ️ UPDATE {tabela} ponto ótimo: {e}")
             self.simulation_db.commit()
             cursor.close()
 
@@ -176,11 +228,7 @@ class SimulationUseCase:
                 "is_ponto_otimo": True
             }, modo_forcar=self.modo_forcar)
 
-
-            return {
-                "k_clusters": melhor_k,
-                "custo_total": menor_custo
-            }
+            return {"k_clusters": melhor_k, "custo_total": menor_custo}
 
     def _executar_simulacao_para_k(self, k, df_entregas, df_hub):
 
@@ -290,8 +338,7 @@ class SimulationUseCase:
         custo_total = custo_transfer + custo_last_mile + custo_cluster
         self.logger.info(f"💰 Custo total para k={k}: R${custo_total:,.2f}")
 
-
-        self.logger.info(f"💰 Custo total para k={k}: R${custo_total:,.2f}")
+        qtd = int(df_clusterizado["cte_numero"].nunique())
 
         self.result_service.salvar_resultado({
             "simulation_id": self.simulation_id,
@@ -299,7 +346,7 @@ class SimulationUseCase:
             "envio_data": self.envio_data,
             "k_clusters": k,
             "custo_total": custo_total,
-            "quantidade_entregas": len(df_entregas),
+            "quantidade_entregas": qtd,
             "custo_transferencia": custo_transfer,
             "custo_last_mile": custo_last_mile,
             "custo_cluster": custo_cluster,
@@ -447,15 +494,16 @@ class SimulationUseCase:
             self.logger.warning(f"⚠️ Falha ao calcular custo de cluster (k=1): {e}")
 
         custo_total = custo_last_mile + custo_cluster
-
         self.logger.info(f"💰 Custo total para k=1: R${custo_total:,.2f}")
+
+        qtd = int(df_entregas["cte_numero"].nunique())
 
         self.result_service.salvar_resultado({
             "simulation_id": self.simulation_id,
             "tenant_id": self.tenant_id,
             "envio_data": self.envio_data,
             "k_clusters": 1,
-            "quantidade_entregas": len(df_entregas),
+            "quantidade_entregas": qtd,
             "custo_transferencia": 0.0,
             "custo_last_mile": custo_last_mile,
             "custo_cluster": custo_cluster,

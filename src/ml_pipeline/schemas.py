@@ -1,7 +1,9 @@
 # ml_pipeline/schemas.py
 from pydantic import BaseModel, Field, constr
 from typing import Optional, List, Union
-
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field, RootModel
+from typing import List, Dict, Any
 # ----------------------
 # SCHEMAS DE ENTRADA
 # ----------------------
@@ -58,3 +60,37 @@ class PredictionResponse(BaseModel):
 
 class BatchPredictionResponse(BaseModel):
     predictions: List[PredictionResponse]
+
+# ----------------------
+# SCHEMAS DE PLANEJAMENTO
+# ----------------------
+
+class PlanoFrota(BaseModel):
+    Motocicleta: int
+    Fiorino: int
+    HR: int
+    tres_quartos: int = Field(..., alias="3/4")
+    Toco: int
+    Truck: int
+
+    class Config:
+        populate_by_name = True
+
+
+class PlanoHub(BaseModel):
+    mes: str
+    k_clusters: int
+    hubs: List[List[str]]
+    frota: PlanoFrota
+    custo_transferencia: float
+    custo_last_mile: float
+    custo_total: float
+
+
+# ✅ Agora com RootModel (Pydantic v2)
+class PlanResponse(RootModel[Dict[str, List[PlanoHub]]]):
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            k: [hub.model_dump(by_alias=True) for hub in v]
+            for k, v in self.root.items()
+        }

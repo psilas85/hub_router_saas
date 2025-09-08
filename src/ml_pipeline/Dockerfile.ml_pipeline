@@ -4,10 +4,14 @@ WORKDIR /app
 
 # Copia apenas requirements para cache do build
 COPY src/ml_pipeline/requirements.txt /app/ml_pipeline/requirements.txt
-RUN pip install --no-cache-dir -r /app/ml_pipeline/requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r /app/ml_pipeline/requirements.txt
 
 # Copia todo código fonte
 COPY src/ /app/src
+
+# 🔑 Garante que trainers.py atualizado sobrescreva qualquer versão antiga
+COPY src/ml_pipeline/models/trainers.py /app/src/ml_pipeline/models/trainers.py
 
 # Adiciona src no PYTHONPATH para evitar import errors
 ENV PYTHONPATH=/app/src
@@ -16,6 +20,10 @@ ENV PYTHONPATH=/app/src
 ENV SERVICE_PORT=8011
 
 EXPOSE 8011
+
+# Garante que não existem .pyc antigos
+RUN find /app/src -name "*.pyc" -delete && \
+    find /app/src -name "__pycache__" -type d -exec rm -rf {} +
 
 # Usa a porta da env (se alterada no .env, não precisa rebuildar imagem)
 CMD ["sh", "-c", "uvicorn ml_pipeline.api.main_ml_service:app --host 0.0.0.0 --port ${SERVICE_PORT}"]

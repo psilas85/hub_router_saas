@@ -160,3 +160,61 @@ async def visualizar_simulacao(
         raise HTTPException(status_code=status_code, detail=detail)
 
     return content
+
+
+@router.get("/distribuicao_k", summary="Distribuição de k_clusters ponto ótimo")
+async def distribuicao_k(
+    request: Request,
+    data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
+    data_final: date = Query(..., description="Data final YYYY-MM-DD"),
+    usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
+):
+    """
+    Encaminha requisição do API Gateway → Simulation Service para obter distribuição de k_clusters ponto ótimo.
+    """
+    headers = {"authorization": request.headers.get("authorization")}
+
+    result = await forward_request(
+        "GET",
+        f"{SIMULATION_URL}/simulacao/distribuicao_k",
+        headers=headers,
+        params={"data_inicial": data_inicial, "data_final": data_final}
+    )
+
+    status_code = result.get("status_code", 500)
+    content = result.get("content")
+
+    if status_code >= 400:
+        detail = content if isinstance(content, str) else content or "Erro ao buscar distribuição de k."
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    return content
+
+@router.get("/frequencia_cidades", summary="Frequência de cidades em pontos ótimos")
+async def frequencia_cidades(
+    request: Request,
+    data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
+    data_final: date = Query(..., description="Data final YYYY-MM-DD"),
+    usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
+):
+    """
+    Encaminha requisição do API Gateway → Simulation Service
+    para obter a frequência de cidades em pontos ótimos.
+    """
+    headers = {"authorization": request.headers.get("authorization")}
+
+    result = await forward_request(
+        "GET",
+        f"{SIMULATION_URL}/simulacao/frequencia_cidades",
+        headers=headers,
+        params={"data_inicial": data_inicial, "data_final": data_final}
+    )
+
+    status_code = result.get("status_code", 500)
+    content = result.get("content")
+
+    if status_code >= 400:
+        detail = content if isinstance(content, str) else content or "Erro ao buscar frequência de cidades."
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    return content

@@ -1,4 +1,4 @@
-#hub_router_1.0.1/src/ml_pipeline/planning/demand_forecaster.py
+# hub_router_1.0.1/src/ml_pipeline/planning/demand_forecaster.py
 
 import pandas as pd
 
@@ -28,16 +28,15 @@ class DemandForecaster:
             .reset_index()
         )
 
-        # Gera grade futura
+        # Gera grade futura SEM pares inválidos cidade–UF
+        pairs = hist[["cidade", "uf"]].drop_duplicates()
         future_days = pd.date_range(start=start_date, periods=30 * months, freq="D")
-        grid = (
-            pd.MultiIndex.from_product([wk["cidade"].unique(), wk["uf"].unique(), future_days],
-                                       names=["cidade", "uf", "data"])
-            .to_frame(index=False)
-        )
+        grid = (pairs.assign(key=1)
+                      .merge(pd.DataFrame({"data": future_days, "key": 1}), on="key")
+                      .drop(columns="key"))
         grid["weekday"] = grid["data"].dt.weekday
 
-        # Junta baseline
+        # Junta baseline por weekday
         df = grid.merge(wk, on=["cidade", "uf", "weekday"], how="left").fillna(0)
 
         # Aplica fator do cenário

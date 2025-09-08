@@ -1,3 +1,5 @@
+#config.py
+
 import os
 
 # Algoritmos permitidos por target

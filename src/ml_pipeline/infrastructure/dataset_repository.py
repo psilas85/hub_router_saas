@@ -73,7 +73,7 @@ class DatasetRepository:
                 AND l.tenant_id = r.tenant_id
                 AND l.k_clusters = r.k_clusters
             WHERE r.envio_data BETWEEN %s AND %s
-            AND r.tenant_id = %s
+              AND r.tenant_id = %s
             GROUP BY
                 r.simulation_id, r.tenant_id, r.envio_data, r.k_clusters,
                 r.custo_total, r.is_ponto_otimo, r.quantidade_entregas,
@@ -134,3 +134,51 @@ class DatasetRepository:
             return pd.read_sql(q, conn, params=(tenant_id,))
         finally:
             conn.close()
+
+    def load_avg_cost_per_delivery(self, start_date: str, end_date: str, tenant_id: str) -> float:
+        """
+        Retorna o custo médio por entrega no período informado,
+        calculado a partir da tabela resultados_simulacao.
+        """
+        query = """
+            SELECT AVG(custo_total::numeric / NULLIF(quantidade_entregas, 0)) AS custo_medio_entrega
+            FROM resultados_simulacao
+            WHERE envio_data BETWEEN %s AND %s
+              AND tenant_id = %s
+        """
+
+        with self._get_connection() as conn:
+            df = pd.read_sql(query, conn, params=(start_date, end_date, tenant_id))
+
+        if df.empty or df["custo_medio_entrega"].isna().all():
+            return None
+
+        return float(df.iloc[0]["custo_medio_entrega"])
+
+    def load_monthly_real_totals(self, start_date: str, end_date: str, tenant_id: str) -> pd.DataFrame:
+        """
+        Retorna totais reais mensais de entregas, peso e volumes
+        da tabela 'entregas' no clusterization_db.
+        """
+        query = """
+            SELECT DATE_TRUNC('month', envio_data) AS mes,
+                COUNT(*) AS entregas,
+                COALESCE(SUM(cte_peso),0) AS peso,
+                COALESCE(SUM(cte_volumes),0) AS volumes
+            FROM public.entregas
+            WHERE envio_data BETWEEN %s AND %s
+            AND tenant_id = %s
+            GROUP BY 1
+            ORDER BY 1;
+        """
+
+        cluster_config = {
+            "host": os.getenv("POSTGRES_HOST", "localhost"),
+            "port": os.getenv("POSTGRES_PORT", "5432"),
+            "dbname": "clusterization_db",   # 👈 banco das entregas
+            "user": os.getenv("POSTGRES_USER", "postgres"),
+            "password": os.getenv("POSTGRES_PASSWORD", "postgres"),
+        }
+
+        with psycopg2.connect(**cluster_config) as conn:
+            return pd.read_sql(query, conn, params=(start_date, end_date, tenant_id))

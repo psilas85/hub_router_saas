@@ -15,6 +15,9 @@ from simulation.infrastructure.simulation_database_connection import (
 )
 from simulation.visualization.gerar_graficos_custos_simulacao import gerar_graficos_custos_por_envio
 from simulation.visualization.gerador_relatorio_final import executar_geracao_relatorio_final
+from simulation.visualization.gerar_grafico_distribuicao_k import gerar_grafico_distribuicao_k
+from simulation.visualization.gerar_grafico_frequencia_cidades import gerar_grafico_frequencia_cidades
+
 
 router = APIRouter(
     prefix="/simulacao",
@@ -330,3 +333,61 @@ def visualizar_simulacao(
         raise HTTPException(status_code=404, detail="Nenhum artefato encontrado para esta data.")
 
     return response
+
+
+
+@router.get("/distribuicao_k", summary="Distribuição de k_clusters ponto ótimo")
+def distribuicao_k(
+    data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
+    data_final: date = Query(..., description="Data final YYYY-MM-DD"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    if (data_final - data_inicial).days > 365:
+        raise HTTPException(status_code=400, detail="Período máximo permitido é 12 meses.")
+
+    filename, data = gerar_grafico_distribuicao_k(
+        tenant_id=tenant_id,
+        data_inicial=str(data_inicial),
+        data_final=str(data_final),
+    )
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Nenhum ponto ótimo encontrado no período informado.")
+
+    return {
+        "status": "ok",
+        "data_inicial": str(data_inicial),
+        "data_final": str(data_final),
+        "grafico": filename.replace("./", "/"),
+        "dados": data  # lista de {k_clusters, qtd}
+    }
+
+@router.get("/frequencia_cidades", summary="Frequência de cidades em pontos ótimos")
+def frequencia_cidades(
+    data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
+    data_final: date = Query(..., description="Data final YYYY-MM-DD"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    """
+    Retorna gráfico e dados da frequência das cidades centro (cluster_cidade)
+    em simulações marcadas como ponto ótimo no período informado.
+    """
+    if (data_final - data_inicial).days > 365:
+        raise HTTPException(status_code=400, detail="Período máximo permitido é 12 meses.")
+
+    filename, data = gerar_grafico_frequencia_cidades(
+        tenant_id=tenant_id,
+        data_inicial=str(data_inicial),
+        data_final=str(data_final),
+    )
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Nenhuma cidade encontrada em pontos ótimos no período informado.")
+
+    return {
+        "status": "ok",
+        "data_inicial": str(data_inicial),
+        "data_final": str(data_final),
+        "grafico": filename.replace("./", "/"),
+        "dados": data,  # lista de {cluster_cidade, qtd}
+    }
