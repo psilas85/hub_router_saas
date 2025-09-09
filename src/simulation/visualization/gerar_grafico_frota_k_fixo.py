@@ -102,18 +102,35 @@ def gerar_grafico_frota_k_fixo(
             png_path = os.path.join(output_dir, tenant_id, f"{base_name}_k{k_fixo}.png")
             df_frota = df_frota.sort_values("frota_sugerida", ascending=False)
 
+            # Paleta fixa por tipo de veículo
+            cores = {
+                "Motocicleta": "#16a34a",
+                "Fiorino": "#2563eb",
+                "HR": "#f97316",
+                "VUC": "#f97316",
+                "3/4": "#9333ea",
+                "Toco": "#e11d48",
+                "Truck": "#64748b",
+            }
+
             plt.figure(figsize=(10, 6))
-            plt.bar(df_frota["tipo_veiculo"], df_frota["frota_sugerida"], color="steelblue")
+            bars = plt.bar(
+                df_frota["tipo_veiculo"],
+                df_frota["frota_sugerida"],
+                color=[cores.get(tv, "steelblue") for tv in df_frota["tipo_veiculo"]],
+                edgecolor="black"
+            )
 
             plt.ylabel("Frota média sugerida (veículos/dia)")
             plt.xlabel("Tipo de Veículo")
+            plt.grid(axis="y", linestyle="--", alpha=0.3)
 
             # Calcular total da frota
             total_frota = df_frota["frota_sugerida"].sum()
 
             plt.title(
-                f"Frota Média Sugerida • {data_inicial} → {data_final} • k={k_fixo}\n"
-                f"Total de Frota: {total_frota} veículos",
+                f"Frota Média Sugerida • k={k_fixo} • {data_inicial} → {data_final}\n"
+                f"Total: {total_frota} veículos • Cobertura: {cobertura_pct:.1%}",
                 fontsize=12,
                 fontweight="bold"
             )
@@ -122,11 +139,11 @@ def gerar_grafico_frota_k_fixo(
             plt.gca().yaxis.set_major_locator(MaxNLocator(integer=True))
 
             # Adicionar rótulo em cada barra
-            for idx, row in df_frota.iterrows():
+            for bar, val in zip(bars, df_frota["frota_sugerida"]):
                 plt.text(
-                    row["tipo_veiculo"],
-                    row["frota_sugerida"] + 0.2,
-                    str(row["frota_sugerida"]),
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.3,
+                    f"{val:,}".replace(",", "."),
                     ha="center",
                     va="bottom",
                     fontsize=9,
@@ -134,8 +151,9 @@ def gerar_grafico_frota_k_fixo(
                 )
 
             plt.tight_layout()
-            plt.savefig(png_path, bbox_inches="tight")
+            plt.savefig(png_path, bbox_inches="tight", dpi=150)
             plt.close()
+
 
             print(f"✅ PNG gráfico: {png_path}")
 

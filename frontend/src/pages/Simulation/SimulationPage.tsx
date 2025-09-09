@@ -22,7 +22,6 @@ import {
     ChevronDown,
     BarChart2,
     Building2,
-    Truck,
 } from "lucide-react";
 
 // Recharts
@@ -35,7 +34,9 @@ import {
     CartesianGrid,
     ResponsiveContainer,
     Label,
+    Cell,
 } from "recharts";
+
 
 function todayISO() {
     const d = new Date();
@@ -340,17 +341,6 @@ export default function SimulationPage() {
         }
     };
 
-    // Dados para gráfico de k fixo (escolhe série conforme modo)
-    const kFixoChartData = useMemo(() => {
-        if (!kFixoData?.length) return [];
-        return kFixoData
-            .slice()
-            .sort((a, b) => a.k_clusters - b.k_clusters)
-            .map((d) => ({
-                k: d.k_clusters,
-                valor: kFixoUsarMedia ? d.media_custo_total : d.soma_custo_total,
-            }));
-    }, [kFixoData, kFixoUsarMedia]);
 
     // =========================
     // ABA: Frota p/ k Fixo
@@ -416,16 +406,27 @@ export default function SimulationPage() {
     };
 
 
-    // Agrega total de frota por k para um gráfico simples
-    const frotaTotalPorK = useMemo(() => {
-        const acc: Record<number, number> = {};
+    // 🔧 Prepara dados para gráfico detalhado por k e tipo de veículo
+    // Agrupa frota por k e por tipo de veículo
+    const frotaPorKChartData = useMemo(() => {
+        const grouped: Record<number, { tipo: string; frota: number }[]> = {};
+
         for (const r of frotaData) {
-            acc[r.k_clusters] = (acc[r.k_clusters] || 0) + r.frota_sugerida;
+            if (!grouped[r.k_clusters]) grouped[r.k_clusters] = [];
+            grouped[r.k_clusters].push({
+                tipo: r.tipo_veiculo,
+                frota: r.frota_sugerida,
+            });
         }
-        return Object.entries(acc)
-            .map(([k, total]) => ({ k: Number(k), total }))
-            .sort((a, b) => a.k - b.k);
+
+        // Ordena decrescente em cada k
+        for (const k in grouped) {
+            grouped[k] = grouped[k].sort((a, b) => b.frota - a.frota);
+        }
+
+        return grouped;
     }, [frotaData]);
+
 
     return (
         <div className="max-w-6xl mx-auto p-6">
@@ -1214,27 +1215,49 @@ export default function SimulationPage() {
 
                     {kFixoData.length > 0 && (
                         <>
-                            <div className="w-full h-[420px] border rounded-lg p-2 mb-4">
+                            <div className="w-full h-[420px] border rounded-lg p-2 mb-4 bg-white">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <RBarChart data={kFixoChartData}>
-                                        <CartesianGrid strokeDasharray="3 3" />
-                                        <XAxis dataKey="k" tickMargin={8}>
-                                            <Label
-                                                value="k"
-                                                offset={-5}
-                                                position="insideBottom"
-                                            />
+                                    <RBarChart data={kFixoData}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                        <XAxis dataKey="k_clusters" tickMargin={8}>
+                                            <Label value="Clusters (k)" offset={-5} position="insideBottom" />
                                         </XAxis>
                                         <YAxis
+                                            tickFormatter={(v) =>
+                                                new Intl.NumberFormat("pt-BR", {
+                                                    notation: "compact",
+                                                    maximumFractionDigits: 1,
+                                                }).format(v)
+                                            }
                                             label={{
-                                                value: kFixoUsarMedia ? "Custo médio" : "Custo acumulado",
+                                                value: kFixoUsarMedia ? "Custo médio (R$)" : "Custo acumulado (R$)",
                                                 angle: -90,
                                                 position: "insideLeft",
                                             }}
                                             tickMargin={6}
                                         />
-                                        <Tooltip />
-                                        <Bar dataKey="valor" />
+                                        <Tooltip
+                                            formatter={(v: number) =>
+                                                new Intl.NumberFormat("pt-BR", {
+                                                    style: "currency",
+                                                    currency: "BRL",
+                                                }).format(v)
+                                            }
+                                            labelFormatter={(k) => `k = ${k}`}
+                                        />
+                                        {/* Barras empilhadas (last-mile + transferência) */}
+                                        <Bar
+                                            dataKey="soma_custo_last_mile"
+                                            stackId="a"
+                                            fill="#2563eb"
+                                            radius={[6, 6, 0, 0]}
+                                        />
+                                        <Bar
+                                            dataKey="soma_custo_transfer"
+                                            stackId="a"
+                                            fill="#64748b"
+                                            radius={[6, 6, 0, 0]}
+                                        />
                                     </RBarChart>
                                 </ResponsiveContainer>
                             </div>
@@ -1301,10 +1324,10 @@ export default function SimulationPage() {
             {activeTab === "frota" && (
                 <div className="bg-white rounded-2xl shadow p-4">
                     <h2 className="font-semibold mb-4 flex items-center gap-2">
-                        <Truck className="w-5 h-5 text-emerald-600" />
                         Frota média sugerida por k fixo
                     </h2>
 
+                    {/* Filtros */}
                     <div className="grid md:grid-cols-4 gap-4 mb-4">
                         <div>
                             <label className="block text-sm text-gray-700">Data inicial</label>
@@ -1355,39 +1378,116 @@ export default function SimulationPage() {
                         </div>
                     </div>
 
+                    {/* Sem dados */}
                     {frotaData.length === 0 && !loadingFrota && (
                         <div className="text-sm text-gray-500">
-                            Informe o período e os valores de <strong>k</strong>, depois
-                            clique em <strong>Gerar frota</strong>.
+                            Informe o período e os valores de <strong>k</strong>, depois clique em{" "}
+                            <strong>Gerar frota</strong>.
                         </div>
                     )}
 
+                    {/* Com dados */}
                     {frotaData.length > 0 && (
                         <>
-                            {/* Gráfico simples: total de frota por k */}
-                            <div className="w-full h-[380px] border rounded-lg p-2 mb-4">
+                            {/* Texto com total */}
+                            <div className="mb-4 text-emerald-700 font-semibold">
+                                🚚 Total de veículos sugeridos:{" "}
+                                {frotaData.reduce((acc, r) => acc + r.frota_sugerida, 0)}
+                            </div>
+
+                            {/* Gráfico detalhado */}
+                            <div id="frotaChart" className="w-full h-[420px] border rounded-lg p-2 mb-2 bg-white">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <RBarChart data={frotaTotalPorK}>
-                                        <CartesianGrid strokeDasharray="3 3" />
-                                        <XAxis dataKey="k" tickMargin={8}>
-                                            <Label value="k" offset={-5} position="insideBottom" />
-                                        </XAxis>
-                                        <YAxis
+                                    <RBarChart
+                                        data={Object.values(frotaPorKChartData).flat()}
+                                        layout="vertical"
+                                        margin={{ top: 10, right: 30, left: 80, bottom: 10 }}
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                        <XAxis
+                                            type="number"
+                                            allowDecimals={false}
                                             label={{
-                                                value: "Frota total sugerida",
+                                                value: "Frota sugerida (veículos/dia)",
+                                                position: "insideBottom",
+                                                offset: -5,
+                                            }}
+                                        />
+                                        <YAxis
+                                            type="category"
+                                            dataKey="tipo"
+                                            tick={{ fontSize: 12 }}
+                                            width={120}
+                                            label={{
+                                                value: "Tipo de veículo",
                                                 angle: -90,
                                                 position: "insideLeft",
                                             }}
-                                            allowDecimals={false}
-                                            tickMargin={6}
                                         />
-                                        <Tooltip />
-                                        <Bar dataKey="total" />
+                                        <Tooltip
+                                            formatter={(v: number) => `${v} veículos`}
+                                            labelFormatter={(label) => `Veículo: ${label}`}
+                                        />
+                                        <Bar
+                                            dataKey="frota"
+                                            radius={[0, 6, 6, 0]}
+                                            barSize={20}
+                                        >
+                                            {Object.values(frotaPorKChartData)
+                                                .flat()
+                                                .map((_, index) => (
+                                                    <Cell
+                                                        key={`cell-${index}`}
+                                                        fill={[
+                                                            "#10b981",
+                                                            "#2563eb",
+                                                            "#f59e0b",
+                                                            "#ef4444",
+                                                            "#8b5cf6",
+                                                            "#14b8a6",
+                                                            "#d946ef",
+                                                        ][index % 7]}
+                                                    />
+                                                ))}
+                                        </Bar>
                                     </RBarChart>
                                 </ResponsiveContainer>
                             </div>
 
-                            {/* Tabela detalhada por tipo de veículo */}
+                            {/* Botão de download */}
+                            <div className="text-right mb-4">
+                                <button
+                                    className="text-emerald-600 hover:underline text-sm"
+                                    onClick={() => {
+                                        const svg = document.querySelector("#frotaChart svg");
+                                        if (!svg) return;
+
+                                        const svgData = new XMLSerializer().serializeToString(svg);
+                                        const canvas = document.createElement("canvas");
+                                        const ctx = canvas.getContext("2d");
+                                        const img = new Image();
+                                        const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+                                        const url = URL.createObjectURL(blob);
+
+                                        img.onload = () => {
+                                            canvas.width = img.width;
+                                            canvas.height = img.height;
+                                            ctx?.drawImage(img, 0, 0);
+                                            URL.revokeObjectURL(url);
+
+                                            const a = document.createElement("a");
+                                            a.download = "frota_k_fixo.png";
+                                            a.href = canvas.toDataURL("image/png");
+                                            a.click();
+                                        };
+                                        img.src = url;
+                                    }}
+                                >
+                                    📥 Baixar gráfico (PNG)
+                                </button>
+                            </div>
+
+                            {/* Tabela detalhada */}
                             <div className="overflow-auto">
                                 <table className="min-w-full text-sm">
                                     <thead>
@@ -1425,6 +1525,8 @@ export default function SimulationPage() {
                     )}
                 </div>
             )}
+
+
         </div>
     );
 }

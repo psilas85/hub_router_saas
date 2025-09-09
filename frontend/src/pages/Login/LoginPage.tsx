@@ -49,16 +49,22 @@ export default function LoginPage() {
         >
             {/* Coluna Esquerda */}
             <motion.div
-                className="hidden md:flex w-1/2 bg-gradient-to-br from-emerald-600 to-emerald-800 text-white items-center justify-center relative overflow-hidden"
+                className="hidden md:flex w-1/2 bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-800 text-white items-center justify-center relative overflow-hidden"
                 initial={{ x: -80, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
-                transition={{ duration: 0.9, ease: "easeOut" }}
+                transition={{ duration: 0.9, ease: 'easeOut' }}
             >
-                <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" />
+                <div className="absolute inset-0 bg-white/10 backdrop-blur-sm" />
                 <div className="relative z-10 text-center px-8">
-                    <img src="/hubrouter_logo.png" alt="HubRouter Logo" className="h-28 mx-auto mb-6 drop-shadow-lg" />
-                    <h1 className="text-4xl font-extrabold mb-4 tracking-tight">HubRouter</h1>
-                    <p className="text-lg opacity-90 max-w-md mx-auto">
+                    <img
+                        src="/hubrouter_logo.png"
+                        alt="HubRouter Logo"
+                        className="h-40 mx-auto mb-8 drop-shadow-lg"
+                    />
+                    <h1 className="text-5xl font-extrabold mb-4 tracking-tight">
+                        HubRouter
+                    </h1>
+                    <p className="text-lg opacity-90 max-w-md mx-auto leading-relaxed">
                         Inteligência Artificial para redes logísticas
                     </p>
                 </div>
@@ -69,15 +75,19 @@ export default function LoginPage() {
                 className="w-full md:w-1/2 flex items-center justify-center p-6"
                 initial={{ x: 80, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
-                transition={{ duration: 0.9, ease: "easeOut" }}
+                transition={{ duration: 0.9, ease: 'easeOut' }}
             >
-                <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8">
-                    <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">Acessar Conta</h2>
+                <div className="w-full max-w-md bg-white rounded-3xl shadow-lg hover:shadow-xl p-10 transition-all">
+                    <h2 className="text-3xl font-bold text-gray-800 mb-8 text-center">
+                        Acessar Conta
+                    </h2>
 
                     <form className="space-y-5" onSubmit={handleSubmit}>
                         {/* Email */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Email
+                            </label>
                             <div className="relative">
                                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                                 <input
@@ -86,17 +96,21 @@ export default function LoginPage() {
                                     onChange={(e) => setEmail(e.target.value)}
                                     placeholder="seu@email.com"
                                     className={`w-full pl-10 pr-3 p-3 border rounded-lg focus:ring-2 focus:outline-none ${errors.email
-                                            ? "border-red-500 focus:ring-red-500"
-                                            : "border-gray-300 focus:ring-emerald-500"
+                                            ? 'border-red-500 focus:ring-red-500'
+                                            : 'border-gray-300 focus:ring-emerald-500'
                                         }`}
                                 />
                             </div>
-                            {errors.email && <p className="text-red-500 text-sm mt-1">{errors.email}</p>}
+                            {errors.email && (
+                                <p className="text-red-500 text-sm mt-1">{errors.email}</p>
+                            )}
                         </div>
 
                         {/* Senha */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Senha
+                            </label>
                             <div className="relative">
                                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                                 <input
@@ -105,12 +119,14 @@ export default function LoginPage() {
                                     onChange={(e) => setSenha(e.target.value)}
                                     placeholder="********"
                                     className={`w-full pl-10 pr-3 p-3 border rounded-lg focus:ring-2 focus:outline-none ${errors.senha
-                                            ? "border-red-500 focus:ring-red-500"
-                                            : "border-gray-300 focus:ring-emerald-500"
+                                            ? 'border-red-500 focus:ring-red-500'
+                                            : 'border-gray-300 focus:ring-emerald-500'
                                         }`}
                                 />
                             </div>
-                            {errors.senha && <p className="text-red-500 text-sm mt-1">{errors.senha}</p>}
+                            {errors.senha && (
+                                <p className="text-red-500 text-sm mt-1">{errors.senha}</p>
+                            )}
                         </div>
 
                         {/* Esqueci senha */}
@@ -124,13 +140,14 @@ export default function LoginPage() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full bg-emerald-600 text-white p-3 rounded-lg font-medium hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md disabled:opacity-50"
+                            className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 text-white p-3 rounded-lg font-medium hover:from-emerald-700 hover:to-emerald-800 transition-all shadow-md disabled:opacity-50"
                         >
-                            {loading ? "Entrando..." : "Entrar"}
+                            {loading ? 'Entrando...' : 'Entrar'}
                         </button>
                     </form>
                 </div>
             </motion.div>
         </motion.div>
+
     );
 }
