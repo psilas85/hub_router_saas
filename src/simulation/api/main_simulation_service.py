@@ -4,6 +4,7 @@ import uvicorn
 from fastapi import FastAPI
 from simulation.api import routes
 
+
 app = FastAPI(
     title="HubRouter - Simulation Service",
     description="📊 Serviço responsável por executar simulações de clusterização, roteirização e custeio.",

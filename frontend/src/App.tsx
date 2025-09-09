@@ -20,11 +20,13 @@ import LastMileVehiclesPage from "@/pages/LastMile/LastMileVehiclesPage";
 import LastMileRoutingPage from "@/pages/LastMile/LastMileRoutingPage";
 import LastMileCostsPage from "@/pages/LastMile/LastMileCostsPage";
 
-// Outros módulos
+// Simulação
 import SimulationPage from "@/pages/Simulation/SimulationPage";
-import PlannerPage from "@/pages/Planner/PlannerPage";
-import ExploratoryDashboardPage from "@/pages/Exploratory/ExploratoryDashboardPage";
+import SimulationHubsPage from "@/pages/Simulation/SimulationHubsPage";
+import SimulationClusterCostsPage from "@/pages/Simulation/SimulationClusterCostsPage";
 
+// Exploratory Analysis
+import ExploratoryDashboardPage from "@/pages/Exploratory/ExploratoryDashboardPage";
 
 export default function App() {
   return (
@@ -34,7 +36,6 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
 
         {/* Protegidas */}
-        {/* Página inicial agora abre a Home protegida */}
         <Route
           path="/"
           element={
@@ -58,9 +59,12 @@ export default function App() {
           }
         />
         {/* Alias curto para EDA */}
-        <Route path="/eda" element={<Navigate to="/exploratory_analysis_ui" replace />} />
+        <Route
+          path="/eda"
+          element={<Navigate to="/exploratory_analysis_ui" replace />}
+        />
 
-
+        {/* Data Input & Clusterization */}
         <Route
           path="/data-input"
           element={
@@ -146,7 +150,7 @@ export default function App() {
           }
         />
 
-        {/* Outros módulos */}
+        {/* Simulação */}
         <Route
           path="/simulation"
           element={
@@ -158,15 +162,27 @@ export default function App() {
           }
         />
         <Route
-          path="/planner"
+          path="/simulation/hubs"
           element={
             <ProtectedRoute>
               <Layout>
-                <PlannerPage />
+                <SimulationHubsPage />
               </Layout>
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/simulation/cluster_costs"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <SimulationClusterCostsPage />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Admin */}
         <Route
           path="/users"
           element={

@@ -1,10 +1,12 @@
 # simulation/api/routes.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from datetime import date, timedelta
 import logging
 import uuid
 import os
+from pydantic import BaseModel
+from typing import List
 
 from authentication.utils.dependencies import obter_tenant_id_do_token
 from simulation.application.simulation_use_case import SimulationUseCase
@@ -17,6 +19,8 @@ from simulation.visualization.gerar_graficos_custos_simulacao import gerar_grafi
 from simulation.visualization.gerador_relatorio_final import executar_geracao_relatorio_final
 from simulation.visualization.gerar_grafico_distribuicao_k import gerar_grafico_distribuicao_k
 from simulation.visualization.gerar_grafico_frequencia_cidades import gerar_grafico_frequencia_cidades
+from simulation.visualization.gerar_grafico_k_fixo import gerar_grafico_k_fixo
+from simulation.visualization.gerar_grafico_frota_k_fixo import gerar_grafico_frota_k_fixo
 
 
 router = APIRouter(
@@ -26,6 +30,26 @@ router = APIRouter(
 
 logger = logging.getLogger("simulation_service")
 logger.setLevel(logging.INFO)
+
+# ================================
+# MODELOS Pydantic
+# ================================
+class HubIn(BaseModel):
+    nome: str
+    cidade: str
+    latitude: float
+    longitude: float
+
+class HubOut(HubIn):
+    hub_id: int
+
+class ClusterCostIn(BaseModel):
+    limite_qtd_entregas: int
+    custo_fixo_diario: float
+    custo_variavel_por_entrega: float
+
+class ClusterCostOut(ClusterCostIn):
+    id: int
 
 
 @router.get("/health", summary="Health Check", description="Verifica se o serviço de simulação está online.")
@@ -391,3 +415,202 @@ def frequencia_cidades(
         "grafico": filename.replace("./", "/"),
         "dados": data,  # lista de {cluster_cidade, qtd}
     }
+
+
+@router.get("/k_fixo", summary="Avaliar cenário k fixo no período")
+def k_fixo(
+    data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
+    data_final: date = Query(..., description="Data final YYYY-MM-DD"),
+    usar_media: bool = Query(False, description="Usar média ao invés de soma (modo FULL)"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    """
+    Avalia cenários de k_clusters fixos no período informado.
+    Retorna gráfico, CSV consolidado e métricas (custo total/médio e regret).
+    """
+    png, csv, df = gerar_grafico_k_fixo(
+        tenant_id=tenant_id,
+        data_inicial=str(data_inicial),
+        data_final=str(data_final),
+        usar_media_em_vez_de_soma=usar_media,
+    )
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail="Nenhum cenário encontrado no período informado.")
+
+    return {
+        "status": "ok",
+        "tenant_id": tenant_id,
+        "data_inicial": str(data_inicial),
+        "data_final": str(data_final),
+        "grafico": png.replace("./", "/") if png else None,
+        "csv": csv.replace("./", "/") if csv else None,
+        "dados": df.to_dict(orient="records"),
+    }
+
+
+@router.get("/frota_k_fixo", summary="Frota média sugerida por k fixo")
+def frota_k_fixo(
+    data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
+    data_final: date = Query(..., description="Data final YYYY-MM-DD"),
+    k: list[int] = Query(..., description="Um ou mais valores de k (ex: k=8&k=9&k=10)"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    """
+    Avalia a frota média necessária no período para um ou mais k fixos.
+    Retorna gráficos por tipo de veículo, CSV consolidado e detalhado.
+    """
+    _, csv, df = gerar_grafico_frota_k_fixo(
+        tenant_id=tenant_id,
+        data_inicial=str(data_inicial),
+        data_final=str(data_final),
+        k_list=k,
+    )
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail="Nenhum dado de frota encontrado no período informado.")
+
+    return {
+        "status": "ok",
+        "tenant_id": tenant_id,
+        "data_inicial": str(data_inicial),
+        "data_final": str(data_final),
+        "csv": csv.replace("./", "/") if csv else None,
+        "dados": df.to_dict(orient="records"),
+    }
+
+# ================================
+# CRUD Hubs
+# ================================
+@router.get("/hubs", response_model=List[HubOut], summary="Listar hubs")
+def listar_hubs(tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db(); cur = conn.cursor()
+    cur.execute("""
+        SELECT hub_id, nome, cidade, latitude, longitude
+        FROM hubs WHERE tenant_id=%s ORDER BY hub_id DESC
+    """, (tenant_id,))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return [HubOut(hub_id=r[0], nome=r[1], cidade=r[2], latitude=r[3], longitude=r[4]) for r in rows]
+
+@router.post("/hubs", response_model=HubOut, summary="Criar novo hub")
+def criar_hub(payload: HubIn, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db(); cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO hubs (tenant_id, nome, cidade, latitude, longitude)
+            VALUES (%s,%s,%s,%s,%s)
+            RETURNING hub_id, nome, cidade, latitude, longitude
+        """, (tenant_id, payload.nome, payload.cidade, payload.latitude, payload.longitude))
+        row = cur.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        cur.close(); conn.close()
+        raise HTTPException(400, f"Erro ao inserir hub: {e}")
+    cur.close(); conn.close()
+    return HubOut(hub_id=row[0], nome=row[1], cidade=row[2], latitude=row[3], longitude=row[4])
+
+@router.put("/hubs/{hub_id}", response_model=HubOut, summary="Atualizar hub existente")
+def atualizar_hub(hub_id: int, payload: HubIn, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db(); cur = conn.cursor()
+    cur.execute("""
+        UPDATE hubs
+        SET nome=%s, cidade=%s, latitude=%s, longitude=%s
+        WHERE hub_id=%s AND tenant_id=%s
+        RETURNING hub_id, nome, cidade, latitude, longitude
+    """, (payload.nome, payload.cidade, payload.latitude, payload.longitude, hub_id, tenant_id))
+    row = cur.fetchone()
+    conn.commit(); cur.close(); conn.close()
+    if not row:
+        raise HTTPException(404, "Hub não encontrado")
+    return HubOut(hub_id=row[0], nome=row[1], cidade=row[2], latitude=row[3], longitude=row[4])
+
+@router.delete("/hubs/{hub_id}", summary="Remover hub")
+def excluir_hub(hub_id: int, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db(); cur = conn.cursor()
+    cur.execute("DELETE FROM hubs WHERE hub_id=%s AND tenant_id=%s", (hub_id, tenant_id))
+    deleted = cur.rowcount
+    conn.commit(); cur.close(); conn.close()
+    if not deleted:
+        raise HTTPException(404, "Hub não encontrado")
+    return {"deleted": True}
+
+# ================================
+# CRUD Cluster Costs (1 por tenant)
+# ================================
+@router.get("/cluster_costs", response_model=ClusterCostOut, summary="Obter custos do tenant")
+def obter_costs(tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db(); cur = conn.cursor()
+    cur.execute("""
+        SELECT id, limite_qtd_entregas, custo_fixo_diario, custo_variavel_por_entrega
+        FROM cluster_costs WHERE tenant_id=%s
+    """, (tenant_id,))
+    row = cur.fetchone()
+    cur.close(); conn.close()
+
+    if not row:
+        # from fastapi import Response
+        # return Response(status_code=204)  # se quiser 204
+        raise HTTPException(404, "Nenhum custo cadastrado para este tenant")  # ou mantém 404
+
+    return ClusterCostOut(
+        id=row[0],
+        limite_qtd_entregas=row[1],
+        custo_fixo_diario=float(row[2]),
+        custo_variavel_por_entrega=float(row[3])
+    )
+
+@router.post("/cluster_costs", response_model=ClusterCostOut, summary="Criar ou atualizar custos do tenant")
+def upsert_costs(payload: ClusterCostIn, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO cluster_costs (tenant_id, limite_qtd_entregas, custo_fixo_diario, custo_variavel_por_entrega)
+        VALUES (%s,%s,%s,%s)
+        ON CONFLICT (tenant_id) DO UPDATE
+        SET limite_qtd_entregas=EXCLUDED.limite_qtd_entregas,
+            custo_fixo_diario=EXCLUDED.custo_fixo_diario,
+            custo_variavel_por_entrega=EXCLUDED.custo_variavel_por_entrega
+        RETURNING id, limite_qtd_entregas, custo_fixo_diario, custo_variavel_por_entrega
+    """, (tenant_id, payload.limite_qtd_entregas, payload.custo_fixo_diario, payload.custo_variavel_por_entrega))
+    row = cur.fetchone()
+    conn.commit(); cur.close(); conn.close()
+    return ClusterCostOut(id=row[0], limite_qtd_entregas=row[1],
+                          custo_fixo_diario=float(row[2]), custo_variavel_por_entrega=float(row[3]))
+
+@router.delete("/cluster_costs/{id}", summary="Remover custo específico do tenant")
+def excluir_cost(id: int, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db(); cur = conn.cursor()
+    cur.execute("DELETE FROM cluster_costs WHERE id=%s AND tenant_id=%s", (id, tenant_id))
+    deleted = cur.rowcount
+    conn.commit(); cur.close(); conn.close()
+    if not deleted:
+        raise HTTPException(404, "Custo não encontrado")
+    return {"deleted": True}
+
+
+@router.get(
+    "/cluster_costs/list",
+    response_model=List[ClusterCostOut],
+    summary="Listar custos do tenant (array)"
+)
+def listar_costs(tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db(); cur = conn.cursor()
+    cur.execute("""
+        SELECT id, limite_qtd_entregas, custo_fixo_diario, custo_variavel_por_entrega
+        FROM cluster_costs
+        WHERE tenant_id=%s
+        ORDER BY id DESC
+    """, (tenant_id,))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+
+    return [
+        ClusterCostOut(
+            id=r[0],
+            limite_qtd_entregas=r[1],
+            custo_fixo_diario=float(r[2]),
+            custo_variavel_por_entrega=float(r[3]),
+        )
+        for r in rows
+    ]

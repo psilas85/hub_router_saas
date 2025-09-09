@@ -218,3 +218,121 @@ async def frequencia_cidades(
         raise HTTPException(status_code=status_code, detail=detail)
 
     return content
+
+@router.get("/k_fixo", summary="Custos consolidados para k fixo")
+async def k_fixo(
+    request: Request,
+    data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
+    data_final: date = Query(..., description="Data final YYYY-MM-DD"),
+    usar_media: bool = Query(False, description="Usar média em vez de soma"),
+    usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
+):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request(
+        "GET",
+        f"{SIMULATION_URL}/simulacao/k_fixo",
+        headers=headers,
+        params={"data_inicial": data_inicial, "data_final": data_final, "usar_media": usar_media}
+    )
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.get("/frota_k_fixo", summary="Frota média sugerida por k fixo")
+async def frota_k_fixo(
+    request: Request,
+    data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
+    data_final: date = Query(..., description="Data final YYYY-MM-DD"),
+    k: list[int] = Query(..., description="Um ou mais valores de k (ex: 8,9,10)"),
+    usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
+):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request(
+        "GET",
+        f"{SIMULATION_URL}/simulacao/frota_k_fixo",
+        headers=headers,
+        params={"data_inicial": data_inicial, "data_final": data_final, "k": k}
+    )
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+# ============================
+# CRUD Hubs
+# ============================
+@router.get("/hubs", summary="Listar hubs")
+async def listar_hubs(request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request("GET", f"{SIMULATION_URL}/simulacao/hubs", headers=headers)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+@router.post("/hubs", summary="Criar hub")
+async def criar_hub(request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    body = await request.json()
+    result = await forward_request("POST", f"{SIMULATION_URL}/simulacao/hubs", headers=headers, json=body)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+@router.put("/hubs/{hub_id}", summary="Atualizar hub")
+async def atualizar_hub(hub_id: int, request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    body = await request.json()
+    result = await forward_request("PUT", f"{SIMULATION_URL}/simulacao/hubs/{hub_id}", headers=headers, json=body)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+@router.delete("/hubs/{hub_id}", summary="Excluir hub")
+async def excluir_hub(hub_id: int, request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request("DELETE", f"{SIMULATION_URL}/simulacao/hubs/{hub_id}", headers=headers)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+# ============================
+# CRUD Cluster Costs
+# ============================
+@router.get("/cluster_costs", summary="Obter custos do tenant")
+async def obter_costs(request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request("GET", f"{SIMULATION_URL}/simulacao/cluster_costs", headers=headers)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+@router.post("/cluster_costs", summary="Criar/atualizar custos do tenant")
+async def upsert_costs(request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    body = await request.json()
+    result = await forward_request("POST", f"{SIMULATION_URL}/simulacao/cluster_costs", headers=headers, json=body)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+@router.delete("/cluster_costs/{id}", summary="Excluir custo específico do tenant")
+async def excluir_cost(id: int, request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request("DELETE", f"{SIMULATION_URL}/simulacao/cluster_costs/{id}", headers=headers)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.get("/cluster_costs/list", summary="Listar custos do tenant (array)")
+async def listar_costs(request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request(
+        "GET",
+        f"{SIMULATION_URL}/simulacao/cluster_costs/list",
+        headers=headers
+    )
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]

@@ -8,7 +8,6 @@ import {
     Truck,
     Bike,
     BarChart3,
-    LayoutDashboard,
     Settings,
     LogOut,
     ChevronDown,
@@ -59,6 +58,7 @@ export default function Navbar() {
     // Submenus
     const [mmOpen, setMmOpen] = useState(false); // Middle-Mile
     const [lmOpen, setLmOpen] = useState(false); // Last-Mile
+    const [simOpen, setSimOpen] = useState(false); // Simulação
     const [adminOpen, setAdminOpen] = useState(false); // Admin
 
     const drawerRef = useRef<HTMLElement | null>(null);
@@ -238,13 +238,30 @@ export default function Navbar() {
                     </Item>
                 </SubMenu>
 
-                <Item to="/simulation" icon={<BarChart3 size={16} />} onClick={() => setDrawerOpen(false)}>
-                    Simulação
-                </Item>
+                <SubMenu title="Simulação" icon={<BarChart3 size={16} />} open={simOpen} setOpen={setSimOpen}>
+                    <Item
+                        to="/simulation"
+                        icon={<span className="text-base leading-none">▶️</span>}
+                        onClick={() => setDrawerOpen(false)}
+                    >
+                        Processamento
+                    </Item>
+                    <Item
+                        to="/simulation/hubs"
+                        icon={<span className="text-base leading-none">📍</span>}
+                        onClick={() => setDrawerOpen(false)}
+                    >
+                        Cadastro de Hubs
+                    </Item>
+                    <Item
+                        to="/simulation/cluster_costs"
+                        icon={<span className="text-base leading-none">💰</span>}
+                        onClick={() => setDrawerOpen(false)}
+                    >
+                        Custos de Centros
+                    </Item>
+                </SubMenu>
 
-                <Item to="/planner" icon={<LayoutDashboard size={16} />} onClick={() => setDrawerOpen(false)}>
-                    Planner
-                </Item>
 
                 {/* Admin (permite/oculta conforme permissões) */}
                 {(podeGerenciarUsuarios || podeGerenciarTenants) && (

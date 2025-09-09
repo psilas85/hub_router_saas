@@ -329,6 +329,28 @@ services:
       - hub_router_network
     restart: always
 
+  machine_learning_service:
+    build:
+      context: .
+      dockerfile: src/machine_learning/Dockerfile.machine_learning
+    image: psilas85/hub_router-machine_learning:latest
+    container_name: hub_router_101-machine_learning_service
+    ports:
+      - "8014:8014"
+    volumes:
+      - ./src:/app/src
+      - ./models:/app/models
+      - ./exports/machine_learning:/app/exports/machine_learning
+    env_file:
+      - ./src/machine_learning/.env
+    environment:
+      - PYTHONPATH=/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - hub_router_network
+    restart: always
 
 networks:
   hub_router_network:
@@ -336,3 +358,6 @@ networks:
 
 volumes:
   postgres_data:
+
+
+

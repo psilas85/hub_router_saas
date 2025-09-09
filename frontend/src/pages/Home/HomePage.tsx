@@ -10,7 +10,6 @@ import {
     Upload,
     Sparkles,
     Network,
-    Truck,
     Package,
 } from "lucide-react";
 import {
@@ -43,8 +42,6 @@ try {
 }
 const API_URL = apiBase;
 console.log("🌍 Home API_URL:", API_URL);
-
-
 
 export default function HomePage() {
     const navigate = useNavigate();
@@ -131,12 +128,6 @@ export default function HomePage() {
                     description="Compare cenários de custos."
                     icon={<Network className="h-5 w-5 text-blue-600" />}
                     onClick={() => navigate("/simulation")}
-                />
-                <ActionCard
-                    title="Planner"
-                    description="Planejamento preditivo."
-                    icon={<Truck className="h-5 w-5 text-orange-600" />}
-                    onClick={() => navigate("/planner")}
                 />
             </section>
 

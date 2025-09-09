@@ -1,13 +1,16 @@
-// hub_router_1.0.1/frontend/src/pages/Simulation/SimulationPage.tsx
 import { useMemo, useState } from "react";
 import {
     runSimulation,
     visualizeSimulation,
     getDistribuicaoK,
     getFrequenciaCidades,
+    getKFixo,
+    getFrotaKFixo,
     type VisualizeSimulationResponse,
     type DistribuicaoKResponse,
     type FrequenciaCidadesResponse,
+    type KFixoResponse,
+    type FrotaKFixoResponse,
 } from "@/services/simulationApi";
 import toast from "react-hot-toast";
 import {
@@ -19,6 +22,7 @@ import {
     ChevronDown,
     BarChart2,
     Building2,
+    Truck,
 } from "lucide-react";
 
 // Recharts
@@ -42,7 +46,8 @@ function todayISO() {
 const resolveUrl = (path: string) => {
     if (!path) return "";
     if (path.startsWith("http")) return path;
-    return `${import.meta.env.VITE_API_URL}${path.startsWith("/") ? path : `/${path}`}`;
+    return `${import.meta.env.VITE_API_URL}${path.startsWith("/") ? path : `/${path}`
+        }`;
 };
 
 // 🔧 Accordion wrapper
@@ -62,7 +67,8 @@ function Accordion({
             >
                 <span className="font-semibold">{title}</span>
                 <ChevronDown
-                    className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`}
+                    className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""
+                        }`}
                 />
             </button>
             {open && <div className="p-4 grid md:grid-cols-3 gap-4">{children}</div>}
@@ -70,7 +76,7 @@ function Accordion({
     );
 }
 
-type TabKey = "simulacao" | "distribuicaoK" | "frequenciaCidades";
+type TabKey = "simulacao" | "cenarioVencedor" | "centroVencedor" | "custos" | "frota";
 
 export default function SimulationPage() {
     const [activeTab, setActiveTab] = useState<TabKey>("simulacao");
@@ -79,7 +85,8 @@ export default function SimulationPage() {
     const [dataFinal, setDataFinal] = useState("");
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
-    const [artefatos, setArtefatos] = useState<VisualizeSimulationResponse | null>(null);
+    const [artefatos, setArtefatos] =
+        useState<VisualizeSimulationResponse | null>(null);
 
     // 🔧 Estado centralizado com defaults alinhados ao main_simulation.py
     const [params, setParams] = useState({
@@ -120,7 +127,8 @@ export default function SimulationPage() {
         permitir_rotas_excedentes: false,
     });
 
-    const datasValidas = () => Boolean(dataInicial && (!dataFinal || dataFinal >= dataInicial));
+    const datasValidas = () =>
+        Boolean(dataInicial && (!dataFinal || dataFinal >= dataInicial));
 
     // =========================
     // Ações: Processar simulação
@@ -173,13 +181,17 @@ export default function SimulationPage() {
     // =========================
     // ABA: Distribuição de k
     // =========================
-    const [distKData, setDistKData] = useState<DistribuicaoKResponse["dados"]>([]);
+    const [distKData, setDistKData] =
+        useState<DistribuicaoKResponse["dados"]>([]);
     const [distKGraficoUrl, setDistKGraficoUrl] = useState<string | null>(null);
     const [loadingDistK, setLoadingDistK] = useState(false);
 
     const periodoDistribuicaoDefault = useMemo(() => {
         // padrão: últimos 90 dias (limitado a 12 meses no backend)
-        const end = dataFinal && dataFinal >= (dataInicial || "") ? dataFinal : dataInicial || todayISO();
+        const end =
+            dataFinal && dataFinal >= (dataInicial || "")
+                ? dataFinal
+                : dataInicial || todayISO();
         const dEnd = new Date(end || todayISO());
         const dIni = new Date(dEnd);
         dIni.setDate(dEnd.getDate() - 89); // ~90 dias
@@ -195,18 +207,25 @@ export default function SimulationPage() {
         const df = periodoDistribuicaoDefault.data_final;
 
         if (!di || !df || df < di) {
-            toast.error("Informe um intervalo de datas válido para a distribuição de k.");
+            toast.error(
+                "Informe um intervalo de datas válido para a distribuição de k."
+            );
             return;
         }
 
         setLoadingDistK(true);
         try {
-            const result = await getDistribuicaoK({ data_inicial: di, data_final: df });
+            const result = await getDistribuicaoK({
+                data_inicial: di,
+                data_final: df,
+            });
             setDistKData(result.dados || []);
             setDistKGraficoUrl(result.grafico ? resolveUrl(result.grafico) : null);
             toast.success("Distribuição de k carregada!");
         } catch (err: any) {
-            toast.error(err?.response?.data?.detail || "Erro ao carregar distribuição de k.");
+            toast.error(
+                err?.response?.data?.detail || "Erro ao carregar distribuição de k."
+            );
         } finally {
             setLoadingDistK(false);
         }
@@ -215,12 +234,18 @@ export default function SimulationPage() {
     // =========================
     // ABA: Frequência de Cidades
     // =========================
-    const [freqCidadesData, setFreqCidadesData] = useState<FrequenciaCidadesResponse["dados"]>([]);
-    const [freqCidadesGraficoUrl, setFreqCidadesGraficoUrl] = useState<string | null>(null);
+    const [freqCidadesData, setFreqCidadesData] =
+        useState<FrequenciaCidadesResponse["dados"]>([]);
+    const [freqCidadesGraficoUrl, setFreqCidadesGraficoUrl] = useState<
+        string | null
+    >(null);
     const [loadingFreqCidades, setLoadingFreqCidades] = useState(false);
 
     const periodoCidadesDefault = useMemo(() => {
-        const end = dataFinal && dataFinal >= (dataInicial || "") ? dataFinal : dataInicial || todayISO();
+        const end =
+            dataFinal && dataFinal >= (dataInicial || "")
+                ? dataFinal
+                : dataInicial || todayISO();
         const dEnd = new Date(end || todayISO());
         const dIni = new Date(dEnd);
         dIni.setDate(dEnd.getDate() - 89); // ~90 dias
@@ -236,22 +261,171 @@ export default function SimulationPage() {
         const df = periodoCidadesDefault.data_final;
 
         if (!di || !df || df < di) {
-            toast.error("Informe um intervalo de datas válido para a frequência de cidades.");
+            toast.error(
+                "Informe um intervalo de datas válido para a frequência de cidades."
+            );
             return;
         }
 
         setLoadingFreqCidades(true);
         try {
-            const result = await getFrequenciaCidades({ data_inicial: di, data_final: df });
+            const result = await getFrequenciaCidades({
+                data_inicial: di,
+                data_final: df,
+            });
             setFreqCidadesData(result.dados || []);
-            setFreqCidadesGraficoUrl(result.grafico ? resolveUrl(result.grafico) : null);
+            setFreqCidadesGraficoUrl(
+                result.grafico ? resolveUrl(result.grafico) : null
+            );
             toast.success("Frequência de cidades carregada!");
         } catch (err: any) {
-            toast.error(err?.response?.data?.detail || "Erro ao carregar frequência de cidades.");
+            toast.error(
+                err?.response?.data?.detail ||
+                "Erro ao carregar frequência de cidades."
+            );
         } finally {
             setLoadingFreqCidades(false);
         }
     };
+
+    // =========================
+    // ABA: k Fixo (custos consolidados)
+    // =========================
+    const [kFixoUsarMedia, setKFixoUsarMedia] = useState(false);
+    const [kFixoData, setKFixoData] = useState<KFixoResponse["dados"]>([]);
+    const [kFixoGraficoUrl, setKFixoGraficoUrl] = useState<string | null>(null);
+    const [loadingKFixo, setLoadingKFixo] = useState(false);
+
+    const periodoKFixoDefault = useMemo(() => {
+        // mesmo padrão (~90 dias) se o usuário não preencher
+        const end =
+            dataFinal && dataFinal >= (dataInicial || "")
+                ? dataFinal
+                : dataInicial || todayISO();
+        const dEnd = new Date(end || todayISO());
+        const dIni = new Date(dEnd);
+        dIni.setDate(dEnd.getDate() - 89);
+        const toISO = (d: Date) => d.toISOString().slice(0, 10);
+        return {
+            data_inicial: dataInicial || toISO(dIni),
+            data_final: end || toISO(dEnd),
+        };
+    }, [dataInicial, dataFinal]);
+
+    const carregarKFixo = async () => {
+        const di = periodoKFixoDefault.data_inicial;
+        const df = periodoKFixoDefault.data_final;
+
+        if (!di || !df || df < di) {
+            toast.error("Informe um intervalo de datas válido para k fixo.");
+            return;
+        }
+
+        setLoadingKFixo(true);
+        try {
+            const result = await getKFixo({
+                data_inicial: di,
+                data_final: df,
+                usar_media: kFixoUsarMedia,
+            });
+            setKFixoData(result.dados || []);
+            setKFixoGraficoUrl(result.grafico ? resolveUrl(result.grafico) : null);
+            toast.success("Custos por k carregados!");
+        } catch (err: any) {
+            toast.error(
+                err?.response?.data?.detail || "Erro ao carregar custos por k."
+            );
+        } finally {
+            setLoadingKFixo(false);
+        }
+    };
+
+    // Dados para gráfico de k fixo (escolhe série conforme modo)
+    const kFixoChartData = useMemo(() => {
+        if (!kFixoData?.length) return [];
+        return kFixoData
+            .slice()
+            .sort((a, b) => a.k_clusters - b.k_clusters)
+            .map((d) => ({
+                k: d.k_clusters,
+                valor: kFixoUsarMedia ? d.media_custo_total : d.soma_custo_total,
+            }));
+    }, [kFixoData, kFixoUsarMedia]);
+
+    // =========================
+    // ABA: Frota p/ k Fixo
+    // =========================
+    const [frotaKsInput, setFrotaKsInput] = useState<string>("8,9,10");
+    const [frotaData, setFrotaData] = useState<FrotaKFixoResponse["dados"]>([]);
+    const [loadingFrota, setLoadingFrota] = useState(false);
+
+    const periodoFrotaDefault = useMemo(() => {
+        const end =
+            dataFinal && dataFinal >= (dataInicial || "")
+                ? dataFinal
+                : dataInicial || todayISO();
+        const dEnd = new Date(end || todayISO());
+        const dIni = new Date(dEnd);
+        dIni.setDate(dEnd.getDate() - 89);
+        const toISO = (d: Date) => d.toISOString().slice(0, 10);
+        return {
+            data_inicial: dataInicial || toISO(dIni),
+            data_final: end || toISO(dEnd),
+        };
+    }, [dataInicial, dataFinal]);
+
+    const carregarFrota = async () => {
+        const di = periodoFrotaDefault.data_inicial;
+        const df = periodoFrotaDefault.data_final;
+
+        // força array de inteiros
+        const kList = frotaKsInput
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .map((s) => Number(s))
+            .filter((n) => Number.isFinite(n));
+
+        if (!kList.length) {
+            toast.error("Informe ao menos um valor de k (ex.: 8,9,10).");
+            return;
+        }
+        if (!di || !df || df < di) {
+            toast.error("Informe um intervalo de datas válido.");
+            return;
+        }
+
+        console.log("🚚 Enviando frota_k_fixo:", { di, df, kList }); // debug
+
+        setLoadingFrota(true);
+        try {
+            const result = await getFrotaKFixo({
+                data_inicial: di,
+                data_final: df,
+                k: [...kList], // ✅ garante que vai no formato ?k=8&k=9&k=10
+            });
+            setFrotaData(result.dados || []);
+            toast.success("Frota sugerida carregada!");
+        } catch (err: any) {
+            toast.error(
+                err?.response?.data?.detail || "Erro ao carregar frota sugerida."
+            );
+        } finally {
+            setLoadingFrota(false);
+        }
+    };
+
+
+    // Agrega total de frota por k para um gráfico simples
+    const frotaTotalPorK = useMemo(() => {
+        const acc: Record<number, number> = {};
+        for (const r of frotaData) {
+            acc[r.k_clusters] = (acc[r.k_clusters] || 0) + r.frota_sugerida;
+        }
+        return Object.entries(acc)
+            .map(([k, total]) => ({ k: Number(k), total }))
+            .sort((a, b) => a.k - b.k);
+    }, [frotaData]);
 
     return (
         <div className="max-w-6xl mx-auto p-6">
@@ -270,21 +444,33 @@ export default function SimulationPage() {
                         <Play className="w-4 h-4" /> Simulação
                     </button>
                     <button
-                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "distribuicaoK" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
-                        onClick={() => setActiveTab("distribuicaoK")}
+                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "cenarioVencedor" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
+                        onClick={() => setActiveTab("cenarioVencedor")}
                     >
-                        <BarChart2 className="w-4 h-4" /> Distribuição de k
+                        <BarChart2 className="w-4 h-4" /> Cenário Vencedor
                     </button>
                     <button
-                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "frequenciaCidades" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
-                        onClick={() => setActiveTab("frequenciaCidades")}
+                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "centroVencedor" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
+                        onClick={() => setActiveTab("centroVencedor")}
                     >
-                        <Building2 className="w-4 h-4" /> Frequência de Cidades
+                        <Building2 className="w-4 h-4" /> Centro Vencedor
+                    </button>
+                    <button
+                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "custos" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
+                        onClick={() => setActiveTab("custos")}
+                    >
+                        <BarChart3 className="w-4 h-4" /> Custos
+                    </button>
+                    <button
+                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "frota" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
+                        onClick={() => setActiveTab("frota")}
+                    >
+                        <Map className="w-4 h-4" /> Frota
                     </button>
                 </div>
             </div>
 
-            {/* CONTEÚDO DA ABA: Simulação */}
+            {/* ===================== ABA: Simulação ===================== */}
             {activeTab === "simulacao" && (
                 <>
                     {/* Formulário principal */}
@@ -300,7 +486,9 @@ export default function SimulationPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-gray-700">Data final (opcional)</label>
+                            <label className="block text-sm text-gray-700">
+                                Data final (opcional)
+                            </label>
                             <input
                                 type="date"
                                 value={dataFinal}
@@ -438,7 +626,10 @@ export default function SimulationPage() {
                                     type="number"
                                     value={params.tempo_max_transferencia}
                                     onChange={(e) =>
-                                        setParams({ ...params, tempo_max_transferencia: +e.target.value })
+                                        setParams({
+                                            ...params,
+                                            tempo_max_transferencia: +e.target.value,
+                                        })
                                     }
                                     className="input"
                                 />
@@ -449,7 +640,10 @@ export default function SimulationPage() {
                                     type="number"
                                     value={params.peso_max_transferencia}
                                     onChange={(e) =>
-                                        setParams({ ...params, peso_max_transferencia: +e.target.value })
+                                        setParams({
+                                            ...params,
+                                            peso_max_transferencia: +e.target.value,
+                                        })
                                     }
                                     className="input"
                                 />
@@ -463,7 +657,10 @@ export default function SimulationPage() {
                                     type="number"
                                     value={params.entregas_por_subcluster}
                                     onChange={(e) =>
-                                        setParams({ ...params, entregas_por_subcluster: +e.target.value })
+                                        setParams({
+                                            ...params,
+                                            entregas_por_subcluster: +e.target.value,
+                                        })
                                     }
                                     className="input"
                                 />
@@ -474,7 +671,10 @@ export default function SimulationPage() {
                                     type="number"
                                     value={params.tempo_max_roteirizacao}
                                     onChange={(e) =>
-                                        setParams({ ...params, tempo_max_roteirizacao: +e.target.value })
+                                        setParams({
+                                            ...params,
+                                            tempo_max_roteirizacao: +e.target.value,
+                                        })
                                     }
                                     className="input"
                                 />
@@ -565,7 +765,9 @@ export default function SimulationPage() {
                     {/* Artefatos */}
                     {artefatos && (
                         <div className="border rounded-xl p-4 bg-gray-50">
-                            <h2 className="font-semibold mb-4">Artefatos {artefatos.data}</h2>
+                            <h2 className="font-semibold mb-4">
+                                Artefatos {artefatos.data}
+                            </h2>
 
                             {/* PDF */}
                             {artefatos.relatorio_pdf && (
@@ -584,7 +786,9 @@ export default function SimulationPage() {
                             {/* Gráfico */}
                             {artefatos.graficos && artefatos.graficos.length > 0 && (
                                 <div className="mb-6">
-                                    <h3 className="font-medium mb-2">📊 Gráfico Comparativo de Custos</h3>
+                                    <h3 className="font-medium mb-2">
+                                        📊 Gráfico Comparativo de Custos
+                                    </h3>
                                     <img
                                         src={resolveUrl(
                                             artefatos.graficos.find((g) =>
@@ -601,7 +805,10 @@ export default function SimulationPage() {
                             {Object.entries(artefatos.cenarios).map(([k, itens]: any) => (
                                 <div key={k} className="mb-6 bg-white rounded-lg shadow p-4">
                                     <h3 className="text-lg font-bold mb-4">
-                                        Cenário k={k} {itens.otimo && <span className="text-emerald-600">🌟 (Ótimo)</span>}
+                                        Cenário k={k}{" "}
+                                        {itens.otimo && (
+                                            <span className="text-emerald-600">🌟 (Ótimo)</span>
+                                        )}
                                     </h3>
 
                                     {/* Mapas */}
@@ -632,96 +839,114 @@ export default function SimulationPage() {
                                         <div className="mb-3">
                                             <h4 className="font-medium mb-1">Tabelas Last-mile</h4>
                                             <ul className="list-disc ml-6">
-                                                {itens.tabelas_lastmile.map((f: string, idx: number) => (
-                                                    <li key={idx}>
-                                                        <a
-                                                            href={resolveUrl(f)}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="text-emerald-600 hover:underline"
-                                                        >
-                                                            Abrir tabela {idx + 1}
-                                                        </a>
-                                                    </li>
-                                                ))}
+                                                {itens.tabelas_lastmile.map(
+                                                    (f: string, idx: number) => (
+                                                        <li key={idx}>
+                                                            <a
+                                                                href={resolveUrl(f)}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-emerald-600 hover:underline"
+                                                            >
+                                                                Abrir tabela {idx + 1}
+                                                            </a>
+                                                        </li>
+                                                    )
+                                                )}
                                             </ul>
                                         </div>
                                     )}
 
                                     {/* Tabelas Transferências */}
-                                    {itens.tabelas_transferencias && itens.tabelas_transferencias.length > 0 && (
-                                        <div className="mb-3">
-                                            <h4 className="font-medium mb-1">Tabelas Transferências</h4>
-                                            <ul className="list-disc ml-6">
-                                                {itens.tabelas_transferencias.map((f: string, idx: number) => (
-                                                    <li key={idx}>
-                                                        <a
-                                                            href={resolveUrl(f)}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="text-emerald-600 hover:underline"
-                                                        >
-                                                            Abrir tabela {idx + 1}
-                                                        </a>
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                    )}
+                                    {itens.tabelas_transferencias &&
+                                        itens.tabelas_transferencias.length > 0 && (
+                                            <div className="mb-3">
+                                                <h4 className="font-medium mb-1">
+                                                    Tabelas Transferências
+                                                </h4>
+                                                <ul className="list-disc ml-6">
+                                                    {itens.tabelas_transferencias.map(
+                                                        (f: string, idx: number) => (
+                                                            <li key={idx}>
+                                                                <a
+                                                                    href={resolveUrl(f)}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    className="text-emerald-600 hover:underline"
+                                                                >
+                                                                    Abrir tabela {idx + 1}
+                                                                </a>
+                                                            </li>
+                                                        )
+                                                    )}
+                                                </ul>
+                                            </div>
+                                        )}
 
                                     {/* CSVs Resumo */}
                                     {itens.tabelas_resumo && itens.tabelas_resumo.length > 0 && (
                                         <div className="mb-3">
                                             <h4 className="font-medium mb-1">CSVs Resumo</h4>
                                             <ul className="list-disc ml-6">
-                                                {itens.tabelas_resumo.map((f: string, idx: number) => (
-                                                    <li key={idx}>
-                                                        <a
-                                                            href={resolveUrl(f)}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="text-emerald-600 hover:underline"
-                                                        >
-                                                            Baixar resumo {idx + 1}
-                                                        </a>
-                                                    </li>
-                                                ))}
+                                                {itens.tabelas_resumo.map(
+                                                    (f: string, idx: number) => (
+                                                        <li key={idx}>
+                                                            <a
+                                                                href={resolveUrl(f)}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-emerald-600 hover:underline"
+                                                            >
+                                                                Baixar resumo {idx + 1}
+                                                            </a>
+                                                        </li>
+                                                    )
+                                                )}
                                             </ul>
                                         </div>
                                     )}
 
                                     {/* CSVs Detalhes */}
-                                    {itens.tabelas_detalhes && itens.tabelas_detalhes.length > 0 && (
-                                        <div className="mb-3">
-                                            <h4 className="font-medium mb-1">CSVs Detalhes</h4>
-                                            <ul className="list-disc ml-6">
-                                                {itens.tabelas_detalhes.map((f: string, idx: number) => (
-                                                    <li key={idx}>
-                                                        <a
-                                                            href={resolveUrl(f)}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="text-emerald-600 hover:underline"
-                                                        >
-                                                            Baixar detalhes {idx + 1}
-                                                        </a>
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                    )}
+                                    {itens.tabelas_detalhes &&
+                                        itens.tabelas_detalhes.length > 0 && (
+                                            <div className="mb-3">
+                                                <h4 className="font-medium mb-1">CSVs Detalhes</h4>
+                                                <ul className="list-disc ml-6">
+                                                    {itens.tabelas_detalhes.map(
+                                                        (f: string, idx: number) => (
+                                                            <li key={idx}>
+                                                                <a
+                                                                    href={resolveUrl(f)}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    className="text-emerald-600 hover:underline"
+                                                                >
+                                                                    Baixar detalhes {idx + 1}
+                                                                </a>
+                                                            </li>
+                                                        )
+                                                    )}
+                                                </ul>
+                                            </div>
+                                        )}
 
                                     {/* Embed do cenário ótimo */}
-                                    {itens.otimo && itens.mapas?.some((m: string) => m.endsWith(".html")) && (
-                                        <div className="mt-4">
-                                            <h4 className="font-medium mb-2">📍 Mapa do Cenário Ótimo</h4>
-                                            <iframe
-                                                src={resolveUrl(itens.mapas.find((m: string) => m.endsWith(".html")) || "")}
-                                                title={`Mapa k=${k}`}
-                                                className="w-full h-[600px] border rounded-lg"
-                                            />
-                                        </div>
-                                    )}
+                                    {itens.otimo &&
+                                        itens.mapas?.some((m: string) => m.endsWith(".html")) && (
+                                            <div className="mt-4">
+                                                <h4 className="font-medium mb-2">
+                                                    📍 Mapa do Cenário Ótimo
+                                                </h4>
+                                                <iframe
+                                                    src={resolveUrl(
+                                                        itens.mapas.find((m: string) => m.endsWith(".html")) ||
+                                                        ""
+                                                    )}
+                                                    title={`Mapa k=${k}`}
+                                                    className="w-full h-[600px] border rounded-lg"
+                                                />
+                                            </div>
+                                        )}
                                 </div>
                             ))}
                         </div>
@@ -729,8 +954,8 @@ export default function SimulationPage() {
                 </>
             )}
 
-            {/* CONTEÚDO DA ABA: Distribuição de k */}
-            {activeTab === "distribuicaoK" && (
+            {/* ===================== ABA: Distribuição de k ===================== */}
+            {activeTab === "cenarioVencedor" && (
                 <div className="bg-white rounded-2xl shadow p-4">
                     <h2 className="font-semibold mb-4 flex items-center gap-2">
                         <BarChart2 className="w-5 h-5 text-emerald-600" />
@@ -779,7 +1004,8 @@ export default function SimulationPage() {
                     {/* Resultado */}
                     {distKData.length === 0 && !loadingDistK && (
                         <div className="text-sm text-gray-500">
-                            Defina o período e clique em <strong>Gerar gráfico de distribuição</strong>.
+                            Defina o período e clique em{" "}
+                            <strong>Gerar gráfico de distribuição</strong>.
                         </div>
                     )}
 
@@ -790,10 +1016,18 @@ export default function SimulationPage() {
                                     <RBarChart data={distKData}>
                                         <CartesianGrid strokeDasharray="3 3" />
                                         <XAxis dataKey="k_clusters" tickMargin={8}>
-                                            <Label value="Clusters (k)" offset={-5} position="insideBottom" />
+                                            <Label
+                                                value="Clusters (k)"
+                                                offset={-5}
+                                                position="insideBottom"
+                                            />
                                         </XAxis>
                                         <YAxis
-                                            label={{ value: "Frequência", angle: -90, position: "insideLeft" }}
+                                            label={{
+                                                value: "Frequência",
+                                                angle: -90,
+                                                position: "insideLeft",
+                                            }}
                                             allowDecimals={false}
                                             tickMargin={6}
                                         />
@@ -820,8 +1054,8 @@ export default function SimulationPage() {
                 </div>
             )}
 
-            {/* CONTEÚDO DA ABA: Frequência de Cidades */}
-            {activeTab === "frequenciaCidades" && (
+            {/* ===================== ABA: Frequência de Cidades ===================== */}
+            {activeTab === "centroVencedor" && (
                 <div className="bg-white rounded-2xl shadow p-4">
                     <h2 className="font-semibold mb-4 flex items-center gap-2">
                         <Building2 className="w-5 h-5 text-emerald-600" />
@@ -870,7 +1104,8 @@ export default function SimulationPage() {
                     {/* Resultado */}
                     {freqCidadesData.length === 0 && !loadingFreqCidades && (
                         <div className="text-sm text-gray-500">
-                            Defina o período e clique em <strong>Gerar gráfico de cidades</strong>.
+                            Defina o período e clique em{" "}
+                            <strong>Gerar gráfico de cidades</strong>.
                         </div>
                     )}
 
@@ -880,10 +1115,18 @@ export default function SimulationPage() {
                                 <RBarChart data={freqCidadesData}>
                                     <CartesianGrid strokeDasharray="3 3" />
                                     <XAxis dataKey="cluster_cidade" tickMargin={8}>
-                                        <Label value="Cidades Centro" offset={-5} position="insideBottom" />
+                                        <Label
+                                            value="Cidades Centro"
+                                            offset={-5}
+                                            position="insideBottom"
+                                        />
                                     </XAxis>
                                     <YAxis
-                                        label={{ value: "Frequência", angle: -90, position: "insideLeft" }}
+                                        label={{
+                                            value: "Frequência",
+                                            angle: -90,
+                                            position: "insideLeft",
+                                        }}
                                         allowDecimals={false}
                                         tickMargin={6}
                                     />
@@ -905,6 +1148,280 @@ export default function SimulationPage() {
                                 📥 Baixar gráfico oficial (PNG)
                             </a>
                         </div>
+                    )}
+                </div>
+            )}
+
+            {/* ===================== ABA: k Fixo (custos) ===================== */}
+            {activeTab === "custos" && (
+                <div className="bg-white rounded-2xl shadow p-4">
+                    <h2 className="font-semibold mb-4 flex items-center gap-2">
+                        <BarChart3 className="w-5 h-5 text-emerald-600" />
+                        Custos consolidados para k fixo
+                    </h2>
+
+                    <div className="grid md:grid-cols-4 gap-4 mb-4">
+                        <div>
+                            <label className="block text-sm text-gray-700">Data inicial</label>
+                            <input
+                                type="date"
+                                value={periodoKFixoDefault.data_inicial}
+                                max={todayISO()}
+                                onChange={(e) => setDataInicial(e.target.value)}
+                                className="input"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-700">Data final</label>
+                            <input
+                                type="date"
+                                value={periodoKFixoDefault.data_final}
+                                max={todayISO()}
+                                onChange={(e) => setDataFinal(e.target.value)}
+                                className="input"
+                            />
+                        </div>
+                        <label className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={kFixoUsarMedia}
+                                onChange={(e) => setKFixoUsarMedia(e.target.checked)}
+                            />
+                            Usar média (em vez de soma)
+                        </label>
+                        <div className="flex items-end">
+                            <button
+                                onClick={carregarKFixo}
+                                disabled={loadingKFixo}
+                                className="btn w-full flex items-center gap-2"
+                            >
+                                {loadingKFixo ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                                    </>
+                                ) : (
+                                    "Gerar custos por k"
+                                )}
+                            </button>
+                        </div>
+                    </div>
+
+                    {kFixoData.length === 0 && !loadingKFixo && (
+                        <div className="text-sm text-gray-500">
+                            Defina o período e clique em <strong>Gerar custos por k</strong>.
+                        </div>
+                    )}
+
+                    {kFixoData.length > 0 && (
+                        <>
+                            <div className="w-full h-[420px] border rounded-lg p-2 mb-4">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <RBarChart data={kFixoChartData}>
+                                        <CartesianGrid strokeDasharray="3 3" />
+                                        <XAxis dataKey="k" tickMargin={8}>
+                                            <Label
+                                                value="k"
+                                                offset={-5}
+                                                position="insideBottom"
+                                            />
+                                        </XAxis>
+                                        <YAxis
+                                            label={{
+                                                value: kFixoUsarMedia ? "Custo médio" : "Custo acumulado",
+                                                angle: -90,
+                                                position: "insideLeft",
+                                            }}
+                                            tickMargin={6}
+                                        />
+                                        <Tooltip />
+                                        <Bar dataKey="valor" />
+                                    </RBarChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                            {kFixoGraficoUrl && (
+                                <div className="mt-2 text-right">
+                                    <a
+                                        href={kFixoGraficoUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-emerald-600 hover:underline"
+                                    >
+                                        📥 Baixar gráfico oficial (PNG)
+                                    </a>
+                                </div>
+                            )}
+
+                            {/* Tabela rápida */}
+                            <div className="overflow-auto mt-4">
+                                <table className="min-w-full text-sm">
+                                    <thead>
+                                        <tr className="text-left border-b">
+                                            <th className="py-2 pr-4">k</th>
+                                            <th className="py-2 pr-4">Dias válidos</th>
+                                            <th className="py-2 pr-4">Cobertura</th>
+                                            <th className="py-2 pr-4">Custo (soma)</th>
+                                            <th className="py-2 pr-4">Custo (média)</th>
+                                            <th className="py-2 pr-4">Regret %</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {kFixoData
+                                            .slice()
+                                            .sort((a, b) => a.k_clusters - b.k_clusters)
+                                            .map((r) => (
+                                                <tr key={r.k_clusters} className="border-b">
+                                                    <td className="py-2 pr-4">{r.k_clusters}</td>
+                                                    <td className="py-2 pr-4">
+                                                        {r.dias_presentes}/{r.total_dias}
+                                                    </td>
+                                                    <td className="py-2 pr-4">
+                                                        {(r.cobertura_pct * 100).toFixed(1)}%
+                                                    </td>
+                                                    <td className="py-2 pr-4">
+                                                        {r.soma_custo_total?.toLocaleString()}
+                                                    </td>
+                                                    <td className="py-2 pr-4">
+                                                        {r.media_custo_total?.toLocaleString()}
+                                                    </td>
+                                                    <td className="py-2 pr-4">
+                                                        {(r.regret_relativo * 100).toFixed(2)}%
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+
+            {/* ===================== ABA: Frota p/ k Fixo ===================== */}
+            {activeTab === "frota" && (
+                <div className="bg-white rounded-2xl shadow p-4">
+                    <h2 className="font-semibold mb-4 flex items-center gap-2">
+                        <Truck className="w-5 h-5 text-emerald-600" />
+                        Frota média sugerida por k fixo
+                    </h2>
+
+                    <div className="grid md:grid-cols-4 gap-4 mb-4">
+                        <div>
+                            <label className="block text-sm text-gray-700">Data inicial</label>
+                            <input
+                                type="date"
+                                value={periodoFrotaDefault.data_inicial}
+                                max={todayISO()}
+                                onChange={(e) => setDataInicial(e.target.value)}
+                                className="input"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-700">Data final</label>
+                            <input
+                                type="date"
+                                value={periodoFrotaDefault.data_final}
+                                max={todayISO()}
+                                onChange={(e) => setDataFinal(e.target.value)}
+                                className="input"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-700">
+                                Valores de k (ex.: 8,9,10)
+                            </label>
+                            <input
+                                type="text"
+                                value={frotaKsInput}
+                                onChange={(e) => setFrotaKsInput(e.target.value)}
+                                className="input"
+                                placeholder="8,9,10"
+                            />
+                        </div>
+                        <div className="flex items-end">
+                            <button
+                                onClick={carregarFrota}
+                                disabled={loadingFrota}
+                                className="btn w-full flex items-center gap-2"
+                            >
+                                {loadingFrota ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                                    </>
+                                ) : (
+                                    "Gerar frota"
+                                )}
+                            </button>
+                        </div>
+                    </div>
+
+                    {frotaData.length === 0 && !loadingFrota && (
+                        <div className="text-sm text-gray-500">
+                            Informe o período e os valores de <strong>k</strong>, depois
+                            clique em <strong>Gerar frota</strong>.
+                        </div>
+                    )}
+
+                    {frotaData.length > 0 && (
+                        <>
+                            {/* Gráfico simples: total de frota por k */}
+                            <div className="w-full h-[380px] border rounded-lg p-2 mb-4">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <RBarChart data={frotaTotalPorK}>
+                                        <CartesianGrid strokeDasharray="3 3" />
+                                        <XAxis dataKey="k" tickMargin={8}>
+                                            <Label value="k" offset={-5} position="insideBottom" />
+                                        </XAxis>
+                                        <YAxis
+                                            label={{
+                                                value: "Frota total sugerida",
+                                                angle: -90,
+                                                position: "insideLeft",
+                                            }}
+                                            allowDecimals={false}
+                                            tickMargin={6}
+                                        />
+                                        <Tooltip />
+                                        <Bar dataKey="total" />
+                                    </RBarChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                            {/* Tabela detalhada por tipo de veículo */}
+                            <div className="overflow-auto">
+                                <table className="min-w-full text-sm">
+                                    <thead>
+                                        <tr className="text-left border-b">
+                                            <th className="py-2 pr-4">k</th>
+                                            <th className="py-2 pr-4">Tipo de veículo</th>
+                                            <th className="py-2 pr-4">Frota sugerida</th>
+                                            <th className="py-2 pr-4">Cobertura</th>
+                                            <th className="py-2 pr-4">Modo</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {frotaData
+                                            .slice()
+                                            .sort(
+                                                (a, b) =>
+                                                    a.k_clusters - b.k_clusters ||
+                                                    a.tipo_veiculo.localeCompare(b.tipo_veiculo)
+                                            )
+                                            .map((r, i) => (
+                                                <tr key={i} className="border-b">
+                                                    <td className="py-2 pr-4">{r.k_clusters}</td>
+                                                    <td className="py-2 pr-4">{r.tipo_veiculo}</td>
+                                                    <td className="py-2 pr-4">{r.frota_sugerida}</td>
+                                                    <td className="py-2 pr-4">
+                                                        {(r.cobertura_pct * 100).toFixed(1)}%
+                                                    </td>
+                                                    <td className="py-2 pr-4">{r.modo}</td>
+                                                </tr>
+                                            ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
                     )}
                 </div>
             )}
