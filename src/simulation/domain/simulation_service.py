@@ -2,22 +2,26 @@
 import uuid
 import numpy as np
 from sklearn.cluster import KMeans
+from collections import namedtuple
 
+from simulation.config import UF_BOUNDS
 from simulation.utils.heuristics import avaliar_parada_heuristica
 
 class SimulationService:
-    def __init__(self, tenant_id, envio_data, simulation_db, logger):
+    def __init__(self, tenant_id, envio_data, simulation_db, logger, hub_id=None):
         self.tenant_id = tenant_id
         self.envio_data = envio_data
         self.simulation_db = simulation_db
         self.logger = logger
         self.simulation_id = str(uuid.uuid4())
+        self.hub_id = hub_id
+
 
     def gerar_simulation_id(self):
         self.logger.info(f"🆔 Simulation ID gerado: {self.simulation_id}")
         return self.simulation_id
 
-    
+
     def obter_k_inicial(self, df_entregas, k_min, k_max) -> int:
         lat_col = [col for col in df_entregas.columns if col.strip().lower() == "latitude"]
         lon_col = [col for col in df_entregas.columns if col.strip().lower() == "longitude"]
@@ -107,7 +111,6 @@ class SimulationService:
         return False
 
 
-
     def simulacao_ja_existente(self) -> bool:
         """
         Verifica se já existem dados para tenant_id e envio_data em qualquer das tabelas da simulação.
@@ -171,22 +174,21 @@ class SimulationService:
         cursor.close()
         self.logger.info("✅ Dados antigos removidos com sucesso.")
 
-
     def buscar_hub_central(self):
+        if not self.hub_id:
+            raise Exception("❌ Nenhum hub central informado. Informe --hub-id.")
+
         cursor = self.simulation_db.cursor()
         cursor.execute("""
-            SELECT nome, latitude, longitude
+            SELECT nome, latitude, longitude, cidade
             FROM hubs
-            WHERE tenant_id = %s
-            LIMIT 1
-        """, (self.tenant_id,))
+            WHERE tenant_id = %s AND hub_id = %s
+        """, (self.tenant_id, self.hub_id))
         row = cursor.fetchone()
         cursor.close()
 
         if not row:
-            raise Exception("❌ Nenhum hub central encontrado para este tenant.")
+            raise Exception(f"❌ Hub central com hub_id={self.hub_id} não encontrado para este tenant.")
 
-        from collections import namedtuple
-        Hub = namedtuple("Hub", ["nome", "latitude", "longitude"])
+        Hub = namedtuple("Hub", ["nome", "latitude", "longitude", "cidade"])
         return Hub(*row)
-

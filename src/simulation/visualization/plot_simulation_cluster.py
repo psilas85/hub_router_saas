@@ -11,6 +11,7 @@ from simulation.infrastructure.simulation_database_reader import (
     carregar_hubs
 )
 
+
 def plotar_mapa_clusterizacao_simulation(
     simulation_db,
     clusterization_db,
@@ -18,11 +19,37 @@ def plotar_mapa_clusterizacao_simulation(
     envio_data,
     k_clusters,
     output_dir="output/maps",
+    modo_forcar=False,
     logger=None
 ):
     try:
-        os.makedirs(f"{output_dir}/{tenant_id}", exist_ok=True)
+        output_path = os.path.join(output_dir, tenant_id)
+        os.makedirs(output_path, exist_ok=True)
 
+        mapa_path = os.path.join(output_path, f"{tenant_id}_mapa_clusterizacao_{envio_data}_k{k_clusters}.html")
+        png_path = mapa_path.replace(".html", ".png")
+
+        # 🔄 Se modo_forcar=True, remove antes de salvar
+        if modo_forcar:
+            for path in [mapa_path, png_path]:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                        if logger:
+                            logger.info(f"🗑️ Arquivo removido antes da sobrescrita: {path}")
+                    except Exception as e:
+                        if logger:
+                            logger.error(f"❌ Falha ao remover {path}: {e}")
+        # 🟡 Se já existe e não é modo_forcar, não sobrescreve
+        elif os.path.exists(mapa_path) or os.path.exists(png_path):
+            if logger:
+                logger.info(
+                    f"🟡 Mapas de clusterização já existem ({envio_data}, k={k_clusters}). "
+                    f"Use --modo_forcar para sobrescrever."
+                )
+            return
+
+        # 🔹 Carregar dados
         df_clusters = carregar_resumo_clusters(simulation_db, tenant_id, envio_data, k_clusters)
         df_entregas_clusterizadas = carregar_entregas_clusterizadas(
             simulation_db, clusterization_db, tenant_id, envio_data, k_clusters
@@ -31,8 +58,10 @@ def plotar_mapa_clusterizacao_simulation(
 
         if df_clusters.empty or df_entregas_clusterizadas.empty or not hubs:
             mensagem = "❌ Dados ausentes para plotagem: clusters, entregas ou hubs."
-            if logger: logger.warning(mensagem)
-            else: print(mensagem)
+            if logger:
+                logger.warning(mensagem)
+            else:
+                print(mensagem)
             return
 
         df_entregas_clusterizadas["cte_numero"] = df_entregas_clusterizadas["cte_numero"].astype(str)
@@ -47,13 +76,15 @@ def plotar_mapa_clusterizacao_simulation(
             params=(tenant_id, envio_data)
         )
         df_coord["cte_numero"] = df_coord["cte_numero"].astype(str)
-        df_coord = df_coord.rename(columns={"latitude": "latitude_original", "longitude": "longitude_original"})
+        df_coord = df_coord.rename(
+            columns={"latitude": "latitude_original", "longitude": "longitude_original"}
+        )
 
         df_entregas = pd.merge(df_entregas_clusterizadas, df_coord, on="cte_numero", how="left")
         df_entregas["latitude"] = df_entregas["latitude"].fillna(df_entregas["latitude_original"])
         df_entregas["longitude"] = df_entregas["longitude"].fillna(df_entregas["longitude_original"])
 
-        # Geração do HTML (mantida)
+        # 🌍 Geração do mapa interativo (HTML)
         mapa = folium.Map(location=[hubs[0]['latitude'], hubs[0]['longitude']], zoom_start=7)
         cores = [
             "red", "blue", "green", "purple", "orange", "darkred", "lightred",
@@ -90,17 +121,20 @@ def plotar_mapa_clusterizacao_simulation(
                     popup=f"CTE: {row['cte_numero']}<br>Cluster: {row['cluster']}<br>Peso: {peso:.1f} kg"
                 ).add_to(mapa)
 
-        filename = f"{tenant_id}_mapa_clusterizacao_{envio_data}_k{k_clusters}.html"
-        caminho_final = os.path.join(output_dir, tenant_id, filename)
-        mapa.save(caminho_final)
+        mapa.save(mapa_path)
 
-        # Geração do PNG estático
-        png_path = caminho_final.replace(".html", ".png")
+        # 📊 Geração do PNG estático
         plt.figure(figsize=(10, 8))
         for cluster_id, grupo in df_entregas.groupby("cluster"):
             plt.scatter(grupo["longitude"], grupo["latitude"], label=f"Cluster {cluster_id}", s=15)
-        plt.scatter(df_clusters["centro_lon"], df_clusters["centro_lat"], c="black", marker="x", s=80, label="Centros")
-        plt.scatter(hubs[0]['longitude'], hubs[0]['latitude'], c="red", marker="*", s=150, label="HUB")
+        plt.scatter(
+            df_clusters["centro_lon"], df_clusters["centro_lat"],
+            c="black", marker="x", s=80, label="Centros"
+        )
+        plt.scatter(
+            hubs[0]['longitude'], hubs[0]['latitude'],
+            c="red", marker="*", s=150, label="HUB"
+        )
         plt.xlabel("Longitude")
         plt.ylabel("Latitude")
         plt.legend()
@@ -110,7 +144,10 @@ def plotar_mapa_clusterizacao_simulation(
         plt.close()
 
         if logger:
-            logger.info(f"✅ PNG estático salvo: {png_path}")
+            logger.info(f"✅ Mapas de clusterização salvos: {mapa_path}, {png_path}")
+
     except Exception as erro:
-        if logger: logger.exception(f"❌ Erro geral: {erro}")
-        else: print(f"❌ Erro geral: {erro}")
+        if logger:
+            logger.exception(f"❌ Erro geral: {erro}")
+        else:
+            print(f"❌ Erro geral: {erro}")

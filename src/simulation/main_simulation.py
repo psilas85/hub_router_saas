@@ -1,20 +1,46 @@
-# simulation/main_simulation.py
+#hub_router_1.0.1/src/simulation/main_simulation.py
 
 import uuid
 import argparse
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import os
+import logging
 
 load_dotenv()
 
 from simulation.visualization.gerador_relatorio_final import executar_geracao_relatorio_final
 from simulation.visualization.gerar_graficos_custos_simulacao import gerar_graficos_custos_por_envio
 from simulation.application.simulation_use_case import SimulationUseCase
-from simulation.logs.simulation_logger import configurar_logger
 from simulation.infrastructure.simulation_database_connection import (
     conectar_clusterization_db,
     conectar_simulation_db
 )
+
+
+def configurar_logger(log_file="/app/logs/simulation_debug.log"):
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+    logger = logging.getLogger("simulation")
+    logger.setLevel(logging.INFO)
+
+    if not logger.handlers:
+        # Console
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        ch_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        ch.setFormatter(ch_formatter)
+
+        # Arquivo
+        fh = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+        fh.setLevel(logging.INFO)
+        fh_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        fh.setFormatter(fh_formatter)
+
+        logger.addHandler(ch)
+        logger.addHandler(fh)
+
+    return logger
 
 
 def parse_args():
@@ -24,6 +50,9 @@ def parse_args():
     parser.add_argument("--tenant", required=True, help="Tenant ID")
     parser.add_argument("--data-inicial", required=True, help="Data inicial (YYYY-MM-DD)")
     parser.add_argument("--data-final", required=True, help="Data final (YYYY-MM-DD)")
+
+    # 🔗 Hub Central
+    parser.add_argument("--hub-id", type=int, required=True, help="ID do hub central a ser usado")
 
     # 🔢 Clusterização
     parser.add_argument("--k-min", type=int, default=2, help="Valor mínimo de k_clusters")
@@ -46,7 +75,7 @@ def parse_args():
     parser.add_argument("--peso-max-transferencia", type=float, default=15000, help="Peso máximo por rota de transferência (kg)")
 
     # 📦 Last-mile
-    parser.add_argument("--entregas-por-subcluster", type=int, default=25, help="🎯 Quantidade alvo de entregas por subcluster (por rota) na roteirização last-mile. " "O algoritmo divide o cluster inicial por essa quantidade antes de aplicar as restrições de tempo. (Default: 25)")
+    parser.add_argument("--entregas-por-subcluster", type=int, default=25, help="🎯 Quantidade alvo de entregas por subcluster (por rota) na roteirização last-mile.")
     parser.add_argument("--tempo-max-roteirizacao", type=int, default=1200, help="Tempo máximo total por rota last-mile (min)")
     parser.add_argument("--tempo-max-k1", type=int, default=2400, help="Tempo máximo para simulação direta do hub central (k=1)")
 
@@ -66,8 +95,7 @@ def parse_args():
         "--peso-leve-max",
         type=float,
         default=50.0,
-        help="Peso máximo (kg) para considerar que um veículo é leve para efeito de restrição municipal. "
-             "Se --restricao-veiculo-leve-municipio estiver ativo, veículos leves só podem operar dentro da cidade do centro do cluster. (Default: 50kg)"
+        help="Peso máximo (kg) para considerar que um veículo é leve para efeito de restrição municipal."
     )
 
     parser.add_argument("--desativar_cluster_hub", action="store_true", help="Desativa o cluster automático para entregas próximas ao hub central")
@@ -80,7 +108,7 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    logger = configurar_logger()
+    logger = configurar_logger("/app/logs/simulation_debug.log")
     args = parse_args()
 
     tenant_id = args.tenant
@@ -121,7 +149,6 @@ if __name__ == "__main__":
 
         "desativar_cluster_hub": args.desativar_cluster_hub,
         "raio_hub_km": args.raio_hub_km,
-
     }
 
     # 🔌 Conexões com bancos
@@ -144,6 +171,7 @@ if __name__ == "__main__":
         use_case = SimulationUseCase(
             tenant_id=tenant_id,
             envio_data=data_atual,
+            hub_id=args.hub_id,
             parametros=parametros,
             clusterization_db=clusterization_db,
             simulation_db=simulation_db,
@@ -161,7 +189,12 @@ if __name__ == "__main__":
                 datas_processadas.append(data_atual)
                 pontos_inflexao.append((data_atual, ponto['k_clusters'], ponto['custo_total']))
 
-                gerar_graficos_custos_por_envio(simulation_db, tenant_id, datas_filtradas=datas_processadas)
+                # 📊 Gera gráficos apenas da data atual
+                gerar_graficos_custos_por_envio(
+                    simulation_db,
+                    tenant_id,
+                    datas_filtradas=[data_atual]
+                )
 
                 executar_geracao_relatorio_final(
                     tenant_id=tenant_id,
@@ -175,10 +208,6 @@ if __name__ == "__main__":
             datas_ignoradas.append(data_atual)
 
         data_atual += timedelta(days=1)
-
-    logger.info("📊 Gerando gráficos de simulação apenas para as datas processadas...")
-    gerar_graficos_custos_por_envio(simulation_db, tenant_id, datas_filtradas=datas_processadas)
-    logger.info("✅ Gráficos salvos em output/graphs/")
 
     logger.info("\n🏁 RESUMO FINAL DA SIMULAÇÃO")
     logger.info(f"✅ Datas processadas com sucesso: {len(datas_processadas)}")

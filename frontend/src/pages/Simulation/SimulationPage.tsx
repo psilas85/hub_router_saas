@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+// hub_router_1.0.1/frontend/src/pages/Simulation/SimulationPage.tsx
+
+import { useMemo, useState, useEffect } from "react";
 import {
     runSimulation,
     visualizeSimulation,
@@ -6,6 +8,7 @@ import {
     getFrequenciaCidades,
     getKFixo,
     getFrotaKFixo,
+    listHubs,
     type VisualizeSimulationResponse,
     type DistribuicaoKResponse,
     type FrequenciaCidadesResponse,
@@ -23,8 +26,6 @@ import {
     BarChart2,
     Building2,
 } from "lucide-react";
-
-// Recharts
 import {
     BarChart as RBarChart,
     Bar,
@@ -37,28 +38,19 @@ import {
     Cell,
 } from "recharts";
 
-
 function todayISO() {
     const d = new Date();
     return d.toISOString().slice(0, 10);
 }
 
-// helper para montar URL absoluta
 const resolveUrl = (path: string) => {
     if (!path) return "";
     if (path.startsWith("http")) return path;
-    return `${import.meta.env.VITE_API_URL}${path.startsWith("/") ? path : `/${path}`
-        }`;
+    return `${import.meta.env.VITE_API_URL}${path.startsWith("/") ? path : `/${path}`}`;
 };
 
 // 🔧 Accordion wrapper
-function Accordion({
-    title,
-    children,
-}: {
-    title: string;
-    children: React.ReactNode;
-}) {
+function Accordion({ title, children }: { title: string; children: React.ReactNode }) {
     const [open, setOpen] = useState(false);
     return (
         <div className="border rounded-lg mb-4">
@@ -67,10 +59,7 @@ function Accordion({
                 className="w-full flex justify-between items-center p-3 bg-gray-100 rounded-lg"
             >
                 <span className="font-semibold">{title}</span>
-                <ChevronDown
-                    className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""
-                        }`}
-                />
+                <ChevronDown className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`} />
             </button>
             {open && <div className="p-4 grid md:grid-cols-3 gap-4">{children}</div>}
         </div>
@@ -86,50 +75,55 @@ export default function SimulationPage() {
     const [dataFinal, setDataFinal] = useState("");
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
-    const [artefatos, setArtefatos] =
-        useState<VisualizeSimulationResponse | null>(null);
+    const [artefatos, setArtefatos] = useState<VisualizeSimulationResponse | null>(null);
 
-    // 🔧 Estado centralizado com defaults alinhados ao main_simulation.py
+    // 🔧 Estado centralizado
     const [params, setParams] = useState({
-        // Clusterização
         k_min: 2,
         k_max: 50,
         k_inicial_transferencia: 1,
         min_entregas_cluster: 25,
         fundir_clusters_pequenos: false,
-
-        // Cluster hub
         desativar_cluster_hub: false,
         raio_hub_km: 80.0,
-
-        // Tempos
         parada_leve: 10,
         parada_pesada: 20,
         tempo_volume: 0.4,
-
-        // Operações
         velocidade: 60.0,
         limite_peso: 50.0,
-
-        // Restrições
         restricao_veiculo_leve_municipio: false,
         peso_leve_max: 50.0,
-
-        // Transferências
         tempo_max_transferencia: 1200,
         peso_max_transferencia: 15000.0,
-
-        // Last-mile
         entregas_por_subcluster: 25,
         tempo_max_roteirizacao: 1200,
         tempo_max_k1: 2400,
-
-        // Rotas excedentes
         permitir_rotas_excedentes: false,
+        modo_forcar: false,
     });
 
-    const datasValidas = () =>
-        Boolean(dataInicial && (!dataFinal || dataFinal >= dataInicial));
+    // =========================
+    // Hubs
+    // =========================
+    const [hubs, setHubs] = useState<{ hub_id: number; nome: string; cidade: string }[]>([]);
+    const [hubId, setHubId] = useState<number | null>(null);
+
+    useEffect(() => {
+        const carregarHubs = async () => {
+            try {
+                const result = await listHubs();
+                setHubs(result);
+                if (result.length > 0 && !hubId) {
+                    setHubId(result[0].hub_id);
+                }
+            } catch (err: any) {
+                toast.error(err?.response?.data?.detail || "Erro ao carregar hubs.");
+            }
+        };
+        carregarHubs();
+    }, []);
+
+    const datasValidas = () => Boolean(dataInicial && (!dataFinal || dataFinal >= dataInicial));
 
     // =========================
     // Ações: Processar simulação
@@ -138,7 +132,11 @@ export default function SimulationPage() {
         setMsg(null);
         setArtefatos(null);
         if (!datasValidas()) {
-            toast.error("Informe uma data inicial válida (a final é opcional).");
+            toast.error("Informe uma data inicial válida.");
+            return;
+        }
+        if (!hubId) {
+            toast.error("Selecione um hub central.");
             return;
         }
         setLoading(true);
@@ -146,6 +144,7 @@ export default function SimulationPage() {
             const data = await runSimulation({
                 data_inicial: dataInicial,
                 data_final: dataFinal || undefined,
+                hub_id: hubId,
                 ...params,
             });
             setMsg(data.mensagem);
@@ -237,9 +236,10 @@ export default function SimulationPage() {
     // =========================
     const [freqCidadesData, setFreqCidadesData] =
         useState<FrequenciaCidadesResponse["dados"]>([]);
-    const [freqCidadesGraficoUrl, setFreqCidadesGraficoUrl] = useState<
-        string | null
-    >(null);
+    const [freqCidadesGraficoUrl, setFreqCidadesGraficoUrl] = useState<string | null>(
+        null
+    );
+    const [freqCidadesCsvUrl, setFreqCidadesCsvUrl] = useState<string | null>(null); // 👈 NOVO
     const [loadingFreqCidades, setLoadingFreqCidades] = useState(false);
 
     const periodoCidadesDefault = useMemo(() => {
@@ -278,6 +278,9 @@ export default function SimulationPage() {
             setFreqCidadesGraficoUrl(
                 result.grafico ? resolveUrl(result.grafico) : null
             );
+            setFreqCidadesCsvUrl( // 👈 salva também o CSV
+                result.csv ? resolveUrl(result.csv) : null
+            );
             toast.success("Frequência de cidades carregada!");
         } catch (err: any) {
             toast.error(
@@ -288,6 +291,7 @@ export default function SimulationPage() {
             setLoadingFreqCidades(false);
         }
     };
+
 
     // =========================
     // ABA: k Fixo (custos consolidados)
@@ -475,7 +479,7 @@ export default function SimulationPage() {
             {activeTab === "simulacao" && (
                 <>
                     {/* Formulário principal */}
-                    <div className="grid md:grid-cols-4 gap-4 mb-6 bg-white rounded-2xl shadow p-4">
+                    <div className="grid md:grid-cols-5 gap-4 mb-6 bg-white rounded-2xl shadow p-4">
                         <div>
                             <label className="block text-sm text-gray-700">Data inicial</label>
                             <input
@@ -486,6 +490,7 @@ export default function SimulationPage() {
                                 className="input"
                             />
                         </div>
+
                         <div>
                             <label className="block text-sm text-gray-700">
                                 Data final (opcional)
@@ -498,11 +503,36 @@ export default function SimulationPage() {
                                 className="input"
                             />
                         </div>
+
+                        {/* 👇 novo campo */}
+                        <div>
+                            <label className="block text-sm text-gray-700">Hub Central</label>
+                            <select
+                                value={hubId ?? ""}
+                                onChange={(e) => setHubId(Number(e.target.value))}
+                                className="input"
+                                disabled={!hubs.length}
+                            >
+                                <option value="" disabled>
+                                    {hubs.length ? "Selecione um hub" : "Carregando hubs..."}
+                                </option>
+                                {hubs.map((h) => (
+                                    <option key={h.hub_id} value={h.hub_id}>
+                                        {h.nome} ({h.cidade})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Botão Processar */}
                         <div className="flex items-end">
                             <button
                                 disabled={loading || !datasValidas()}
                                 onClick={processar}
-                                className="btn w-full flex items-center gap-2"
+                                className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-medium shadow transition-all duration-200
+                        ${loading || !datasValidas()
+                                        ? "bg-emerald-300 text-white cursor-not-allowed"
+                                        : "bg-emerald-600 hover:bg-emerald-700 text-white hover:shadow-md"}`}
                             >
                                 {loading ? (
                                     <>
@@ -515,11 +545,16 @@ export default function SimulationPage() {
                                 )}
                             </button>
                         </div>
+
+                        {/* Botão Relatórios */}
                         <div className="flex items-end">
                             <button
                                 disabled={!dataInicial}
                                 onClick={gerarRelatorios}
-                                className="btn-secondary w-full flex items-center gap-2"
+                                className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-medium border transition-all duration-200
+                        ${!dataInicial
+                                        ? "border-gray-300 text-gray-400 cursor-not-allowed"
+                                        : "border-emerald-600 text-emerald-600 hover:bg-emerald-50 hover:shadow-sm"}`}
                             >
                                 <FileText className="w-4 h-4" /> Relatórios & Gráficos
                             </button>
@@ -752,6 +787,14 @@ export default function SimulationPage() {
                                     }
                                 />
                                 Permitir rotas excedentes
+                            </label>
+                            <label className="flex gap-2 items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={params.modo_forcar}
+                                    onChange={(e) => setParams({ ...params, modo_forcar: e.target.checked })}
+                                />
+                                Forçar sobrescrita (modo_forcar)
                             </label>
                         </Accordion>
                     </div>
@@ -1111,47 +1154,88 @@ export default function SimulationPage() {
                     )}
 
                     {freqCidadesData.length > 0 && (
-                        <div className="w-full h-[420px] border rounded-lg p-2">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <RBarChart data={freqCidadesData}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="cluster_cidade" tickMargin={8}>
-                                        <Label
-                                            value="Cidades Centro"
-                                            offset={-5}
-                                            position="insideBottom"
+                        <>
+                            {/* Gráfico Top 20 */}
+                            <div className="w-full h-[420px] border rounded-lg p-2 mb-4 bg-white">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <RBarChart
+                                        data={freqCidadesData}
+                                        layout="vertical"
+                                        margin={{ top: 10, right: 20, left: 120, bottom: 10 }}
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" />
+                                        <XAxis
+                                            type="number"
+                                            allowDecimals={false}
+                                            label={{
+                                                value: "Frequência",
+                                                position: "insideBottom",
+                                                offset: -5,
+                                            }}
                                         />
-                                    </XAxis>
-                                    <YAxis
-                                        label={{
-                                            value: "Frequência",
-                                            angle: -90,
-                                            position: "insideLeft",
-                                        }}
-                                        allowDecimals={false}
-                                        tickMargin={6}
-                                    />
-                                    <Tooltip />
-                                    <Bar dataKey="qtd" />
-                                </RBarChart>
-                            </ResponsiveContainer>
-                        </div>
-                    )}
+                                        <YAxis
+                                            type="category"
+                                            dataKey="cluster_cidade"
+                                            tick={{ fontSize: 11 }}
+                                            width={140}
+                                        />
+                                        <Tooltip />
+                                        <Bar dataKey="qtd" fill="#10b981" radius={[0, 6, 6, 0]} />
+                                    </RBarChart>
+                                </ResponsiveContainer>
+                            </div>
 
-                    {freqCidadesGraficoUrl && (
-                        <div className="mt-4 text-right">
-                            <a
-                                href={freqCidadesGraficoUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-emerald-600 hover:underline"
-                            >
-                                📥 Baixar gráfico oficial (PNG)
-                            </a>
-                        </div>
+                            {/* Links de download */}
+                            <div className="flex justify-between items-center mt-2">
+                                {freqCidadesGraficoUrl && (
+                                    <a
+                                        href={freqCidadesGraficoUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-emerald-600 hover:underline"
+                                    >
+                                        📥 Baixar gráfico oficial (PNG)
+                                    </a>
+                                )}
+                                {freqCidadesCsvUrl && (
+                                    <a
+                                        href={freqCidadesCsvUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-emerald-600 hover:underline"
+                                    >
+                                        📄 Baixar lista completa (CSV)
+                                    </a>
+                                )}
+                            </div>
+
+                            {/* Tabela Top 20 */}
+                            <div className="overflow-auto mt-4">
+                                <table className="min-w-full text-sm">
+                                    <thead>
+                                        <tr className="text-left border-b">
+                                            <th className="py-2 pr-4 w-12">#</th>
+                                            <th className="py-2 pr-4">Cidade</th>
+                                            <th className="py-2 pr-4">Frequência</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {freqCidadesData.map((r, i) => (
+                                            <tr key={i} className="border-b">
+                                                <td className="py-2 pr-4">{i + 1}</td>
+                                                <td className="py-2 pr-4">{r.cluster_cidade}</td>
+                                                <td className="py-2 pr-4">{r.qtd}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
                     )}
                 </div>
             )}
+
+
 
             {/* ===================== ABA: k Fixo (custos) ===================== */}
             {activeTab === "custos" && (

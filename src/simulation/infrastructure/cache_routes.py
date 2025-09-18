@@ -31,6 +31,44 @@ def _rota_minima(origem, destino, logger=None):
     ]
 
 
+def _salvar_cache(db_conn, origem_str, destino_str, tenant_id,
+                  distancia_km, tempo_min, rota_completa_dicts, logger=None):
+    """
+    Salva rota válida no cache. Ignora se rota_completa_dicts estiver vazio.
+    """
+    if not rota_completa_dicts:
+        if logger:
+            logger.warning(f"⚠️ Tentativa de salvar rota inválida {origem_str} -> {destino_str}. Ignorada.")
+        return
+
+    rota_json = {
+        "origem": origem_str,
+        "destino": destino_str,
+        "distancia_km": float(distancia_km),
+        "tempo_minutos": float(tempo_min),   # 🔄 padronizado
+        "coordenadas": rota_completa_dicts   # 🔄 padronizado
+    }
+
+    insert = """
+        INSERT INTO cache_rotas (
+            origem, destino, distancia_km, tempo_minutos, rota_json, tenant_id
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (origem, destino, tenant_id) DO NOTHING
+    """
+    cursor = db_conn.cursor()
+    cursor.execute(insert, (
+        origem_str, destino_str,
+        float(distancia_km), float(tempo_min),
+        json.dumps(rota_json), tenant_id
+    ))
+    db_conn.commit()
+    cursor.close()
+
+    if logger:
+        logger.info(f"✅ Cache salvo para {origem_str} -> {destino_str}")
+
+
 def obter_rota_real(origem: tuple, destino: tuple, tenant_id: str, db_conn, logger=None):
     origem_str = _formatar_coord(origem)
     destino_str = _formatar_coord(destino)
@@ -50,14 +88,19 @@ def obter_rota_real(origem: tuple, destino: tuple, tenant_id: str, db_conn, logg
     row = cursor.fetchone()
 
     if row:
-        if logger:
-            logger.info(f"🚗 Cache HIT (rota): {origem_str} → {destino_str}")
         rota_json = json.loads(row[0]) if isinstance(row[0], str) else row[0]
         cursor.close()
+
+        if not rota_json or "coordenadas" not in rota_json or not rota_json["coordenadas"]:
+            if logger: logger.warning(f"⚠️ Cache inválido ignorado {origem_str} -> {destino_str}")
+            return _rota_minima(origem, destino, logger)
+
+        if logger:
+            logger.info(f"🚗 Cache HIT (rota): {origem_str} → {destino_str}")
         return (
             float(rota_json.get("distancia_km")),
-            float(rota_json.get("tempo_min")),
-            rota_json.get("rota_completa", [])
+            float(rota_json.get("tempo_minutos")),
+            rota_json.get("coordenadas", [])
         )
 
     if logger:
@@ -83,35 +126,13 @@ def obter_rota_real(origem: tuple, destino: tuple, tenant_id: str, db_conn, logg
         for lat, lon in rota_raw if lat is not None and lon is not None
     ]
 
+    if not rota_completa_dicts:
+        cursor.close()
+        return _rota_minima(origem, destino, logger)
+
     # 5️⃣ Salva no cache
-    rota_json = {
-        "origem": origem_str,
-        "destino": destino_str,
-        "distancia_km": float(distancia_km),
-        "tempo_min": float(tempo_min),
-        "rota_completa": rota_completa_dicts
-    }
-
-    insert = """
-        INSERT INTO cache_rotas (
-            origem, destino, distancia_km, tempo_minutos, rota_json, tenant_id
-        )
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (origem, destino, tenant_id) DO NOTHING
-    """
-    cursor.execute(insert, (
-        origem_str, destino_str,
-        float(distancia_km), float(tempo_min),
-        json.dumps(rota_json), tenant_id
-    ))
-    db_conn.commit()
-    cursor.close()
-
-    if logger:
-        logger.info("📝 Nova rota salva no cache.")
-
+    _salvar_cache(db_conn, origem_str, destino_str, tenant_id, distancia_km, tempo_min, rota_completa_dicts, logger)
     return float(distancia_km), float(tempo_min), rota_completa_dicts
-
 
 def obter_rota_last_mile(origem, destino, tenant_id, simulation_db, db_conn, logger=None):
     origem_str = _formatar_coord(origem)

@@ -64,6 +64,9 @@ def executar_simulacao(
     data_final: date = Query(..., description="Data final no formato YYYY-MM-DD"),
     modo_forcar: bool = Query(False, description="Sobrescreve simulações existentes"),
 
+    # 🔗 Hub central
+    hub_id: int = Query(..., description="ID do hub central"),  # 👈 ADICIONAR
+
     # 🔢 Clusterização
     k_min: int = Query(2, description="Valor mínimo de k_clusters"),
     k_max: int = Query(50, description="Valor máximo de k_clusters"),
@@ -158,6 +161,7 @@ def executar_simulacao(
             use_case = SimulationUseCase(
                 tenant_id=tenant_id,
                 envio_data=data_atual,
+                hub_id=hub_id,   # ✅ agora obrigatório
                 parametros=parametros,
                 clusterization_db=clusterization_db,
                 simulation_db=simulation_db,
@@ -166,6 +170,7 @@ def executar_simulacao(
                 fundir_clusters_pequenos=fundir_clusters_pequenos,
                 permitir_rotas_excedentes=permitir_rotas_excedentes
             )
+
 
             ponto = use_case.executar_simulacao_completa()
 
@@ -393,28 +398,24 @@ def frequencia_cidades(
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
     """
-    Retorna gráfico e dados da frequência das cidades centro (cluster_cidade)
+    Retorna gráfico, CSV e dados da frequência das cidades centro (cluster_cidade)
     em simulações marcadas como ponto ótimo no período informado.
     """
     if (data_final - data_inicial).days > 365:
         raise HTTPException(status_code=400, detail="Período máximo permitido é 12 meses.")
 
-    filename, data = gerar_grafico_frequencia_cidades(
+    result = gerar_grafico_frequencia_cidades(
         tenant_id=tenant_id,
         data_inicial=str(data_inicial),
         data_final=str(data_final),
     )
 
-    if not data:
+    if not result or not result.get("dados"):
         raise HTTPException(status_code=404, detail="Nenhuma cidade encontrada em pontos ótimos no período informado.")
 
-    return {
-        "status": "ok",
-        "data_inicial": str(data_inicial),
-        "data_final": str(data_final),
-        "grafico": filename.replace("./", "/"),
-        "dados": data,  # lista de {cluster_cidade, qtd}
-    }
+    # Retorna o próprio dicionário já no formato esperado
+    return result
+
 
 
 @router.get("/k_fixo", summary="Avaliar cenário k fixo no período")

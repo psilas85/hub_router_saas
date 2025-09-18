@@ -1,3 +1,5 @@
+#hub_router_1.0.1/src/data_input/api/routes.py
+
 from fastapi import APIRouter, Query, Depends, HTTPException, UploadFile, File, Request
 from typing import Optional
 import os
@@ -122,7 +124,8 @@ async def upload_data_input(
         job = queue.enqueue(
             processar_csv,
             job_id, tenant_id, file_path, modo_forcar, limite_peso_kg,
-            job_timeout=1800  # ⏳ até 30 minutos
+            job_timeout=1800,
+            result_ttl=86400
         )
 
         return {"status": "processing", "job_id": job.id, "tenant_id": tenant_id}

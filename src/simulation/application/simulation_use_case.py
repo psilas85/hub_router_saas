@@ -1,4 +1,4 @@
-# simulation/application/simulation_use_case.py
+#hub_router_1.0.1/src/simulation/application/simulation_use_case.py
 
 import uuid
 import pandas as pd
@@ -22,20 +22,25 @@ from simulation.infrastructure.simulation_database_writer import (
     persistir_resumo_transferencias,
     salvar_detalhes_transferencias
 )
+from simulation.domain.data_cleaner_service import DataCleanerService
+from simulation.visualization.gerar_graficos_custos_simulacao import gerar_graficos_custos_por_envio
+from simulation.visualization.gerador_relatorio_final import executar_geracao_relatorio_final
+
 
 class SimulationUseCase:
 
-    def __init__(self, tenant_id, envio_data, parametros,
+    def __init__(self, tenant_id, envio_data, parametros, hub_id,
                  clusterization_db, simulation_db, logger,
                  modo_forcar=False, simulation_id=None,
-                 # 🔑 corrigido: antes "output/maps"
                  output_dir="exports/simulation/maps",
                  fundir_clusters_pequenos=True,
                  permitir_rotas_excedentes=False):
 
 
+
         self.tenant_id = tenant_id
         self.envio_data = envio_data
+        self.hub_id = hub_id
         self.parametros = parametros
         self.clusterization_db = clusterization_db
         self.simulation_db = simulation_db
@@ -46,7 +51,7 @@ class SimulationUseCase:
         self.fundir_clusters_pequenos = fundir_clusters_pequenos
         self.permitir_rotas_excedentes = permitir_rotas_excedentes
 
-        self.simulation_service = SimulationService(tenant_id, envio_data, simulation_db, logger)
+        self.simulation_service = SimulationService(tenant_id, envio_data, simulation_db, logger, hub_id=hub_id)
         self.cluster_service = ClusterizationService(clusterization_db, simulation_db, logger, tenant_id)
 
         self.last_mile_service = LastMileRoutingService(
@@ -100,8 +105,15 @@ class SimulationUseCase:
             return None
 
         if self.modo_forcar:
-            self.logger.info("♻️ Modo forçar ativado. Limpando simulações anteriores...")
-            self.simulation_service.limpar_simulacoes_anteriores()
+            cleaner = DataCleanerService(
+                db_conn=self.simulation_db,
+                tenant_id=self.tenant_id,
+                envio_data=self.envio_data,
+                logger=self.logger,
+                output_dir=self.output_dir,
+                simulation_id=self.simulation_id
+            )
+            cleaner.limpar_completo()
 
         self.logger.info("🔁 Iniciando execução completa da simulação.")
         self.logger.info(f"🆔 Simulation ID: {self.simulation_id}")
@@ -206,7 +218,7 @@ class SimulationUseCase:
                 self.logger.info("📉 Heurística de inflexão identificou ponto ótimo.")
                 break
 
-        # ✅ Finalização: marca o melhor_k (que pode ser 1) e persiste o vencedor
+        # ✅ Finalização: persistir vencedor
         if melhor_k is not None and melhor_resultado is not None:
             self.logger.info(f"📝 Atualizando flag is_ponto_otimo=True para k={melhor_k}")
             cursor = self.simulation_db.cursor()
@@ -218,7 +230,6 @@ class SimulationUseCase:
                         WHERE tenant_id = %s AND envio_data = %s AND simulation_id = %s AND k_clusters = %s
                     """, (self.tenant_id, self.envio_data, self.simulation_id, melhor_k))
                 except Exception as e:
-                    # Para k=1, é esperado que transfer não tenha registros – esse UPDATE apenas não fará nada.
                     self.logger.debug(f"ℹ️ UPDATE {tabela} ponto ótimo: {e}")
             self.simulation_db.commit()
             cursor.close()
@@ -227,6 +238,22 @@ class SimulationUseCase:
                 **melhor_resultado,
                 "is_ponto_otimo": True
             }, modo_forcar=self.modo_forcar)
+
+            # 📊 Geração de gráficos e relatório → respeitam modo_forcar
+            gerar_graficos_custos_por_envio(
+                simulation_db=self.simulation_db,
+                tenant_id=self.tenant_id,
+                datas_filtradas=[self.envio_data],
+                modo_forcar=self.modo_forcar
+            )
+
+            executar_geracao_relatorio_final(
+                tenant_id=self.tenant_id,
+                envio_data=str(self.envio_data),
+                simulation_id=self.simulation_id,
+                simulation_db=self.simulation_db,
+                modo_forcar=self.modo_forcar
+            )
 
             return {"k_clusters": melhor_k, "custo_total": menor_custo}
 
@@ -362,10 +389,12 @@ class SimulationUseCase:
                 envio_data=self.envio_data,
                 k_clusters=k,
                 output_dir=self.output_dir,
+                modo_forcar=self.modo_forcar,   # 👈 incluído
                 logger=self.logger
             )
         except Exception as e:
             self.logger.warning(f"⚠️ Erro ao gerar mapa de clusterização para k={k}: {e}")
+
 
         try:
             plotar_mapa_transferencias(
@@ -426,7 +455,7 @@ class SimulationUseCase:
 
         self.cluster_service.salvar_clusterizacao_em_db(df_entregas, self.simulation_id, self.envio_data, k_clusters=1)
 
-        # 🔍 Validação de coordenadas antes da roteirização
+        # 🔍 Validação de coordenadas
         cte_esperados = set(df_entregas["cte_numero"].astype(str).unique())
 
         from simulation.infrastructure.simulation_database_reader import buscar_latlon_ctes
@@ -469,7 +498,7 @@ class SimulationUseCase:
             self.simulation_id, 1, self.simulation_db
         )
 
-                # 💰 Cálculo de custos
+        # 💰 Cálculo de custos
         custo_last_mile = self.cost_last_mile_service.calcular_custo(df_rotas_last_mile)
 
         try:
@@ -511,7 +540,7 @@ class SimulationUseCase:
             "is_ponto_otimo": False
         }, modo_forcar=self.modo_forcar)
 
-
+        # 🗺️ Geração do mapa → agora respeita modo_forcar
         try:
             plotar_mapa_last_mile(
                 simulation_db=self.simulation_db,
@@ -520,10 +549,9 @@ class SimulationUseCase:
                 envio_data=self.envio_data,
                 k_clusters=1,
                 output_dir=self.output_dir,
-                modo_forcar=self.modo_forcar,
+                modo_forcar=self.modo_forcar,   # 👈 incluído
                 logger=self.logger
             )
             self.logger.info("🗺️ Mapa last-mile gerado para k=1")
         except Exception as e:
             self.logger.warning(f"⚠️ Erro ao gerar mapa de last-mile para k=1: {e}")
-

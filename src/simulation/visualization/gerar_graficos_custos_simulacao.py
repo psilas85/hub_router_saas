@@ -4,27 +4,28 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def gerar_graficos_custos_por_envio(simulation_db, tenant_id, datas_filtradas=None, output_dir="exports/simulation/graphs"):
+def gerar_graficos_custos_por_envio(
+    simulation_db,
+    tenant_id,
+    datas_filtradas,
+    output_dir="exports/simulation/graphs",
+    modo_forcar: bool = False
+):
     output_dir = os.path.join(output_dir, tenant_id)
     os.makedirs(output_dir, exist_ok=True)
 
-    if datas_filtradas:
-        placeholders = ', '.join(['%s'] * len(datas_filtradas))
-        query = f"""
-            SELECT envio_data, k_clusters, custo_transferencia, custo_last_mile, custo_cluster, is_ponto_otimo
-            FROM resultados_simulacao
-            WHERE tenant_id = %s AND envio_data IN ({placeholders})
-            ORDER BY envio_data, k_clusters
-        """
-        params = [tenant_id] + datas_filtradas
-    else:
-        query = """
-            SELECT envio_data, k_clusters, custo_transferencia, custo_last_mile, custo_cluster, is_ponto_otimo
-            FROM resultados_simulacao
-            WHERE tenant_id = %s
-            ORDER BY envio_data, k_clusters
-        """
-        params = [tenant_id]
+    if not datas_filtradas:
+        print("⚠️ Nenhuma data processada recebida. Nenhum gráfico será gerado.")
+        return False
+
+    placeholders = ', '.join(['%s'] * len(datas_filtradas))
+    query = f"""
+        SELECT envio_data, k_clusters, custo_transferencia, custo_last_mile, custo_cluster, is_ponto_otimo
+        FROM resultados_simulacao
+        WHERE tenant_id = %s AND envio_data IN ({placeholders})
+        ORDER BY envio_data, k_clusters
+    """
+    params = [tenant_id] + datas_filtradas
 
     try:
         simulation_db.rollback()
@@ -32,41 +33,42 @@ def gerar_graficos_custos_por_envio(simulation_db, tenant_id, datas_filtradas=No
         pass
 
     df = pd.read_sql(query, simulation_db, params=params)
-    for col in ["custo_transferencia", "custo_last_mile", "custo_cluster"]:
-        if col not in df.columns:
-            df[col] = 0.0
+    if df.empty:
+        print(f"⚠️ Nenhum dado encontrado para datas {datas_filtradas}")
+        return False
 
-    df["envio_data"] = df["envio_data"].astype(str)
+    for envio_data in df["envio_data"].unique():
+        df_data = df[df["envio_data"] == envio_data]
+        grafico_path = os.path.join(output_dir, f"grafico_simulacao_{envio_data}.png")
 
-    for envio_data, df_envio in df.groupby("envio_data"):
-        df_envio = df_envio.sort_values("k_clusters").copy()
-        df_envio["custo_total"] = (
-            df_envio["custo_transferencia"] +
-            df_envio["custo_last_mile"] +
-            df_envio["custo_cluster"]
-        )
+        if modo_forcar or not os.path.exists(grafico_path):
+            try:
+                fig, ax = plt.subplots(figsize=(8, 5))
+                ax.bar(df_data["k_clusters"], df_data["custo_transferencia"], label="Transferência")
+                ax.bar(df_data["k_clusters"], df_data["custo_last_mile"],
+                       bottom=df_data["custo_transferencia"], label="Last-mile")
+                ax.bar(df_data["k_clusters"], df_data["custo_cluster"],
+                       bottom=df_data["custo_transferencia"] + df_data["custo_last_mile"],
+                       label="Cluster")
 
-        for _, row in df_envio.iterrows():
-            k = row["k_clusters"]
-            fig, ax = plt.subplots(figsize=(8, 5))
+                df_data["custo_total"] = (
+                    df_data["custo_transferencia"].fillna(0)
+                    + df_data["custo_last_mile"].fillna(0)
+                    + df_data["custo_cluster"].fillna(0)
+                )
+                ax.plot(df_data["k_clusters"], df_data["custo_total"],
+                        color="black", marker="o", label="Custo Total")
 
-            # Barras empilhadas
-            ax.bar([1], [row["custo_transferencia"]], label="Transferência")
-            ax.bar([1], [row["custo_last_mile"]], bottom=row["custo_transferencia"], label="Last-mile")
-            ax.bar([1], [row["custo_cluster"]],
-                   bottom=row["custo_transferencia"] + row["custo_last_mile"],
-                   label="Cluster")
+                ax.set_title(f"Custo Total por k_clusters — {envio_data}")
+                ax.set_xlabel("k_clusters")
+                ax.set_ylabel("Custo (R$)")
+                ax.legend()
+                ax.grid(True)
 
-            custo_total = row["custo_total"]
-            ax.set_title(f"Custo total (k={k}) — {envio_data}")
-            ax.set_ylabel("Custo (R$)")
-            ax.legend()
-            ax.grid(True)
+                plt.tight_layout()
+                plt.savefig(grafico_path)
+                plt.close()
+                print(f"✅ Gráfico de custos salvo: {grafico_path}")
+            except Exception as e:
+                print(f"❌ Erro ao gerar gráfico para {envio_data}: {e}")
 
-            path = os.path.join(output_dir, f"grafico_custos_{envio_data}_k{k}.png")
-            plt.tight_layout()
-            plt.savefig(path)
-            plt.close()
-            print(f"✅ Gráfico salvo: {path}")
-
-    return True

@@ -91,8 +91,10 @@ def criar_tarifa(body: TarifaIn, tenant_id: str = Depends(obter_tenant_id_do_tok
         logger.exception(f"Erro ao criar tarifa tenant={tenant_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao criar tarifa: {e}")
 
-@router.put("/tarifas/{tipo_veiculo}", response_model=TarifaOut, summary="Atualizar tarifa")
+@router.put("/tarifas/{tipo_veiculo:path}", response_model=TarifaOut, summary="Atualizar tarifa")
 def atualizar_tarifa(tipo_veiculo: str, body: TarifaIn, tenant_id: str = Depends(obter_tenant_id_do_token)):
+
+
     try:
         repo.editar_custo_transferencia(
             tipo_veiculo, body.custo_km, body.capacidade_min, body.capacidade_max, tenant_id
@@ -109,8 +111,9 @@ def atualizar_tarifa(tipo_veiculo: str, body: TarifaIn, tenant_id: str = Depends
         logger.exception(f"Erro ao atualizar tarifa tenant={tenant_id}, tipo={tipo_veiculo}: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao atualizar tarifa: {e}")
 
-@router.delete("/tarifas/{tipo_veiculo}", summary="Remover tarifa")
+@router.delete("/tarifas/{tipo_veiculo:path}", summary="Remover tarifa")
 def remover_tarifa(tipo_veiculo: str, tenant_id: str = Depends(obter_tenant_id_do_token)):
+
     try:
         repo.remover_custo_transferencia(tipo_veiculo, tenant_id)
         return {"detail": "Removido"}

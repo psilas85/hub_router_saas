@@ -136,7 +136,7 @@ def adicionar_veiculo(body: VehicleCostIn, tenant_id: str = Depends(obter_tenant
         raise HTTPException(status_code=500, detail=f"Erro ao adicionar veículo: {e}")
 
 
-@router.put("/vehicles/{veiculo}", response_model=VehicleCostOut, summary="Editar veículo")
+@router.put("/vehicles/{veiculo:path}", response_model=VehicleCostOut, summary="Editar veículo")
 def editar_veiculo(veiculo: str, body: VehicleCostIn, tenant_id: str = Depends(obter_tenant_id_do_token)):
     try:
         repo.editar_custo_veiculo(
@@ -148,7 +148,7 @@ def editar_veiculo(veiculo: str, body: VehicleCostIn, tenant_id: str = Depends(o
         raise HTTPException(status_code=500, detail=f"Erro ao editar veículo: {e}")
 
 
-@router.delete("/vehicles/{veiculo}", summary="Remover veículo")
+@router.delete("/vehicles/{veiculo:path}", summary="Remover veículo")
 def remover_veiculo(veiculo: str, tenant_id: str = Depends(obter_tenant_id_do_token)):
     try:
         repo.remover_custo_veiculo(veiculo, tenant_id)

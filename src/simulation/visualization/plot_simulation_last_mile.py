@@ -26,12 +26,26 @@ def plotar_mapa_last_mile(
 ):
     output_path = os.path.join(output_dir, tenant_id)
     os.makedirs(output_path, exist_ok=True)
-    mapa_path = os.path.join(output_path, f"{tenant_id}_mapa_lastmile_{envio_data}_k{k_clusters}.html")
 
-    if os.path.exists(mapa_path) and not modo_forcar:
+    mapa_path = os.path.join(output_path, f"{tenant_id}_mapa_lastmile_{envio_data}_k{k_clusters}.html")
+    png_path = mapa_path.replace(".html", ".png")
+
+    # 🔄 Se modo_forcar=True, remove antes da sobrescrita
+    if modo_forcar:
+        for path in [mapa_path, png_path]:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                    if logger: logger.info(f"🗑️ Arquivo removido antes da sobrescrita: {path}")
+                except Exception as e:
+                    if logger: logger.error(f"❌ Falha ao remover {path}: {e}")
+    # 🟡 Se já existe e não é modo_forcar, não sobrescreve
+    elif os.path.exists(mapa_path) or os.path.exists(png_path):
         if logger:
-            logger.info(f"🟡 Mapa de last-mile já existe para {envio_data}, k={k_clusters}. Use --modo_forcar para sobrescrever.")
+            logger.info(f"🟡 Mapas de last-mile já existem ({envio_data}, k={k_clusters}). Use --modo_forcar para sobrescrever.")
         return
+
+
 
     df_rotas = carregar_rotas_last_mile(simulation_db, tenant_id, envio_data, k_clusters)
     df_detalhes = carregar_detalhes_last_mile(simulation_db, clusterization_db, tenant_id, envio_data, k_clusters)

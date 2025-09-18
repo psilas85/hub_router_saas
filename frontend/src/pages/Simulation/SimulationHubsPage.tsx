@@ -1,4 +1,4 @@
-//SimulationHubsPage.tsx
+// hub_router_1.0.1/frontend/src/pages/Simulation/SimulationHubsPage.tsx
 
 import { useEffect, useState } from "react";
 import {
@@ -7,6 +7,7 @@ import {
     updateHub,
     deleteHub,
     type Hub,
+    type HubCreate, // 👈 novo
 } from "@/services/simulationApi";
 import { Plus, Trash2, Pencil } from "lucide-react";
 import toast from "react-hot-toast";
@@ -14,7 +15,7 @@ import { Button } from "@/components/ui/button";
 
 export default function SimulationHubsPage() {
     const [hubs, setHubs] = useState<Hub[]>([]);
-    const [novo, setNovo] = useState<Hub>({
+    const [novo, setNovo] = useState<HubCreate>({
         nome: "",
         cidade: "",
         latitude: 0,
@@ -22,7 +23,7 @@ export default function SimulationHubsPage() {
     });
 
     const [editando, setEditando] = useState<number | null>(null);
-    const [editHub, setEditHub] = useState<Hub | null>(null);
+    const [editHub, setEditHub] = useState<HubCreate | null>(null);
 
     const carregar = async () => {
         try {
@@ -49,9 +50,9 @@ export default function SimulationHubsPage() {
     };
 
     const salvarEdicao = async () => {
-        if (!editHub?.hub_id) return;
+        if (!editando || !editHub) return;
         try {
-            await updateHub(editHub.hub_id, editHub);
+            await updateHub(editando, editHub); // id separado do corpo
             toast.success("Hub atualizado!");
             setEditando(null);
             setEditHub(null);
@@ -159,10 +160,7 @@ export default function SimulationHubsPage() {
                         {hubs.map((h) => {
                             const isEditing = editando === h.hub_id;
                             return (
-                                <tr
-                                    key={h.hub_id ?? h.nome}
-                                    className="hover:bg-slate-50/60"
-                                >
+                                <tr key={h.hub_id} className="hover:bg-slate-50/60">
                                     {isEditing ? (
                                         <>
                                             <td className="p-3">
@@ -249,8 +247,13 @@ export default function SimulationHubsPage() {
                                                         size="sm"
                                                         className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
                                                         onClick={() => {
-                                                            setEditando(h.hub_id!);
-                                                            setEditHub(h);
+                                                            setEditando(h.hub_id);
+                                                            setEditHub({
+                                                                nome: h.nome,
+                                                                cidade: h.cidade,
+                                                                latitude: h.latitude,
+                                                                longitude: h.longitude,
+                                                            });
                                                         }}
                                                     >
                                                         <Pencil className="w-4 h-4" /> Editar

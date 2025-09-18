@@ -30,6 +30,10 @@ async def executar_simulacao(
     # 📅 Datas e controle
     data_inicial: date = Query(..., description="Data inicial (YYYY-MM-DD)"),
     data_final: date = Query(..., description="Data final (YYYY-MM-DD)"),
+    modo_forcar: bool = Query(False, description="Sobrescreve simulações existentes"),
+
+    # 🔗 Hub central (👈 Faltava)
+    hub_id: int = Query(..., description="ID do hub central"),  # ✅ adicionado
 
     # 🔢 Clusterização
     k_min: int = Query(2, description="Valor mínimo de k_clusters"),
@@ -78,7 +82,8 @@ async def executar_simulacao(
         # 📅 Datas
         "data_inicial": data_inicial,
         "data_final": data_final,
-        "modo_forcar": True,  # 🔒 fixo no Gateway
+        "modo_forcar": modo_forcar,
+        "hub_id": hub_id,
 
         # 🔢 Clusterização
         "k_min": k_min,

@@ -12,11 +12,12 @@ def executar_geracao_relatorio_final(
     envio_data: str,
     simulation_id: str,
     simulation_db,
-    base_dir="exports/simulation"
+    base_dir="exports/simulation",
+    modo_forcar: bool = False
 ):
     """
-    Executa automaticamente a conversão de mapas .html → .png e gera o relatório final em PDF da simulação.
-    Mantém a estrutura: maps/{tenant_id}, graphs/{tenant_id}, relatorios/{tenant_id}
+    Executa a conversão de mapas .html → .png e gera o relatório final em PDF.
+    Se modo_forcar=True, força sobrescrita de gráficos e relatórios existentes.
     """
     maps_dir = os.path.join(base_dir, "maps", tenant_id)
 
@@ -40,7 +41,7 @@ def executar_geracao_relatorio_final(
         for tipo in ["clusterizacao", "transferencias", "last_mile"]:
             html_path = os.path.join(maps_dir, f"{tenant_id}_mapa_{tipo}_{envio_data}_k{k}.html")
             png_path = html_path.replace(".html", ".png")
-            if os.path.exists(html_path) and not os.path.exists(png_path):
+            if os.path.exists(html_path) and (modo_forcar or not os.path.exists(png_path)):
                 try:
                     from simulation.utils.html_to_png import converter_html_para_png
                     converter_html_para_png(html_path, png_path)
@@ -48,14 +49,10 @@ def executar_geracao_relatorio_final(
                     print(f"⚠️ Erro ao converter {html_path} para PNG: {e}")
 
     # Caminho do gráfico consolidado
+    grafico_custo_path = os.path.join(base_dir, "graphs", tenant_id, f"grafico_simulacao_{envio_data}.png")
 
-    grafico_custo_path = os.path.join(
-        base_dir, "graphs", tenant_id, f"grafico_simulacao_{envio_data}.png"
-    )
-
-
-    # 🔹 Se não existir, gera automaticamente o gráfico consolidado
-    if not os.path.exists(grafico_custo_path):
+    # 🔹 Agora respeita modo_forcar
+    if modo_forcar or not os.path.exists(grafico_custo_path):
         try:
             query = """
                 SELECT k_clusters, custo_transferencia, custo_last_mile, custo_cluster
@@ -73,26 +70,12 @@ def executar_geracao_relatorio_final(
 
                 fig, ax = plt.subplots(figsize=(8, 5))
                 ax.bar(df["k_clusters"], df["custo_transferencia"], label="Transferência")
-                ax.bar(
-                    df["k_clusters"],
-                    df["custo_last_mile"],
-                    bottom=df["custo_transferencia"],
-                    label="Last-mile",
-                )
-                ax.bar(
-                    df["k_clusters"],
-                    df["custo_cluster"],
-                    bottom=df["custo_transferencia"] + df["custo_last_mile"],
-                    label="Cluster",
-                )
+                ax.bar(df["k_clusters"], df["custo_last_mile"], bottom=df["custo_transferencia"], label="Last-mile")
+                ax.bar(df["k_clusters"], df["custo_cluster"],
+                       bottom=df["custo_transferencia"] + df["custo_last_mile"],
+                       label="Cluster")
 
-                ax.plot(
-                    df["k_clusters"],
-                    df["custo_total"],
-                    color="black",
-                    marker="o",
-                    label="Custo Total",
-                )
+                ax.plot(df["k_clusters"], df["custo_total"], color="black", marker="o", label="Custo Total")
                 ax.set_title(f"Custo Total por k_clusters — {envio_data}")
                 ax.set_xlabel("k_clusters")
                 ax.set_ylabel("Custo (R$)")
@@ -111,7 +94,7 @@ def executar_geracao_relatorio_final(
             print(f"⚠️ Erro ao gerar gráfico consolidado: {e}")
             grafico_custo_path = None
 
-    # Geração do PDF
+    # Geração do PDF (sempre sobrescreve)
     relatorio_dir = os.path.join(base_dir, "relatorios", tenant_id)
     os.makedirs(relatorio_dir, exist_ok=True)
     relatorio_path = gerar_relatorio_simulacao(

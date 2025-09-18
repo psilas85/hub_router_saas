@@ -35,24 +35,45 @@ def gerar_grafico_frequencia_cidades(
     conn.close()
 
     if df.empty:
-        return None, None
+        return {
+            "status": "vazio",
+            "data_inicial": data_inicial,
+            "data_final": data_final,
+            "grafico": None,
+            "csv": None,
+            "dados": []
+        }
 
     os.makedirs(f"{output_dir}/{tenant_id}", exist_ok=True)
-    filename = os.path.join(
-        output_dir,
-        tenant_id,
-        f"frequencia_cidades_{data_inicial}_{data_final}.png"
+
+    # Arquivos de saída
+    filename_png = os.path.join(
+        output_dir, tenant_id, f"frequencia_cidades_{data_inicial}_{data_final}.png"
+    )
+    filename_csv = os.path.join(
+        output_dir, tenant_id, f"frequencia_cidades_{data_inicial}_{data_final}.csv"
     )
 
+    # Gráfico
     plt.figure(figsize=(10, 6))
     plt.barh(df["cluster_cidade"], df["qtd"], color="seagreen")
     plt.xlabel("Frequência como Centro (ponto ótimo)")
     plt.ylabel("Cidade")
     plt.title(f"Frequência de Cidades em Pontos Ótimos ({data_inicial} → {data_final})")
-    plt.gca().invert_yaxis()  # cidades mais frequentes no topo
+    plt.gca().invert_yaxis()
     plt.grid(axis="x", linestyle="--", alpha=0.7)
     plt.tight_layout()
-    plt.savefig(filename, bbox_inches="tight")
+    plt.savefig(filename_png, bbox_inches="tight")
     plt.close()
 
-    return filename, df.to_dict(orient="records")
+    # CSV
+    df.to_csv(filename_csv, index=False, encoding="utf-8-sig")
+
+    return {
+        "status": "ok",
+        "data_inicial": data_inicial,
+        "data_final": data_final,
+        "grafico": filename_png.replace("./", "/"),
+        "csv": filename_csv.replace("./", "/"),
+        "dados": df.to_dict(orient="records")
+    }

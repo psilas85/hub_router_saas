@@ -5,6 +5,7 @@ import os
 import glob
 import json
 import logging
+from urllib.parse import quote
 
 from api_gateway.utils.http_client import forward_request
 from api_gateway.config import settings
@@ -21,7 +22,6 @@ COSTS_TRANSFER_URL = settings.COSTS_TRANSFER_URL  # ex.: http://costs_transfer_s
 async def healthcheck(request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
-    # Service já tem root_path=/costs_transfer => aqui não repetimos o prefixo
     result = await forward_request("GET", f"{COSTS_TRANSFER_URL}/", headers=headers)
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
@@ -71,7 +71,6 @@ async def visualizar_custos_transferencia(
         "GET", f"{COSTS_TRANSFER_URL}/visualizar", headers=headers, params=params
     )
 
-
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
 
@@ -87,7 +86,6 @@ async def visualizar_custos_transferencia(
             },
         )
 
-    # Caso contrário (JSON, texto), devolve direto
     return result["content"]
 
 
@@ -96,40 +94,62 @@ async def visualizar_custos_transferencia(
 async def listar_tarifas(request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
-    # ⬇️ acrescentar /custos_transferencia
-    result = await forward_request("GET", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas", headers=headers)
+    result = await forward_request(
+        "GET", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas", headers=headers
+    )
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
+
 
 @router.post("/tarifas", summary="Criar tarifa")
 async def criar_tarifa(request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
     body = await request.json()
-    result = await forward_request("POST", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas", headers=headers, json=body)
+    result = await forward_request(
+        "POST", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas", headers=headers, json=body
+    )
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
 
-@router.put("/tarifas/{tipo_veiculo}", summary="Atualizar tarifa")
+
+@router.put("/tarifas/{tipo_veiculo:path}", summary="Atualizar tarifa")
 async def atualizar_tarifa(tipo_veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
     body = await request.json()
-    result = await forward_request("PUT", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas/{tipo_veiculo}", headers=headers, json=body)
+
+    tipo_encoded = quote(tipo_veiculo, safe="")  # garante encoding correto
+
+    result = await forward_request(
+        "PUT",
+        f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas/{tipo_encoded}",
+        headers=headers,
+        json=body,
+    )
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
 
-@router.delete("/tarifas/{tipo_veiculo}", summary="Remover tarifa")
+
+@router.delete("/tarifas/{tipo_veiculo:path}", summary="Remover tarifa")
 async def remover_tarifa(tipo_veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
-    result = await forward_request("DELETE", f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas/{tipo_veiculo}", headers=headers)
+
+    tipo_encoded = quote(tipo_veiculo, safe="")  # garante encoding correto
+
+    result = await forward_request(
+        "DELETE",
+        f"{COSTS_TRANSFER_URL}/custos_transferencia/tarifas/{tipo_encoded}",
+        headers=headers,
+    )
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
+
 
 # ---------- Artefatos ----------
 @router.get("/artefatos", summary="Links e dados dos artefatos (CSV/JSON/PDF)")
@@ -169,7 +189,6 @@ def artefatos_custos_transferencia(
         rel = os.path.relpath(local_path, base)
         return f"/exports/costs_transfer/{rel}"
 
-    # 🔥 Carrega conteúdo JSON automaticamente
     json_dados = []
     if json_path and os.path.exists(json_path):
         try:
@@ -184,5 +203,5 @@ def artefatos_custos_transferencia(
         "csv_url": _to_public_url(csv_path),
         "json_url": _to_public_url(json_path),
         "pdf_url": _to_public_url(pdf_path),
-        "json_dados": json_dados,  # 👈 já vem direto
+        "json_dados": json_dados,
     }

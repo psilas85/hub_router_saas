@@ -7,6 +7,7 @@ import api from "@/services/api";
 export type RunSimulationParams = {
     data_inicial: string;        // yyyy-mm-dd
     data_final?: string;         // opcional no front; se não vier, usamos a mesma do inicial
+    hub_id: number;              // 👈 Hub central (obrigatório no frontend)
 
     // Clusterização
     k_min?: number;
@@ -44,6 +45,7 @@ export type RunSimulationParams = {
     // Rotas excedentes
     permitir_rotas_excedentes?: boolean;
 };
+
 
 export async function runSimulation(params: RunSimulationParams) {
     const { data_inicial, data_final, ...rest } = params;
@@ -118,8 +120,9 @@ export type FrequenciaCidadesResponse = {
     status: string;
     data_inicial: string;
     data_final: string;
-    grafico: string; // caminho relativo do backend
-    dados: { cluster_cidade: string; qtd: number }[];
+    grafico: string; // PNG (Top 20)
+    csv: string;     // CSV completo
+    dados: { cluster_cidade: string; qtd: number }[]; // Top 20
 };
 
 export async function getFrequenciaCidades(params: {
@@ -208,24 +211,27 @@ export async function getFrotaKFixo(params: {
 
 // ===== CRUD de Hubs =====
 export type Hub = {
-    hub_id?: number;
+    hub_id: number;   // sempre vem do banco
     nome: string;
     cidade: string;
     latitude: number;
     longitude: number;
 };
 
+// Tipo separado só para criação (sem hub_id)
+export type HubCreate = Omit<Hub, "hub_id">;
+
 export async function listHubs() {
     const resp = await api.get("/simulation/hubs");
     return resp.data as Hub[];
 }
 
-export async function createHub(hub: Hub) {
+export async function createHub(hub: HubCreate) {
     const resp = await api.post("/simulation/hubs", hub);
     return resp.data as Hub;
 }
 
-export async function updateHub(id: number, hub: Hub) {
+export async function updateHub(id: number, hub: HubCreate) {
     const resp = await api.put(`/simulation/hubs/${id}`, hub);
     return resp.data as Hub;
 }
@@ -234,6 +240,7 @@ export async function deleteHub(id: number) {
     const resp = await api.delete(`/simulation/hubs/${id}`);
     return resp.data;
 }
+
 
 // ===== CRUD de Custos de Centros =====
 export type ClusterCost = {

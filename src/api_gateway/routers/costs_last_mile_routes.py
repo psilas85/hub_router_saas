@@ -6,6 +6,7 @@ from api_gateway.utils.http_client import forward_request
 from api_gateway.config import settings
 from authentication.utils.dependencies import obter_tenant_id_do_token
 import os
+from urllib.parse import quote
 
 router = APIRouter(prefix="/costs_last_mile", tags=["Costs Last Mile"])
 
@@ -119,15 +120,17 @@ async def adicionar_veiculo(request: Request, tenant_id: str = Depends(obter_ten
     return result["content"]
 
 
-@router.put("/vehicles/{veiculo}", summary="Editar veículo Last-Mile")
+@router.put("/vehicles/{veiculo:path}", summary="Editar veículo Last-Mile")
 async def editar_veiculo(veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
     body = await request.json()
 
+    veiculo_encoded = quote(veiculo, safe="")
+
     result = await forward_request(
         "PUT",
-        f"{COSTS_LAST_MILE_URL}/costs_last_mile/vehicles/{veiculo}",
+        f"{COSTS_LAST_MILE_URL}/costs_last_mile/vehicles/{veiculo_encoded}",
         headers=headers,
         json=body
     )
@@ -136,20 +139,21 @@ async def editar_veiculo(veiculo: str, request: Request, tenant_id: str = Depend
     return result["content"]
 
 
-@router.delete("/vehicles/{veiculo}", summary="Remover veículo Last-Mile")
+@router.delete("/vehicles/{veiculo:path}", summary="Remover veículo Last-Mile")
 async def remover_veiculo(veiculo: str, request: Request, tenant_id: str = Depends(obter_tenant_id_do_token)):
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"Authorization": auth} if auth else {}
 
+    veiculo_encoded = quote(veiculo, safe="")
+
     result = await forward_request(
         "DELETE",
-        f"{COSTS_LAST_MILE_URL}/costs_last_mile/vehicles/{veiculo}",
+        f"{COSTS_LAST_MILE_URL}/costs_last_mile/vehicles/{veiculo_encoded}",
         headers=headers
     )
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
-
 
 # -------------------------
 # Artefatos (PDF)
