@@ -28,195 +28,200 @@ import SimulationClusterCostsPage from "@/pages/Simulation/SimulationClusterCost
 // Exploratory Analysis
 import ExploratoryDashboardPage from "@/pages/Exploratory/ExploratoryDashboardPage";
 
+// Context
+import { ProcessingProvider } from "@/context/ProcessingContext"; // ✅ novo
+
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Público */}
-        <Route path="/login" element={<LoginPage />} />
+    <ProcessingProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Público */}
+          <Route path="/login" element={<LoginPage />} />
 
-        {/* Protegidas */}
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <HomePage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
+          {/* Protegidas */}
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <HomePage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Exploratory (Streamlit via iframe) */}
-        <Route
-          path="/exploratory_analysis_ui"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <ExploratoryDashboardPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        {/* Alias curto para EDA */}
-        <Route
-          path="/eda"
-          element={<Navigate to="/exploratory_analysis_ui" replace />}
-        />
+          {/* Exploratory (Streamlit via iframe) */}
+          <Route
+            path="/exploratory_analysis_ui"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <ExploratoryDashboardPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          {/* Alias curto para EDA */}
+          <Route
+            path="/eda"
+            element={<Navigate to="/exploratory_analysis_ui" replace />}
+          />
 
-        {/* Data Input & Clusterization */}
-        <Route
-          path="/data-input"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <DataInputPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/clusterization"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <ClusterizationPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
+          {/* Data Input & Clusterization */}
+          <Route
+            path="/data-input"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <DataInputPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/clusterization"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <ClusterizationPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Middle-Mile */}
-        <Route
-          path="/middle-mile/vehicles"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <VehiclesPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/middle-mile/routing"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <MmRoutingPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/middle-mile/costs"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <CostsPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
+          {/* Middle-Mile */}
+          <Route
+            path="/middle-mile/vehicles"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <VehiclesPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/middle-mile/routing"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <MmRoutingPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/middle-mile/costs"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <CostsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Last-Mile */}
-        <Route
-          path="/last-mile/vehicles"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <LastMileVehiclesPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/last-mile/routing"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <LastMileRoutingPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/last-mile/costs"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <LastMileCostsPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
+          {/* Last-Mile */}
+          <Route
+            path="/last-mile/vehicles"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <LastMileVehiclesPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/last-mile/routing"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <LastMileRoutingPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/last-mile/costs"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <LastMileCostsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Simulação */}
-        <Route
-          path="/simulation"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <SimulationPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/simulation/hubs"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <SimulationHubsPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/simulation/cluster_costs"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <SimulationClusterCostsPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
+          {/* Simulação */}
+          <Route
+            path="/simulation"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <SimulationPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/simulation/hubs"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <SimulationHubsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/simulation/cluster_costs"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <SimulationClusterCostsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Admin */}
-        <Route
-          path="/users"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <UsersPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/tenants"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <TenantsPage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/profile"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <ProfilePage />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
+          {/* Admin */}
+          <Route
+            path="/users"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <UsersPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/tenants"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <TenantsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <ProfilePage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Default */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+          {/* Default */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </ProcessingProvider>
   );
 }

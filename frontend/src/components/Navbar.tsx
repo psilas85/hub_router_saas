@@ -14,6 +14,7 @@ import {
     X,
     Menu,
 } from "lucide-react";
+import { useProcessing } from "@/context/ProcessingContext";  // ✅ novo
 
 type Role =
     | "hub_admin"
@@ -51,6 +52,7 @@ function useClickOutside(
 export default function Navbar() {
     const { usuario, logout } = useAuthStore();
     const navigate = useNavigate();
+    const { processing } = useProcessing(); // ✅ pega status global
 
     // Drawer mobile
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -162,16 +164,23 @@ export default function Navbar() {
 
             {/* Navegação */}
             <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
-                {/* Input de Dados (renomeado) */}
+                {/* Input de Dados (com badge de processamento) */}
                 <Item
                     to="/data-input"
                     icon={<Upload size={16} />}
                     onClick={() => setDrawerOpen(false)}
                 >
-                    Input de Dados
+                    <span className="flex items-center gap-2">
+                        Input de Dados
+                        {processing && (
+                            <span className="ml-2 text-xs text-amber-300 animate-pulse">
+                                ⏳
+                            </span>
+                        )}
+                    </span>
                 </Item>
 
-                {/* EDA (movido para baixo de Input de Dados) */}
+                {/* EDA */}
                 <Item
                     to="/exploratory_analysis_ui"
                     icon={<BarChart3 size={16} />}
@@ -238,6 +247,7 @@ export default function Navbar() {
                     </Item>
                 </SubMenu>
 
+                {/* Simulação */}
                 <SubMenu title="Simulação" icon={<BarChart3 size={16} />} open={simOpen} setOpen={setSimOpen}>
                     <Item
                         to="/simulation"
@@ -262,8 +272,7 @@ export default function Navbar() {
                     </Item>
                 </SubMenu>
 
-
-                {/* Admin (permite/oculta conforme permissões) */}
+                {/* Admin */}
                 {(podeGerenciarUsuarios || podeGerenciarTenants) && (
                     <SubMenu title="Admin" icon={<Settings size={16} />} open={adminOpen} setOpen={setAdminOpen}>
                         {podeGerenciarUsuarios && (
@@ -294,7 +303,6 @@ export default function Navbar() {
                     </SubMenu>
                 )}
             </nav>
-
 
             {/* Rodapé com usuário e logout */}
             <div className="mt-auto border-t border-white/10 p-3">

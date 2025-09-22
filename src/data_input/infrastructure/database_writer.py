@@ -128,10 +128,10 @@ class DatabaseWriter:
 
         insert_query = """
             INSERT INTO entregas_clusterizadas (
-                id_entrega, cte_numero, transportadora, envio_data, 
+                id_entrega, cte_numero, transportadora, envio_data,
                 cluster, cluster_cidade, centro_lat, centro_lon, tenant_id, data_hora
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-            ON CONFLICT (cte_numero, transportadora) DO UPDATE SET 
+            ON CONFLICT (cte_numero, transportadora) DO UPDATE SET
                 cluster = EXCLUDED.cluster,
                 cluster_cidade = EXCLUDED.cluster_cidade,
                 centro_lat = EXCLUDED.centro_lat,
@@ -185,7 +185,7 @@ class DatabaseWriter:
                 centro_lat, centro_lon
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (envio_data, tenant_id, cluster)
-            DO UPDATE SET 
+            DO UPDATE SET
                 quantidade_entregas = EXCLUDED.quantidade_entregas,
                 peso_total_kg = EXCLUDED.peso_total_kg,
                 distancia_media_km = EXCLUDED.distancia_media_km,
@@ -203,3 +203,25 @@ class DatabaseWriter:
         except Exception as e:
             self.conexao.rollback()
             logging.error(f"❌ Erro ao salvar resumo da clusterização: {e}")
+
+    def salvar_historico_data_input(
+        self, tenant_id: str, job_id: str, arquivo: str, status: str,
+        total_processados: int, validos: int, invalidos: int, mensagem: str
+    ):
+        query = """
+            INSERT INTO historico_data_input
+                (tenant_id, job_id, arquivo, status, total_processados, validos, invalidos, mensagem, criado_em)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        """
+        try:
+            with self.conexao.cursor() as cursor:
+                cursor.execute(query, (
+                    tenant_id, job_id, arquivo, status,
+                    total_processados, validos, invalidos, mensagem
+                ))
+            self.conexao.commit()
+            logging.info(f"📝 Histórico salvo em historico_data_input: job_id={job_id}")
+        except Exception as e:
+            self.conexao.rollback()
+            logging.error(f"❌ Erro ao salvar histórico do data input: {e}")
+

@@ -1,9 +1,12 @@
 # hub_router_1.0.1/src/data_input/main_preprocessing.py
 
+# hub_router_1.0.1/src/data_input/main_preprocessing.py
+
 import argparse
 import logging
 import os
-import json  # 👈 ADICIONADO para exportar resumo em JSON
+import json
+import uuid
 from dotenv import load_dotenv
 
 from data_input.application.data_preprocessing import DataPreprocessing
@@ -17,15 +20,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # Carrega .env
 load_dotenv()
 
+
 def detectar_separador(caminho_arquivo):
     with open(caminho_arquivo, "r", encoding="utf-8-sig") as f:
         primeira_linha = f.readline()
         return ";" if ";" in primeira_linha else ","
 
+
 def main():
     parser = argparse.ArgumentParser(description="Pré-processamento de dados por tenant.")
     parser.add_argument("--tenant", help="ID do tenant (pode vir do .env)")
-    parser.add_argument("--limite-peso-kg", type=float, default=15_000.0, help="Peso máximo permitido por CTE (default: 15.000 kg)")
+    parser.add_argument(
+        "--limite-peso-kg",
+        type=float,
+        default=15_000.0,
+        help="Peso máximo permitido por CTE (default: 15.000 kg)"
+    )
     parser.add_argument("--modo_forcar", action="store_true", help="Forçar reprocessamento mesmo sem arquivo")
     args = parser.parse_args()
 
@@ -34,6 +44,7 @@ def main():
         logging.error("❌ Tenant ID não informado via argumento ou .env")
         return
 
+    job_id = str(uuid.uuid4())  # ✅ gera ID único a cada execução
     limite_peso = args.limite_peso_kg
     modo_forcar = args.modo_forcar
 
@@ -71,7 +82,6 @@ def main():
 
         resultado = preprocessor.execute(input_path, sep=sep)
 
-
         if resultado is None:
             logging.warning("⚠ Nenhum registro válido foi processado.")
             return
@@ -82,21 +92,35 @@ def main():
             acima_peso = df[df["cte_peso"] > limite_peso]
             if not acima_peso.empty:
                 acima_peso.to_csv(output_acima_peso_path, index=False, encoding="utf-8-sig", sep=";")
-                logging.warning(f"⚠️ {len(acima_peso)} CTE(s) com peso acima de {limite_peso:.0f} kg salvos em: {output_acima_peso_path}")
+                logging.warning(
+                    f"⚠️ {len(acima_peso)} CTE(s) com peso acima de {limite_peso:.0f} kg salvos em: {output_acima_peso_path}"
+                )
                 for _, row in acima_peso.iterrows():
                     logging.warning(f"  🚛 CTE {row['cte_numero']} — Peso: {row['cte_peso']} kg")
 
             logging.info(f"✅ Processamento finalizado com {len(df)} registros válidos.")
             logging.info(f"📋 Resumo: {len(df)} válidos, {qtde_invalidos} inválidos.")
-            print(f"Resumo: {len(df)} válidos, {qtde_invalidos} inválidos.")  # 👈 mantém o print humano
+            print(f"Resumo: {len(df)} válidos, {qtde_invalidos} inválidos.")  # print humano
 
-            # 👇 NOVO: saída em JSON para captura pelo Gateway
+            # 👇 Saída JSON para o Gateway
             total_processados = int(len(df) + (qtde_invalidos or 0))
             print(json.dumps({
                 "total_processados": total_processados,
                 "validos": int(len(df)),
                 "invalidos": int(qtde_invalidos or 0)
             }))
+
+            # ✅ Salva no histórico
+            db_writer.salvar_historico_data_input(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                arquivo=os.path.basename(input_path),
+                status="done",
+                total_processados=total_processados,
+                validos=int(len(df)),
+                invalidos=int(qtde_invalidos or 0),
+                mensagem="Processamento concluído com sucesso"
+            )
 
             if hasattr(preprocessor, "registros_ignorados_uf") and preprocessor.registros_ignorados_uf > 0:
                 logging.info(
@@ -108,6 +132,20 @@ def main():
 
     except Exception as e:
         logging.error(f"❌ Erro inesperado durante o pré-processamento: {e}", exc_info=True)
+        try:
+            db_writer.salvar_historico_data_input(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                arquivo=os.path.basename(input_path) if 'input_path' in locals() else "desconhecido",
+                status="error",
+                total_processados=0,
+                validos=0,
+                invalidos=0,
+                mensagem=str(e)
+            )
+        except Exception as inner_e:
+            logging.error(f"❌ Falha ao salvar histórico de erro: {inner_e}")
+
 
 if __name__ == "__main__":
     main()

@@ -26,7 +26,7 @@ class ClusterizationService:
         self.logger.info("📥 Carregando entregas do clusterization_db...")
 
         query = f"""
-        SELECT 
+        SELECT
             cte_numero, remetente_cnpj, cte_rua, cte_bairro, cte_complemento,
             cte_cidade, cte_uf, cte_cep, cte_nf, cte_volumes, cte_peso,
             cte_valor_nf, cte_valor_frete, envio_data, endereco_completo,
@@ -87,23 +87,34 @@ class ClusterizationService:
         return df_entregas
 
     def ajustar_centros_dos_clusters(self, df_clusterizado):
-        self.logger.info("📍 Ajustando centros dos clusters...")
+        self.logger.info("📍 Ajustando centros dos clusters (fixo = média ponderada por entregas)...")
 
         novos_centros = []
         for cluster_id in sorted(df_clusterizado['cluster'].unique()):
             df_cluster = df_clusterizado[df_clusterizado['cluster'] == cluster_id]
-            centro_lat, centro_lon = encontrar_centro_mais_denso(df_cluster)
 
-            if centro_lat is None or centro_lon is None:
+            if df_cluster.empty:
+                self.logger.warning(f"⚠️ Cluster {cluster_id} sem entregas.")
+                continue
+
+            # 📍 Centro calculado = média simples das coordenadas (ponderado por entregas)
+            centro_lat = df_cluster["latitude"].mean()
+            centro_lon = df_cluster["longitude"].mean()
+
+            if pd.isna(centro_lat) or pd.isna(centro_lon):
                 self.logger.warning(f"⚠️ Cluster {cluster_id} sem coordenadas válidas.")
                 continue
 
-            endereco_urbano, cidade = ajustar_para_centro_urbano(centro_lat, centro_lon, self.simulation_db, self.tenant_id)
+            # 🔄 Ajuste para centro urbano
+            endereco_urbano, cidade = ajustar_para_centro_urbano(
+                centro_lat, centro_lon, self.simulation_db, self.tenant_id
+            )
+
             self.logger.info(f"📍 Buscando coordenadas para cluster {cluster_id}: {endereco_urbano}")
             lat, lon = buscar_coordenadas(endereco_urbano, self.tenant_id, self.simulation_db, self.logger)
 
             if not coordenadas_sao_validas(lat, lon):
-                self.logger.warning(f"⚠️ Coordenadas inválidas. Usando ponto denso.")
+                self.logger.warning(f"⚠️ Coordenadas inválidas. Usando centro calculado.")
                 lat, lon = centro_lat, centro_lon
 
             log_coordenadas(self.logger, cluster_id, lat, lon, prefixo="Cluster ajustado")
@@ -114,6 +125,7 @@ class ClusterizationService:
                 'centro_lon': lon
             })
 
+        # 🔁 Atualiza DataFrame com os novos centros
         df_centros = pd.DataFrame(novos_centros)
         df_clusterizado = df_clusterizado.drop(columns=[
             "centro_lat", "centro_lon", "cluster_endereco", "cluster_cidade"
@@ -121,6 +133,7 @@ class ClusterizationService:
         df_clusterizado = df_clusterizado.merge(df_centros, on="cluster", how="left")
 
         return df_clusterizado
+
 
     def fundir_clusters_pequenos(self, df_clusterizado, min_entregas: int = 10):
         self.logger.info(f"🔁 Fundindo clusters com menos de {min_entregas} entregas...")

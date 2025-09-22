@@ -5,10 +5,68 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.ticker import MaxNLocator
+from matplotlib.patches import Patch
 
 matplotlib.use("Agg")
 
 from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
+
+
+def _gerar_grafico(df_frota, png_path, data_inicial, data_final, k_fixo, cobertura_pct, titulo_extra=""):
+    """
+    Gera gráfico de barras para frota média sugerida.
+    Paleta de cores e legenda são geradas dinamicamente de acordo com os tipos de veículo.
+    """
+    df_frota = df_frota.sort_values("frota_sugerida", ascending=False)
+
+    # Paleta dinâmica
+    unique_veiculos = df_frota["tipo_veiculo"].unique()
+    cmap = plt.get_cmap("tab20")
+    cores = {tv: cmap(i % cmap.N) for i, tv in enumerate(unique_veiculos)}
+
+    plt.figure(figsize=(10, 6))
+    bars = plt.bar(
+        df_frota["tipo_veiculo"],
+        df_frota["frota_sugerida"],
+        color=[cores[tv] for tv in df_frota["tipo_veiculo"]],
+        edgecolor="black"
+    )
+
+    plt.ylabel("Frota média sugerida (veículos/dia)")
+    plt.xlabel("Tipo de Veículo")
+    plt.grid(axis="y", linestyle="--", alpha=0.3)
+
+    total_frota = df_frota["frota_sugerida"].sum()
+
+    plt.title(
+        f"Frota Média Sugerida • k={k_fixo} • {data_inicial} → {data_final}\n"
+        f"{titulo_extra} • Total: {total_frota} veículos • Cobertura: {cobertura_pct:.1%}",
+        fontsize=12,
+        fontweight="bold"
+    )
+
+    plt.gca().yaxis.set_major_locator(MaxNLocator(integer=True))
+
+    # Rótulos nas barras
+    for bar, val in zip(bars, df_frota["frota_sugerida"]):
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.3,
+            f"{val:,}".replace(",", "."),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold"
+        )
+
+    # 🔑 Legenda automática
+    legend_handles = [Patch(facecolor=cores[tv], edgecolor="black", label=tv) for tv in unique_veiculos]
+    plt.legend(handles=legend_handles, title="Tipos de Veículo", bbox_to_anchor=(1.05, 1), loc="upper left")
+
+    plt.tight_layout()
+    plt.savefig(png_path, bbox_inches="tight", dpi=150)
+    plt.close()
+    print(f"✅ PNG gráfico: {png_path}")
 
 
 def gerar_grafico_frota_k_fixo(
@@ -21,18 +79,14 @@ def gerar_grafico_frota_k_fixo(
 ):
     """
     Avalia frota média necessária no período para um ou mais k_fixo informados.
-    Consolida rotas de last-mile e transferências (sem filtrar por simulation_id).
-    Exporta CSV consolidado e detalhado, e gera gráfico de barras por k_fixo.
+    Gera gráficos separados para rotas de last-mile e transferências.
+    Exporta CSVs consolidados e detalhados para cada caso.
     """
 
     os.makedirs(os.path.join(output_dir, tenant_id), exist_ok=True)
-    base_name = f"frota_k_fixo_{data_inicial}_{data_final}_{'_'.join(map(str,k_list))}"
-    csv_path = os.path.join(output_dir, tenant_id, base_name + ".csv")
-    csv_detalhado = os.path.join(output_dir, tenant_id, base_name + "_detalhado.csv")
 
     conn = conectar_simulation_db()
     try:
-        # 1) Total de dias distintos no período
         q_tot_dias = """
             SELECT COUNT(DISTINCT envio_data) AS total_dias
             FROM resumo_rotas_last_mile
@@ -44,10 +98,11 @@ def gerar_grafico_frota_k_fixo(
             print("⚠️ Não há dados no período informado.")
             return None, None, pd.DataFrame()
 
-        resultados, detalhados = [], []
+        resultados_last, detalhados_last = [], []
+        resultados_transf, detalhados_transf = [], []
 
         for k_fixo in k_list:
-            # 2) Buscar rotas last-mile
+            # --- Last-mile ---
             q_last_mile = """
                 SELECT envio_data, tipo_veiculo, COUNT(*) AS qtd_veiculos
                 FROM resumo_rotas_last_mile
@@ -58,7 +113,34 @@ def gerar_grafico_frota_k_fixo(
             """
             df_last = pd.read_sql(q_last_mile, conn, params=(tenant_id, data_inicial, data_final, k_fixo))
 
-            # 3) Buscar transferências
+            if not df_last.empty:
+                dias_presentes = df_last["envio_data"].nunique()
+                cobertura_pct = dias_presentes / total_dias if total_dias else 0
+                modo = "FULL" if cobertura_pct >= 0.999999 else "PARCIAL"
+
+                df_frota = (
+                    df_last.groupby("tipo_veiculo")["qtd_veiculos"]
+                    .mean()
+                    .apply(lambda x: int(-(-x // 1)))
+                    .reset_index()
+                )
+                df_frota = df_frota.rename(columns={"qtd_veiculos": "frota_sugerida"})
+                df_frota["k_clusters"] = k_fixo
+                df_frota["dias_presentes"] = dias_presentes
+                df_frota["total_dias"] = total_dias
+                df_frota["cobertura_pct"] = round(cobertura_pct, 4)
+                df_frota["modo"] = modo
+                df_frota["origem"] = "lastmile"   # ✅ identifica origem
+
+                resultados_last.append(df_frota)
+                df_last["k_clusters"] = k_fixo
+                df_last["origem"] = "lastmile"    # ✅ identifica origem
+                detalhados_last.append(df_last)
+
+                png_path = os.path.join(output_dir, tenant_id, f"frota_lastmile_{data_inicial}_{data_final}_k{k_fixo}.png")
+                _gerar_grafico(df_frota, png_path, data_inicial, data_final, k_fixo, cobertura_pct, "Last-mile")
+
+            # --- Transferências ---
             q_transfer = """
                 SELECT envio_data, tipo_veiculo, COUNT(DISTINCT rota_id) AS qtd_veiculos
                 FROM detalhes_transferencias
@@ -69,105 +151,53 @@ def gerar_grafico_frota_k_fixo(
             """
             df_transf = pd.read_sql(q_transfer, conn, params=(tenant_id, data_inicial, data_final, k_fixo))
 
-            # 4) Consolida
-            df_comb = pd.concat([df_last, df_transf], ignore_index=True)
-            if df_comb.empty:
-                print(f"⚠️ Nenhum dado encontrado para k={k_fixo}.")
-                continue
+            if not df_transf.empty:
+                dias_presentes = df_transf["envio_data"].nunique()
+                cobertura_pct = dias_presentes / total_dias if total_dias else 0
+                modo = "FULL" if cobertura_pct >= 0.999999 else "PARCIAL"
 
-            # 5) Cobertura
-            dias_presentes = df_comb["envio_data"].nunique()
-            cobertura_pct = dias_presentes / total_dias if total_dias else 0
-            modo = "FULL" if cobertura_pct >= 0.999999 else "PARCIAL"
-
-            # 6) Média consolidada (ceil)
-            df_frota = (
-                df_comb.groupby("tipo_veiculo")["qtd_veiculos"]
-                .mean()
-                .apply(lambda x: int(-(-x // 1)))  # ceil inteiro
-                .reset_index()
-            )
-            df_frota = df_frota.rename(columns={"qtd_veiculos": "frota_sugerida"})
-            df_frota["k_clusters"] = k_fixo
-            df_frota["dias_presentes"] = dias_presentes
-            df_frota["total_dias"] = total_dias
-            df_frota["cobertura_pct"] = round(cobertura_pct, 4)
-            df_frota["modo"] = modo
-
-            resultados.append(df_frota)
-            df_comb["k_clusters"] = k_fixo
-            detalhados.append(df_comb)
-
-            # 7) Gráfico de barras individual (ordenado decrescente)
-            png_path = os.path.join(output_dir, tenant_id, f"{base_name}_k{k_fixo}.png")
-            df_frota = df_frota.sort_values("frota_sugerida", ascending=False)
-
-            # Paleta fixa por tipo de veículo
-            cores = {
-                "Motocicleta": "#16a34a",
-                "Fiorino": "#2563eb",
-                "HR": "#f97316",
-                "VUC": "#f97316",
-                "3/4": "#9333ea",
-                "Toco": "#e11d48",
-                "Truck": "#64748b",
-            }
-
-            plt.figure(figsize=(10, 6))
-            bars = plt.bar(
-                df_frota["tipo_veiculo"],
-                df_frota["frota_sugerida"],
-                color=[cores.get(tv, "steelblue") for tv in df_frota["tipo_veiculo"]],
-                edgecolor="black"
-            )
-
-            plt.ylabel("Frota média sugerida (veículos/dia)")
-            plt.xlabel("Tipo de Veículo")
-            plt.grid(axis="y", linestyle="--", alpha=0.3)
-
-            # Calcular total da frota
-            total_frota = df_frota["frota_sugerida"].sum()
-
-            plt.title(
-                f"Frota Média Sugerida • k={k_fixo} • {data_inicial} → {data_final}\n"
-                f"Total: {total_frota} veículos • Cobertura: {cobertura_pct:.1%}",
-                fontsize=12,
-                fontweight="bold"
-            )
-
-            # Forçar eixo Y inteiro
-            plt.gca().yaxis.set_major_locator(MaxNLocator(integer=True))
-
-            # Adicionar rótulo em cada barra
-            for bar, val in zip(bars, df_frota["frota_sugerida"]):
-                plt.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + 0.3,
-                    f"{val:,}".replace(",", "."),
-                    ha="center",
-                    va="bottom",
-                    fontsize=9,
-                    fontweight="bold"
+                df_frota = (
+                    df_transf.groupby("tipo_veiculo")["qtd_veiculos"]
+                    .mean()
+                    .apply(lambda x: int(-(-x // 1)))
+                    .reset_index()
                 )
+                df_frota = df_frota.rename(columns={"qtd_veiculos": "frota_sugerida"})
+                df_frota["k_clusters"] = k_fixo
+                df_frota["dias_presentes"] = dias_presentes
+                df_frota["total_dias"] = total_dias
+                df_frota["cobertura_pct"] = round(cobertura_pct, 4)
+                df_frota["modo"] = modo
+                df_frota["origem"] = "transfer"   # ✅ identifica origem
 
-            plt.tight_layout()
-            plt.savefig(png_path, bbox_inches="tight", dpi=150)
-            plt.close()
+                resultados_transf.append(df_frota)
+                df_transf["k_clusters"] = k_fixo
+                df_transf["origem"] = "transfer"  # ✅ identifica origem
+                detalhados_transf.append(df_transf)
 
+                png_path = os.path.join(output_dir, tenant_id, f"frota_transfer_{data_inicial}_{data_final}_k{k_fixo}.png")
+                _gerar_grafico(df_frota, png_path, data_inicial, data_final, k_fixo, cobertura_pct, "Transferências")
 
-            print(f"✅ PNG gráfico: {png_path}")
+        # Exportar CSVs
+        if resultados_last:
+            df_cons_last = pd.concat(resultados_last, ignore_index=True)
+            df_det_last = pd.concat(detalhados_last, ignore_index=True)
+            base_name = f"frota_lastmile_{data_inicial}_{data_final}_{'_'.join(map(str,k_list))}"
+            df_cons_last.to_csv(os.path.join(output_dir, tenant_id, base_name + ".csv"), index=False)
+            df_det_last.to_csv(os.path.join(output_dir, tenant_id, base_name + "_detalhado.csv"), index=False)
+            print(f"✅ CSV last-mile exportado.")
 
-        # 8) Exporta consolidado e detalhado
-        df_consolidado = pd.concat(resultados, ignore_index=True)
-        df_detalhado = pd.concat(detalhados, ignore_index=True)
+        if resultados_transf:
+            df_cons_transf = pd.concat(resultados_transf, ignore_index=True)
+            df_det_transf = pd.concat(detalhados_transf, ignore_index=True)
+            base_name = f"frota_transfer_{data_inicial}_{data_final}_{'_'.join(map(str,k_list))}"
+            df_cons_transf.to_csv(os.path.join(output_dir, tenant_id, base_name + ".csv"), index=False)
+            df_det_transf.to_csv(os.path.join(output_dir, tenant_id, base_name + "_detalhado.csv"), index=False)
+            print(f"✅ CSV transfer exportado.")
 
-        df_consolidado.to_csv(csv_path, index=False)
-        df_detalhado.to_csv(csv_detalhado, index=False)
-
-        print(f"✅ CSV consolidado: {csv_path}")
-        print(f"✅ CSV detalhado:  {csv_detalhado}")
-
-        return None, csv_path, df_consolidado
+        # 🔹 Retorna DataFrame único com ambas origens
+        df_final = pd.concat(resultados_last + resultados_transf, ignore_index=True) if (resultados_last or resultados_transf) else pd.DataFrame()
+        return None, None, df_final
 
     finally:
         try:
@@ -179,7 +209,7 @@ def gerar_grafico_frota_k_fixo(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Gera gráfico da frota média por tipo de veículo para cada k_fixo informado.")
+    parser = argparse.ArgumentParser(description="Gera gráficos de frota média por tipo de veículo (last-mile e transferências) para cada k_fixo informado.")
     parser.add_argument("--tenant_id", required=True, type=str)
     parser.add_argument("--data_inicial", required=True, type=str)
     parser.add_argument("--data_final", required=True, type=str)
@@ -188,7 +218,7 @@ if __name__ == "__main__":
     parser.add_argument("--min_cobertura_parcial", default=0.70, type=float)
     args = parser.parse_args()
 
-    _, csv, df = gerar_grafico_frota_k_fixo(
+    gerar_grafico_frota_k_fixo(
         tenant_id=args.tenant_id,
         data_inicial=args.data_inicial,
         data_final=args.data_final,
@@ -196,5 +226,3 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         min_cobertura_parcial=args.min_cobertura_parcial,
     )
-    print("CSV consolidado:", csv)
-    print("Linhas:", 0 if df is None else len(df))

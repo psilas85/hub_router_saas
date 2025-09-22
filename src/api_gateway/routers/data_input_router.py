@@ -168,3 +168,33 @@ async def mapa(request: Request):
         return resp.json()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro no proxy mapa: {str(e)}")
+
+@router.get("/historico", summary="Histórico dos últimos processamentos de Data Input")
+async def historico(request: Request, limit: int = Query(5, ge=1, le=50)):
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.get(
+                f"{DATA_INPUT_URL}/data_input/historico?limit={limit}",
+                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+            )
+
+        # ⚠️ se backend respondeu mas deu erro
+        if resp.status_code >= 400:
+            logger.warning(f"⚠️ Backend historico respondeu {resp.status_code}: {resp.text}")
+            return []
+
+        result = resp.json()
+
+        # ⚠️ normaliza: se não houver histórico → lista vazia
+        if not result:
+            logger.info("📭 Nenhum histórico retornado pelo backend (lista vazia).")
+            return []
+
+        return result
+
+    except Exception as e:
+        logger.error(f"❌ Erro no proxy historico: {e}", exc_info=True)
+        # 🔹 devolve lista vazia ao frontend em vez de quebrar a UI
+        return []
+
+

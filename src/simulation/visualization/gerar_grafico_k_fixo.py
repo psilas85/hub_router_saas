@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
+import matplotlib.ticker as mtick
 
 matplotlib.use("Agg")
 
@@ -154,23 +155,42 @@ def gerar_grafico_k_fixo(
 
         # 10) Gráfico
         x = df["k_clusters"].astype(int)
-        y = df["custo_alvo"]
 
-        plt.figure(figsize=(9, 6))
-        plt.bar(x, y)
-        plt.ylabel(f"Custo {criterio_txt} no período")
-        plt.xlabel("k_clusters (fixo)")
+        plt.figure(figsize=(10, 6))
+
+        # Barras empilhadas
+        plt.bar(x, df["soma_custo_last_mile"], label="Last-mile + Cluster", color="steelblue")
+        plt.bar(x, df["soma_custo_transfer"],
+                bottom=df["soma_custo_last_mile"], label="Transferência", color="gray")
+
+        # Eixos e título
+        plt.ylabel(f"Custo {criterio_txt} no período (R$)", fontsize=12)
+        plt.xlabel("Clusters (k)", fontsize=12)
 
         best_row = df.iloc[0]
         best_k = int(best_row["k_clusters"])
         rr = best_row["regret_relativo"]
         rr_txt = f"{rr:.2%}" if rr is not None else "n/a"
 
-        # título simplificado: sem menção a "regra de 3"
         titulo_modo = "FULL (100%)" if modo == "FULL" else f"PARCIAL (≥{int(min_cobertura_parcial*100)}%)"
-        plt.title(f"k fixo {titulo_modo} • {data_inicial} → {data_final} • melhor k={best_k} • regret={rr_txt}")
-        plt.xticks(x)
-        plt.tight_layout()
+        plt.title(
+            f"Custo consolidado por k fixo {titulo_modo}\n"
+            f"{data_inicial} → {data_final} • melhor k={best_k} • regret={rr_txt}",
+            fontsize=14, pad=20
+        )
+
+        # Formatar Y em mil
+        plt.gca().yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f"{int(x/1000)} mil"))
+
+        # Legenda
+        plt.legend()
+
+        # Grid discreto
+        plt.grid(axis="y", linestyle="--", alpha=0.7)
+
+        # Ajuste layout para evitar sobreposição
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+
         plt.savefig(png_path, bbox_inches="tight")
         plt.close()
 

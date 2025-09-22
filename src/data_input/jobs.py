@@ -1,10 +1,43 @@
+#hub_router_1.0.1/src/data_input/jobs.py
+
 import logging
 import subprocess
 import re
 import json
+from datetime import datetime
 from rq import get_current_job
+from data_input.infrastructure.db import Database
 
 logger = logging.getLogger(__name__)
+
+def salvar_historico(tenant_id, job_id, status, arquivo, total, validos, invalidos, mensagem):
+    try:
+        db = Database(db_name="clusterization_db")  # 👈 força conexão no clusterization_db
+        db.conectar()
+        cur = db.conexao.cursor()
+        cur.execute(
+            """
+            INSERT INTO historico_data_input
+            (tenant_id, job_id, arquivo, status, total_processados, validos, invalidos, mensagem, criado_em)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                tenant_id,
+                job_id,
+                arquivo,
+                status,
+                total,
+                validos,
+                invalidos,
+                mensagem,
+                datetime.utcnow(),
+            ),
+        )
+        db.conexao.commit()
+        cur.close()
+    except Exception as e:
+        logger.error(f"❌ Erro ao salvar histórico no banco: {e}", exc_info=True)
+
 
 def processar_csv(job_id, tenant_id, file_path, modo_forcar, limite_peso_kg):
     job = get_current_job()
@@ -33,7 +66,7 @@ def processar_csv(job_id, tenant_id, file_path, modo_forcar, limite_peso_kg):
             capture_output=True,
             text=True,
             encoding="utf-8",
-            errors="ignore"
+            errors="ignore",
         )
 
         if result.returncode != 0:
@@ -47,7 +80,7 @@ def processar_csv(job_id, tenant_id, file_path, modo_forcar, limite_peso_kg):
         job.meta["progress"] = 70
         job.save_meta()
 
-        # 🔎 1) Tenta encontrar JSON no stdout
+        # 🔎 1) JSON no stdout
         for line in stdout_lines:
             if line.strip().startswith("{") and line.strip().endswith("}"):
                 try:
@@ -59,7 +92,7 @@ def processar_csv(job_id, tenant_id, file_path, modo_forcar, limite_peso_kg):
                 except Exception:
                     pass
 
-        # 🔎 2) Se não achar JSON, tenta regex no log
+        # 🔎 2) Regex fallback
         if total_processados == 0:
             for line in stdout_lines:
                 match = re.search(
@@ -78,8 +111,19 @@ def processar_csv(job_id, tenant_id, file_path, modo_forcar, limite_peso_kg):
         job.meta["progress"] = 100
         job.save_meta()
 
+        salvar_historico(
+            tenant_id,
+            job_id,
+            "done",
+            file_path.split("/")[-1],
+            total_processados,
+            validos,
+            invalidos,
+            "✅ Data Input finalizado com sucesso",
+        )
+
         return {
-            "status": "ok",
+            "status": "done",
             "job_id": job_id,
             "tenant_id": tenant_id,
             "total_processados": total_processados,
@@ -93,6 +137,18 @@ def processar_csv(job_id, tenant_id, file_path, modo_forcar, limite_peso_kg):
         job.meta["step"] = "Erro"
         job.meta["progress"] = 100
         job.save_meta()
+
+        salvar_historico(
+            tenant_id,
+            job_id,
+            "error",
+            file_path.split("/")[-1],
+            0,
+            0,
+            0,
+            str(e),
+        )
+
         return {
             "status": "error",
             "job_id": job_id,

@@ -1,5 +1,7 @@
 # simulation/visualization/gerar_grafico_frequencia_cidades.py
 
+# simulation/visualization/gerar_grafico_frequencia_cidades.py
+
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,12 +15,16 @@ def gerar_grafico_frequencia_cidades(
 ):
     """
     Gera gráfico de barras com a frequência das cidades centro (cluster_cidade)
-    que aparecem em simulações ponto ótimo no período informado (limitado a 12 meses).
+    que aparecem em simulações ponto ótimo no período informado.
+    - Contagem é feita por DIA (DISTINCT envio_data), evitando inflar
+      cidades quando k=1 centraliza todas as entregas no hub.
+    - Hub Fortaleza = cenário vencedor k=1 (hub único).
+    - HUB CENTRAL = hub central em cenários k>1 (compartilhado).
     """
     conn = conectar_simulation_db()
 
     query = """
-        SELECT ec.cluster_cidade, COUNT(*) AS qtd
+        SELECT ec.cluster_cidade, COUNT(DISTINCT ec.envio_data) AS qtd
         FROM entregas_clusterizadas ec
         JOIN resultados_simulacao r
           ON ec.simulation_id = r.simulation_id
@@ -30,6 +36,7 @@ def gerar_grafico_frequencia_cidades(
           AND r.is_ponto_otimo = TRUE
         GROUP BY ec.cluster_cidade
         ORDER BY qtd DESC
+        LIMIT 30
     """
     df = pd.read_sql(query, conn, params=(tenant_id, data_inicial, data_final))
     conn.close()
@@ -56,10 +63,13 @@ def gerar_grafico_frequencia_cidades(
 
     # Gráfico
     plt.figure(figsize=(10, 6))
-    plt.barh(df["cluster_cidade"], df["qtd"], color="seagreen")
-    plt.xlabel("Frequência como Centro (ponto ótimo)")
+    plt.barh(df["cluster_cidade"], df["qtd"], color="steelblue")
+    plt.xlabel("Frequência de dias como Centro (ponto ótimo)")
     plt.ylabel("Cidade")
-    plt.title(f"Frequência de Cidades em Pontos Ótimos ({data_inicial} → {data_final})")
+    plt.title(
+        f"Frequência de Cidades em Pontos Ótimos ({data_inicial} → {data_final})\n"
+        "Legenda: Hub Fortaleza = cenário k=1 único | HUB CENTRAL = hub central em cenários k>1"
+    )
     plt.gca().invert_yaxis()
     plt.grid(axis="x", linestyle="--", alpha=0.7)
     plt.tight_layout()

@@ -174,11 +174,20 @@ export type FrotaKFixoResponse = {
     tenant_id: string;
     data_inicial: string;
     data_final: string;
-    csv: string;
-    dados: {
+    csv: string | null;
+    lastmile: {
+        k_clusters: number;
         tipo_veiculo: string;
         frota_sugerida: number;
+        dias_presentes: number;
+        total_dias: number;
+        cobertura_pct: number;
+        modo: string;
+    }[];
+    transfer: {
         k_clusters: number;
+        tipo_veiculo: string;
+        frota_sugerida: number;
         dias_presentes: number;
         total_dias: number;
         cobertura_pct: number;
@@ -208,6 +217,7 @@ export async function getFrotaKFixo(params: {
     });
     return resp.data as FrotaKFixoResponse;
 }
+
 
 // ===== CRUD de Hubs =====
 export type Hub = {

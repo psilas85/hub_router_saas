@@ -33,13 +33,23 @@ def gerar_grafico_distribuicao_k(tenant_id: str, data_inicial: str, data_final: 
         f"distribuicao_k_{data_inicial}_{data_final}.png"
     )
 
+    # 🎨 Gráfico mais bonito
     plt.figure(figsize=(8, 6))
-    plt.bar(df["k_clusters"], df["qtd"], color="steelblue")
-    plt.xlabel("Número de Clusters (k)")
-    plt.ylabel("Frequência como Ponto Ótimo")
-    plt.title(f"Distribuição de k_clusters ({data_inicial} → {data_final})")
-    plt.grid(axis="y", linestyle="--", alpha=0.7)
-    plt.savefig(filename, bbox_inches="tight")
+    bars = plt.bar(df["k_clusters"], df["qtd"], color="#1f77b4", edgecolor="black")
+
+    # Adicionar valores no topo de cada barra
+    for bar in bars:
+        yval = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2, yval + 0.1, int(yval),
+                 ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+    plt.xlabel("Número de Clusters (k)", fontsize=12, fontweight="bold")
+    plt.ylabel("Frequência como Ponto Ótimo", fontsize=12, fontweight="bold")
+    plt.title(f"Distribuição de k_clusters ({data_inicial} → {data_final})", fontsize=14, fontweight="bold", color="#333333")
+
+    plt.grid(axis="y", linestyle="--", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(filename, bbox_inches="tight", dpi=120)
     plt.close()
 
     return filename, df.to_dict(orient="records")

@@ -256,3 +256,49 @@ def mapa_entregas(tenant_id: str = Depends(obter_tenant_id_do_token)):
         except Exception:
             pass
 
+
+# 🔹 Histórico de processamentos
+@router.get("/historico", summary="Histórico dos últimos processamentos de Data Input")
+def listar_historico(
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+    limit: int = Query(5, ge=1, le=50)
+):
+    conn = None
+    try:
+        tenant_id = normalizar_tenant(tenant_id)
+        logger.info(f"📜 Buscando histórico para tenant={tenant_id}, limit={limit}")
+
+        # ✅ removido db_name, pois já é fixo em Database()
+        conn = conectar_banco()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT job_id, arquivo, status, total_processados,
+                       validos, invalidos, mensagem, criado_em
+                FROM historico_data_input
+                WHERE tenant_id = %s
+                ORDER BY criado_em DESC
+                LIMIT %s
+                """,
+                (tenant_id, limit),
+            )
+            rows = cur.fetchall()
+
+        if not rows:
+            logger.info(f"📭 Nenhum histórico encontrado para tenant={tenant_id}")
+            return []   # ✅ lista vazia em vez de erro
+
+        cols = ["job_id", "arquivo", "status", "total_processados",
+                "validos", "invalidos", "mensagem", "criado_em"]
+        return [dict(zip(cols, r)) for r in rows]
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar histórico para tenant={tenant_id}: {e}", exc_info=True)
+        raise HTTPException(500, detail=f"Erro ao buscar histórico: {e}")
+    finally:
+        try:
+            if conn:
+                fechar_conexao(conn)
+        except Exception:
+            pass
+

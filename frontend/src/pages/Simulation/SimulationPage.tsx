@@ -38,6 +38,8 @@ import {
     Cell,
 } from "recharts";
 
+import { getColorForString } from "@/utils/colors";
+
 function todayISO() {
     const d = new Date();
     return d.toISOString().slice(0, 10);
@@ -67,6 +69,79 @@ function Accordion({ title, children }: { title: string; children: React.ReactNo
 }
 
 type TabKey = "simulacao" | "cenarioVencedor" | "centroVencedor" | "custos" | "frota";
+
+function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
+    const chartData = useMemo(() => {
+        return data
+            .slice()
+            .sort((a, b) => b.frota_sugerida - a.frota_sugerida)
+            .map((r) => ({
+                tipo: r.tipo_veiculo,
+                frota: r.frota_sugerida,
+                k_clusters: r.k_clusters,
+                cobertura_pct: r.cobertura_pct,
+                modo: r.modo,
+            }));
+    }, [data]);
+
+    return (
+        <>
+            <div className="mb-4 text-emerald-700 font-semibold">
+                🚚 Total de veículos sugeridos:{" "}
+                {data.reduce((acc, r) => acc + r.frota_sugerida, 0)}
+            </div>
+
+            <div id={chartId} className="w-full h-[420px] border rounded-lg p-2 mb-2 bg-white">
+                <ResponsiveContainer width="100%" height="100%">
+                    <RBarChart
+                        data={chartData}
+                        layout="vertical"
+                        margin={{ top: 10, right: 30, left: 80, bottom: 10 }}
+                    >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis type="number" allowDecimals={false} />
+                        <YAxis type="category" dataKey="tipo" width={120} />
+                        <Tooltip formatter={(v: number) => `${v} veículos`} />
+                        <Bar dataKey="frota" radius={[0, 6, 6, 0]} barSize={20}>
+                            {chartData.map((entry, index) => (
+                                <Cell
+                                    key={`cell-${index}`}
+                                    fill={getColorForString(entry.tipo)}
+                                />
+                            ))}
+                        </Bar>
+                    </RBarChart>
+                </ResponsiveContainer>
+            </div>
+
+            <div className="overflow-auto">
+                <table className="min-w-full text-sm">
+                    <thead>
+                        <tr className="text-left border-b">
+                            <th className="py-2 pr-4">k</th>
+                            <th className="py-2 pr-4">Tipo de veículo</th>
+                            <th className="py-2 pr-4">Frota sugerida</th>
+                            <th className="py-2 pr-4">Cobertura</th>
+                            <th className="py-2 pr-4">Modo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {chartData.map((r, i) => (
+                            <tr key={i} className="border-b">
+                                <td className="py-2 pr-4">{r.k_clusters}</td>
+                                <td className="py-2 pr-4">{r.tipo}</td>
+                                <td className="py-2 pr-4">{r.frota}</td>
+                                <td className="py-2 pr-4">{(r.cobertura_pct * 100).toFixed(1)}%</td>
+                                <td className="py-2 pr-4">{r.modo}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </>
+    );
+}
+
 
 export default function SimulationPage() {
     const [activeTab, setActiveTab] = useState<TabKey>("simulacao");
@@ -350,7 +425,8 @@ export default function SimulationPage() {
     // ABA: Frota p/ k Fixo
     // =========================
     const [frotaKsInput, setFrotaKsInput] = useState<string>("8,9,10");
-    const [frotaData, setFrotaData] = useState<FrotaKFixoResponse["dados"]>([]);
+    const [frotaLastmile, setFrotaLastmile] = useState<FrotaKFixoResponse["lastmile"]>([]);
+    const [frotaTransfer, setFrotaTransfer] = useState<FrotaKFixoResponse["transfer"]>([]);
     const [loadingFrota, setLoadingFrota] = useState(false);
 
     const periodoFrotaDefault = useMemo(() => {
@@ -396,40 +472,20 @@ export default function SimulationPage() {
             const result = await getFrotaKFixo({
                 data_inicial: di,
                 data_final: df,
-                k: [...kList], // ✅ garante que vai no formato ?k=8&k=9&k=10
+                k: [...kList], // ✅ garante ?k=8&k=9&k=10
             });
-            setFrotaData(result.dados || []);
+
+            // supondo que o backend retorna { lastmile: [...], transfer: [...] }
+            setFrotaLastmile(result.lastmile || []);
+            setFrotaTransfer(result.transfer || []);
+
             toast.success("Frota sugerida carregada!");
         } catch (err: any) {
-            toast.error(
-                err?.response?.data?.detail || "Erro ao carregar frota sugerida."
-            );
+            toast.error(err?.response?.data?.detail || "Erro ao carregar frota sugerida.");
         } finally {
             setLoadingFrota(false);
         }
     };
-
-
-    // 🔧 Prepara dados para gráfico detalhado por k e tipo de veículo
-    // Agrupa frota por k e por tipo de veículo
-    const frotaPorKChartData = useMemo(() => {
-        const grouped: Record<number, { tipo: string; frota: number }[]> = {};
-
-        for (const r of frotaData) {
-            if (!grouped[r.k_clusters]) grouped[r.k_clusters] = [];
-            grouped[r.k_clusters].push({
-                tipo: r.tipo_veiculo,
-                frota: r.frota_sugerida,
-            });
-        }
-
-        // Ordena decrescente em cada k
-        for (const k in grouped) {
-            grouped[k] = grouped[k].sort((a, b) => b.frota - a.frota);
-        }
-
-        return grouped;
-    }, [frotaData]);
 
 
     return (
@@ -1463,152 +1519,33 @@ export default function SimulationPage() {
                     </div>
 
                     {/* Sem dados */}
-                    {frotaData.length === 0 && !loadingFrota && (
-                        <div className="text-sm text-gray-500">
-                            Informe o período e os valores de <strong>k</strong>, depois clique em{" "}
-                            <strong>Gerar frota</strong>.
+                    {!loadingFrota &&
+                        !frotaLastmile.length &&
+                        !frotaTransfer.length && (
+                            <div className="text-sm text-gray-500">
+                                Informe o período e os valores de <strong>k</strong>, depois clique em{" "}
+                                <strong>Gerar frota</strong>.
+                            </div>
+                        )}
+
+                    {/* Bloco Last-mile */}
+                    {frotaLastmile.length > 0 && (
+                        <div className="mb-10">
+                            <h3 className="text-lg font-bold mb-3">🚚 Last-mile</h3>
+                            <FrotaChartTable data={frotaLastmile} chartId="frotaLastmileChart" />
                         </div>
                     )}
 
-                    {/* Com dados */}
-                    {frotaData.length > 0 && (
-                        <>
-                            {/* Texto com total */}
-                            <div className="mb-4 text-emerald-700 font-semibold">
-                                🚚 Total de veículos sugeridos:{" "}
-                                {frotaData.reduce((acc, r) => acc + r.frota_sugerida, 0)}
-                            </div>
-
-                            {/* Gráfico detalhado */}
-                            <div id="frotaChart" className="w-full h-[420px] border rounded-lg p-2 mb-2 bg-white">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <RBarChart
-                                        data={Object.values(frotaPorKChartData).flat()}
-                                        layout="vertical"
-                                        margin={{ top: 10, right: 30, left: 80, bottom: 10 }}
-                                    >
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                        <XAxis
-                                            type="number"
-                                            allowDecimals={false}
-                                            label={{
-                                                value: "Frota sugerida (veículos/dia)",
-                                                position: "insideBottom",
-                                                offset: -5,
-                                            }}
-                                        />
-                                        <YAxis
-                                            type="category"
-                                            dataKey="tipo"
-                                            tick={{ fontSize: 12 }}
-                                            width={120}
-                                            label={{
-                                                value: "Tipo de veículo",
-                                                angle: -90,
-                                                position: "insideLeft",
-                                            }}
-                                        />
-                                        <Tooltip
-                                            formatter={(v: number) => `${v} veículos`}
-                                            labelFormatter={(label) => `Veículo: ${label}`}
-                                        />
-                                        <Bar
-                                            dataKey="frota"
-                                            radius={[0, 6, 6, 0]}
-                                            barSize={20}
-                                        >
-                                            {Object.values(frotaPorKChartData)
-                                                .flat()
-                                                .map((_, index) => (
-                                                    <Cell
-                                                        key={`cell-${index}`}
-                                                        fill={[
-                                                            "#10b981",
-                                                            "#2563eb",
-                                                            "#f59e0b",
-                                                            "#ef4444",
-                                                            "#8b5cf6",
-                                                            "#14b8a6",
-                                                            "#d946ef",
-                                                        ][index % 7]}
-                                                    />
-                                                ))}
-                                        </Bar>
-                                    </RBarChart>
-                                </ResponsiveContainer>
-                            </div>
-
-                            {/* Botão de download */}
-                            <div className="text-right mb-4">
-                                <button
-                                    className="text-emerald-600 hover:underline text-sm"
-                                    onClick={() => {
-                                        const svg = document.querySelector("#frotaChart svg");
-                                        if (!svg) return;
-
-                                        const svgData = new XMLSerializer().serializeToString(svg);
-                                        const canvas = document.createElement("canvas");
-                                        const ctx = canvas.getContext("2d");
-                                        const img = new Image();
-                                        const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
-                                        const url = URL.createObjectURL(blob);
-
-                                        img.onload = () => {
-                                            canvas.width = img.width;
-                                            canvas.height = img.height;
-                                            ctx?.drawImage(img, 0, 0);
-                                            URL.revokeObjectURL(url);
-
-                                            const a = document.createElement("a");
-                                            a.download = "frota_k_fixo.png";
-                                            a.href = canvas.toDataURL("image/png");
-                                            a.click();
-                                        };
-                                        img.src = url;
-                                    }}
-                                >
-                                    📥 Baixar gráfico (PNG)
-                                </button>
-                            </div>
-
-                            {/* Tabela detalhada */}
-                            <div className="overflow-auto">
-                                <table className="min-w-full text-sm">
-                                    <thead>
-                                        <tr className="text-left border-b">
-                                            <th className="py-2 pr-4">k</th>
-                                            <th className="py-2 pr-4">Tipo de veículo</th>
-                                            <th className="py-2 pr-4">Frota sugerida</th>
-                                            <th className="py-2 pr-4">Cobertura</th>
-                                            <th className="py-2 pr-4">Modo</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {frotaData
-                                            .slice()
-                                            .sort(
-                                                (a, b) =>
-                                                    a.k_clusters - b.k_clusters ||
-                                                    a.tipo_veiculo.localeCompare(b.tipo_veiculo)
-                                            )
-                                            .map((r, i) => (
-                                                <tr key={i} className="border-b">
-                                                    <td className="py-2 pr-4">{r.k_clusters}</td>
-                                                    <td className="py-2 pr-4">{r.tipo_veiculo}</td>
-                                                    <td className="py-2 pr-4">{r.frota_sugerida}</td>
-                                                    <td className="py-2 pr-4">
-                                                        {(r.cobertura_pct * 100).toFixed(1)}%
-                                                    </td>
-                                                    <td className="py-2 pr-4">{r.modo}</td>
-                                                </tr>
-                                            ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </>
+                    {/* Bloco Transferências */}
+                    {frotaTransfer.length > 0 && (
+                        <div>
+                            <h3 className="text-lg font-bold mb-3">🚛 Transferências</h3>
+                            <FrotaChartTable data={frotaTransfer} chartId="frotaTransferChart" />
+                        </div>
                     )}
                 </div>
             )}
+
 
 
         </div>

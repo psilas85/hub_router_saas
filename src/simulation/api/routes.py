@@ -459,7 +459,8 @@ def frota_k_fixo(
 ):
     """
     Avalia a frota média necessária no período para um ou mais k fixos.
-    Retorna gráficos por tipo de veículo, CSV consolidado e detalhado.
+    Retorna gráficos por tipo de veículo, CSV consolidado e detalhado,
+    já separado em lastmile e transfer.
     """
     _, csv, df = gerar_grafico_frota_k_fixo(
         tenant_id=tenant_id,
@@ -469,7 +470,17 @@ def frota_k_fixo(
     )
 
     if df is None or df.empty:
-        raise HTTPException(status_code=404, detail="Nenhum dado de frota encontrado no período informado.")
+        raise HTTPException(
+            status_code=404,
+            detail="Nenhum dado de frota encontrado no período informado."
+        )
+
+    # 🔹 Converte DataFrame em lista de dicts
+    dados = df.to_dict(orient="records")
+
+    # 🔹 Separa por origem
+    lastmile = [d for d in dados if d.get("origem") == "lastmile"]
+    transfer = [d for d in dados if d.get("origem") == "transfer"]
 
     return {
         "status": "ok",
@@ -477,8 +488,10 @@ def frota_k_fixo(
         "data_inicial": str(data_inicial),
         "data_final": str(data_final),
         "csv": csv.replace("./", "/") if csv else None,
-        "dados": df.to_dict(orient="records"),
+        "lastmile": lastmile,
+        "transfer": transfer,
     }
+
 
 # ================================
 # CRUD Hubs

@@ -1,27 +1,36 @@
 //hub_router_1.0.1/frontend/src/pages/Data_input/DataInputPage.tsx
-
 import { useState, useEffect } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
-import { Loader2, FileSpreadsheet, CheckCircle2, XCircle } from "lucide-react";
+import {
+    Loader2,
+    FileSpreadsheet,
+    CheckCircle2,
+    XCircle,
+} from "lucide-react";
+import { useProcessing } from "@/context/ProcessingContext"; // ✅ atualizado
 
 type Resultado = {
     status: string;
-    tenant_id?: string;   // 👈 agora opcional
+    tenant_id?: string;
     mensagem?: string;
     job_id?: string;
     total_processados?: number;
     validos?: number;
     invalidos?: number;
-    progress?: number;    // 👈 já aproveitei pra incluir o progress
-    step?: string;        // 👈 e o step do backend
-    result?: {
-        total_processados: number;
-        validos: number;
-        invalidos: number;
-    };
+    progress?: number;
+    step?: string;
 };
 
+type Historico = {
+    job_id: string;
+    arquivo: string;
+    criado_em: string;
+    status: string;
+    total_processados: number;
+    validos: number;
+    invalidos: number;
+};
 
 export default function DataInputPage() {
     const [file, setFile] = useState<File | null>(null);
@@ -30,6 +39,8 @@ export default function DataInputPage() {
     const [loading, setLoading] = useState(false);
     const [jobId, setJobId] = useState<string | null>(null);
     const [resultado, setResultado] = useState<Resultado | null>(null);
+    const [historico, setHistorico] = useState<Historico[]>([]);
+    const { startProcessing, stopProcessing } = useProcessing(); // ✅ múltiplos jobs
 
     const limparEstado = () => {
         setFile(null);
@@ -37,6 +48,15 @@ export default function DataInputPage() {
         setLimitePeso("");
         setJobId(null);
         setResultado(null);
+    };
+
+    const carregarHistorico = async () => {
+        try {
+            const { data } = await api.get<Historico[]>(`/data_input/historico?limit=5`);
+            setHistorico(data);
+        } catch (err) {
+            console.error(err);
+        }
     };
 
     const processar = async () => {
@@ -48,6 +68,7 @@ export default function DataInputPage() {
         try {
             setLoading(true);
             setResultado(null);
+            startProcessing(); // ✅ inicia contador global
 
             const formData = new FormData();
             formData.append("file", file);
@@ -67,6 +88,7 @@ export default function DataInputPage() {
                 toast.success("Arquivo enviado! Processamento iniciado.");
             } else {
                 toast.error("Não foi possível iniciar o processamento.");
+                stopProcessing();
             }
 
             setFile(null);
@@ -75,6 +97,7 @@ export default function DataInputPage() {
             const detail =
                 err?.response?.data?.detail || err.message || "Erro desconhecido";
             toast.error(typeof detail === "string" ? detail : JSON.stringify(detail));
+            stopProcessing(); // ✅ erro → decrementa
         } finally {
             setLoading(false);
         }
@@ -94,22 +117,24 @@ export default function DataInputPage() {
                         tenant_id: data.tenant_id,
                         job_id: data.job_id,
                         mensagem: data.mensagem,
-                        total_processados:
-                            data.total_processados ?? data.result?.total_processados ?? 0,
-                        validos: data.validos ?? data.result?.validos ?? 0,
-                        invalidos: data.invalidos ?? data.result?.invalidos ?? 0,
+                        total_processados: data.total_processados ?? 0,
+                        validos: data.validos ?? 0,
+                        invalidos: data.invalidos ?? 0,
                     };
 
                     setResultado(normalizado);
+                    stopProcessing(); // ✅ terminou → decrementa
                     clearInterval(interval);
 
                     if (data.status === "done") {
-                        toast.success("Processamento concluído!");
+                        toast.success(
+                            `Processamento concluído! (${normalizado.validos} válidos / ${normalizado.invalidos} inválidos)`
+                        );
+                        carregarHistorico();
                     } else {
                         toast.error("Erro no processamento.");
                     }
                 } else {
-                    // Atualiza progresso enquanto está em execução
                     setResultado((prev) => ({
                         ...prev,
                         status: data.status,
@@ -119,14 +144,19 @@ export default function DataInputPage() {
                 }
             } catch (err) {
                 console.error(err);
+                stopProcessing(); // ✅ fallback em erro
             }
         }, 3000);
 
         return () => clearInterval(interval);
     }, [jobId]);
 
+    useEffect(() => {
+        carregarHistorico();
+    }, []);
+
     return (
-        <div className="max-w-3xl mx-auto p-6">
+        <div className="max-w-4xl mx-auto p-6">
             <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
                 <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
                 Data Input
@@ -266,6 +296,51 @@ export default function DataInputPage() {
                         </div>
                     </div>
                 )}
+
+            {/* Histórico */}
+            {historico.length > 0 && (
+                <div className="mt-6 bg-white rounded-lg shadow p-5">
+                    <h3 className="font-semibold mb-3">📜 Últimos Processamentos</h3>
+                    <table className="w-full text-sm border">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="p-2 text-left">Data</th>
+                                <th className="p-2 text-left">Arquivo</th>
+                                <th className="p-2 text-left">Status</th>
+                                <th className="p-2 text-center">Total</th>
+                                <th className="p-2 text-center">Válidos</th>
+                                <th className="p-2 text-center">Inválidos</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {historico.map((h) => (
+                                <tr key={h.job_id} className="border-t">
+                                    <td className="p-2">
+                                        {new Date(h.criado_em).toLocaleString()}
+                                    </td>
+                                    <td className="p-2">{h.arquivo}</td>
+                                    <td className="p-2">
+                                        {h.status === "done" ? (
+                                            <span className="text-emerald-700 font-medium">
+                                                ✅ Concluído
+                                            </span>
+                                        ) : h.status === "processing" ? (
+                                            <span className="text-amber-600 font-medium">
+                                                ⏳ Processando
+                                            </span>
+                                        ) : (
+                                            <span className="text-rose-700 font-medium">❌ Erro</span>
+                                        )}
+                                    </td>
+                                    <td className="p-2 text-center">{h.total_processados}</td>
+                                    <td className="p-2 text-center">{h.validos}</td>
+                                    <td className="p-2 text-center">{h.invalidos}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     );
 }
