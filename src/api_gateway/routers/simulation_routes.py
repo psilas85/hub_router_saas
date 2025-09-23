@@ -11,7 +11,6 @@ router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 SIMULATION_URL = settings.SIMULATION_URL
 
-
 @router.get("/health", summary="Healthcheck Simulation")
 async def healthcheck(request: Request):
     headers = {"authorization": request.headers.get("authorization")}
@@ -224,44 +223,43 @@ async def frequencia_cidades(
 
     return content
 
+
 @router.get("/k_fixo", summary="Custos consolidados para k fixo")
 async def k_fixo(
     request: Request,
     data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
     data_final: date = Query(..., description="Data final YYYY-MM-DD"),
-    usar_media: bool = Query(False, description="Usar média em vez de soma"),
+    min_cobertura_parcial: float = Query(
+        0.70, description="Cobertura mínima exigida (ex: 0.70 = 70%)"
+    ),
     usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
 ):
+    """
+    Encaminha requisição do API Gateway → Simulation Service para obter cenários k fixo.
+    """
     headers = {"authorization": request.headers.get("authorization")}
+
     result = await forward_request(
         "GET",
         f"{SIMULATION_URL}/simulacao/k_fixo",
         headers=headers,
-        params={"data_inicial": data_inicial, "data_final": data_final, "usar_media": usar_media}
+        params={
+            "data_inicial": data_inicial,
+            "data_final": data_final,
+            "min_cobertura_parcial": min_cobertura_parcial,
+        },
     )
-    if result["status_code"] >= 400:
-        raise HTTPException(status_code=result["status_code"], detail=result["content"])
-    return result["content"]
 
+    status_code = result.get("status_code", 500)
+    content = result.get("content")
 
-@router.get("/frota_k_fixo", summary="Frota média sugerida por k fixo")
-async def frota_k_fixo(
-    request: Request,
-    data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
-    data_final: date = Query(..., description="Data final YYYY-MM-DD"),
-    k: list[int] = Query(..., description="Um ou mais valores de k (ex: 8,9,10)"),
-    usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
-):
-    headers = {"authorization": request.headers.get("authorization")}
-    result = await forward_request(
-        "GET",
-        f"{SIMULATION_URL}/simulacao/frota_k_fixo",
-        headers=headers,
-        params={"data_inicial": data_inicial, "data_final": data_final, "k": k}
-    )
-    if result["status_code"] >= 400:
-        raise HTTPException(status_code=result["status_code"], detail=result["content"])
-    return result["content"]
+    if status_code >= 400:
+        detail = (
+            content if isinstance(content, str) else content or "Erro ao buscar k_fixo."
+        )
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    return content
 
 # ============================
 # CRUD Hubs
@@ -341,3 +339,25 @@ async def listar_costs(request: Request, usuario: UsuarioToken = Depends(obter_t
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
     return result["content"]
+
+@router.get("/frota_k_fixo", summary="Frota média sugerida para k fixo")
+async def frota_k_fixo(
+    request: Request,
+    data_inicial: date = Query(...),
+    data_final: date = Query(...),
+    k: int = Query(...),
+    usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
+):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request(
+        "GET",
+        f"{SIMULATION_URL}/simulacao/frota_k_fixo",
+        headers=headers,
+        params={"data_inicial": data_inicial, "data_final": data_final, "k": k},
+    )
+
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+
+    return result["content"]
+

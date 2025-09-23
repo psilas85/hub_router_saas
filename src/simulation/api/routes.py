@@ -416,78 +416,72 @@ def frequencia_cidades(
     # Retorna o próprio dicionário já no formato esperado
     return result
 
-
-
-@router.get("/k_fixo", summary="Avaliar cenário k fixo no período")
+@router.get("/k_fixo", summary="Comparativo de custos consolidados por k fixo")
 def k_fixo(
     data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
     data_final: date = Query(..., description="Data final YYYY-MM-DD"),
-    usar_media: bool = Query(False, description="Usar média ao invés de soma (modo FULL)"),
+    min_cobertura_parcial: float = Query(
+        0.70, description="Cobertura mínima exigida (ex: 0.70 = 70%)"
+    ),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
-    """
-    Avalia cenários de k_clusters fixos no período informado.
-    Retorna gráfico, CSV consolidado e métricas (custo total/médio e regret).
-    """
-    png, csv, df = gerar_grafico_k_fixo(
+    png_path, csv_path, df_export = gerar_grafico_k_fixo(
         tenant_id=tenant_id,
         data_inicial=str(data_inicial),
         data_final=str(data_final),
-        usar_media_em_vez_de_soma=usar_media,
+        min_cobertura_parcial=min_cobertura_parcial
     )
 
-    if df is None or df.empty:
-        raise HTTPException(status_code=404, detail="Nenhum cenário encontrado no período informado.")
+    if df_export is None or df_export.empty:
+        raise HTTPException(
+            status_code=404,
+            detail="Nenhum cenário encontrado para este período."
+        )
 
     return {
         "status": "ok",
         "tenant_id": tenant_id,
         "data_inicial": str(data_inicial),
         "data_final": str(data_final),
-        "grafico": png.replace("./", "/") if png else None,
-        "csv": csv.replace("./", "/") if csv else None,
-        "dados": df.to_dict(orient="records"),
+        "grafico": png_path.replace("./", "/") if png_path else None,
+        "csv": csv_path.replace("./", "/") if csv_path else None,
+        "cenarios": df_export.to_dict(orient="records"),
     }
 
 
-@router.get("/frota_k_fixo", summary="Frota média sugerida por k fixo")
+
+@router.get("/frota_k_fixo", summary="Frota média sugerida para k fixo")
 def frota_k_fixo(
     data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
     data_final: date = Query(..., description="Data final YYYY-MM-DD"),
-    k: list[int] = Query(..., description="Um ou mais valores de k (ex: k=8&k=9&k=10)"),
+    k: int = Query(..., description="Valor de k_clusters fixo"),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
-    """
-    Avalia a frota média necessária no período para um ou mais k fixos.
-    Retorna gráficos por tipo de veículo, CSV consolidado e detalhado,
-    já separado em lastmile e transfer.
-    """
-    _, csv, df = gerar_grafico_frota_k_fixo(
+    csv_lastmile, csv_transfer, lastmile, transfer = gerar_grafico_frota_k_fixo(
         tenant_id=tenant_id,
         data_inicial=str(data_inicial),
         data_final=str(data_final),
-        k_list=k,
+        k_fixo=k
     )
 
-    if df is None or df.empty:
+    # 🚫 nunca retorna transferências quando k=1
+    if k == 1:
+        transfer = []
+        csv_transfer = None
+
+    if not lastmile and not transfer:
         raise HTTPException(
             status_code=404,
-            detail="Nenhum dado de frota encontrado no período informado."
+            detail="Nenhuma frota encontrada para este período e k informado."
         )
-
-    # 🔹 Converte DataFrame em lista de dicts
-    dados = df.to_dict(orient="records")
-
-    # 🔹 Separa por origem
-    lastmile = [d for d in dados if d.get("origem") == "lastmile"]
-    transfer = [d for d in dados if d.get("origem") == "transfer"]
 
     return {
         "status": "ok",
         "tenant_id": tenant_id,
         "data_inicial": str(data_inicial),
         "data_final": str(data_final),
-        "csv": csv.replace("./", "/") if csv else None,
+        "csv_lastmile": csv_lastmile.replace("./", "/") if csv_lastmile else None,
+        "csv_transfer": csv_transfer.replace("./", "/") if csv_transfer else None,
         "lastmile": lastmile,
         "transfer": transfer,
     }

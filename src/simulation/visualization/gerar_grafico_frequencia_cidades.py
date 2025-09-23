@@ -1,11 +1,10 @@
 # simulation/visualization/gerar_grafico_frequencia_cidades.py
 
-# simulation/visualization/gerar_grafico_frequencia_cidades.py
-
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
 from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
+from simulation.utils.artefatos_cleaner_frequencia import limpar_artefatos_frequencia
 
 def gerar_grafico_frequencia_cidades(
     tenant_id: str,
@@ -52,6 +51,9 @@ def gerar_grafico_frequencia_cidades(
         }
 
     os.makedirs(f"{output_dir}/{tenant_id}", exist_ok=True)
+
+    # 🔄 Limpar artefatos antigos
+    limpar_artefatos_frequencia(output_dir, tenant_id, data_inicial, data_final)
 
     # Arquivos de saída
     filename_png = os.path.join(

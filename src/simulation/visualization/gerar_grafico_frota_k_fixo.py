@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.ticker import MaxNLocator
 from matplotlib.patches import Patch
+from simulation.utils.artefatos_cleaner_frota import limpar_artefatos_frota
+
 
 matplotlib.use("Agg")
 
@@ -68,22 +70,18 @@ def _gerar_grafico(df_frota, png_path, data_inicial, data_final, k_fixo, cobertu
     plt.close()
     print(f"✅ PNG gráfico: {png_path}")
 
-
 def gerar_grafico_frota_k_fixo(
     tenant_id: str,
     data_inicial: str,
     data_final: str,
-    k_list: list,
+    k_fixo: int,
     output_dir: str = "exports/simulation/graphs",
     min_cobertura_parcial: float = 0.70
 ):
-    """
-    Avalia frota média necessária no período para um ou mais k_fixo informados.
-    Gera gráficos separados para rotas de last-mile e transferências.
-    Exporta CSVs consolidados e detalhados para cada caso.
-    """
-
     os.makedirs(os.path.join(output_dir, tenant_id), exist_ok=True)
+
+    # 🔄 Limpeza deve ocorrer logo no início
+    limpar_artefatos_frota(output_dir, tenant_id, data_inicial, data_final)
 
     conn = conectar_simulation_db()
     try:
@@ -96,51 +94,58 @@ def gerar_grafico_frota_k_fixo(
         total_dias = int(tot["total_dias"].iat[0] or 0)
         if total_dias == 0:
             print("⚠️ Não há dados no período informado.")
-            return None, None, pd.DataFrame()
+            return None, None, [], []
 
         resultados_last, detalhados_last = [], []
         resultados_transf, detalhados_transf = [], []
 
-        for k_fixo in k_list:
-            # --- Last-mile ---
-            q_last_mile = """
-                SELECT envio_data, tipo_veiculo, COUNT(*) AS qtd_veiculos
-                FROM resumo_rotas_last_mile
-                WHERE tenant_id = %s
-                  AND envio_data BETWEEN %s AND %s
-                  AND k_clusters = %s
-                GROUP BY envio_data, tipo_veiculo
-            """
-            df_last = pd.read_sql(q_last_mile, conn, params=(tenant_id, data_inicial, data_final, k_fixo))
+        # --- Last-mile ---
+        q_last_mile = """
+            SELECT envio_data, tipo_veiculo, COUNT(*) AS qtd_veiculos
+            FROM resumo_rotas_last_mile
+            WHERE tenant_id = %s
+              AND envio_data BETWEEN %s AND %s
+              AND k_clusters = %s
+            GROUP BY envio_data, tipo_veiculo
+        """
+        df_last = pd.read_sql(q_last_mile, conn, params=(tenant_id, data_inicial, data_final, k_fixo))
 
-            if not df_last.empty:
-                dias_presentes = df_last["envio_data"].nunique()
-                cobertura_pct = dias_presentes / total_dias if total_dias else 0
-                modo = "FULL" if cobertura_pct >= 0.999999 else "PARCIAL"
+        csv_lastmile = None
+        csv_transfer = None
 
-                df_frota = (
-                    df_last.groupby("tipo_veiculo")["qtd_veiculos"]
-                    .mean()
-                    .apply(lambda x: int(-(-x // 1)))
-                    .reset_index()
-                )
-                df_frota = df_frota.rename(columns={"qtd_veiculos": "frota_sugerida"})
-                df_frota["k_clusters"] = k_fixo
-                df_frota["dias_presentes"] = dias_presentes
-                df_frota["total_dias"] = total_dias
-                df_frota["cobertura_pct"] = round(cobertura_pct, 4)
-                df_frota["modo"] = modo
-                df_frota["origem"] = "lastmile"   # ✅ identifica origem
+        if not df_last.empty:
+            dias_presentes = df_last["envio_data"].nunique()
+            cobertura_pct = dias_presentes / total_dias if total_dias else 0
+            modo = "FULL" if cobertura_pct >= 0.999999 else "PARCIAL"
 
-                resultados_last.append(df_frota)
-                df_last["k_clusters"] = k_fixo
-                df_last["origem"] = "lastmile"    # ✅ identifica origem
-                detalhados_last.append(df_last)
+            df_frota = (
+                df_last.groupby("tipo_veiculo")["qtd_veiculos"]
+                .mean()
+                .apply(lambda x: int(-(-x // 1)))
+                .reset_index()
+            )
+            df_frota = df_frota.rename(columns={"qtd_veiculos": "frota_sugerida"})
+            df_frota["k_clusters"] = k_fixo
+            df_frota["dias_presentes"] = dias_presentes
+            df_frota["total_dias"] = total_dias
+            df_frota["cobertura_pct"] = round(cobertura_pct, 4)
+            df_frota["modo"] = modo
+            df_frota["origem"] = "lastmile"
 
-                png_path = os.path.join(output_dir, tenant_id, f"frota_lastmile_{data_inicial}_{data_final}_k{k_fixo}.png")
-                _gerar_grafico(df_frota, png_path, data_inicial, data_final, k_fixo, cobertura_pct, "Last-mile")
+            resultados_last.append(df_frota)
+            df_last["k_clusters"] = k_fixo
+            df_last["origem"] = "lastmile"
+            detalhados_last.append(df_last)
 
-            # --- Transferências ---
+            png_path = os.path.join(output_dir, tenant_id, f"frota_lastmile_{data_inicial}_{data_final}_k{k_fixo}.png")
+            _gerar_grafico(df_frota, png_path, data_inicial, data_final, k_fixo, cobertura_pct, "Last-mile")
+
+            base_name = f"frota_lastmile_{data_inicial}_{data_final}_k{k_fixo}"
+            csv_lastmile = os.path.join(output_dir, tenant_id, base_name + ".csv")
+            df_frota.to_csv(csv_lastmile, index=False)
+
+        # --- Transferências ---
+        if k_fixo > 1:
             q_transfer = """
                 SELECT envio_data, tipo_veiculo, COUNT(DISTINCT rota_id) AS qtd_veiculos
                 FROM detalhes_transferencias
@@ -168,36 +173,25 @@ def gerar_grafico_frota_k_fixo(
                 df_frota["total_dias"] = total_dias
                 df_frota["cobertura_pct"] = round(cobertura_pct, 4)
                 df_frota["modo"] = modo
-                df_frota["origem"] = "transfer"   # ✅ identifica origem
+                df_frota["origem"] = "transfer"
 
                 resultados_transf.append(df_frota)
                 df_transf["k_clusters"] = k_fixo
-                df_transf["origem"] = "transfer"  # ✅ identifica origem
+                df_transf["origem"] = "transfer"
                 detalhados_transf.append(df_transf)
 
                 png_path = os.path.join(output_dir, tenant_id, f"frota_transfer_{data_inicial}_{data_final}_k{k_fixo}.png")
                 _gerar_grafico(df_frota, png_path, data_inicial, data_final, k_fixo, cobertura_pct, "Transferências")
 
-        # Exportar CSVs
-        if resultados_last:
-            df_cons_last = pd.concat(resultados_last, ignore_index=True)
-            df_det_last = pd.concat(detalhados_last, ignore_index=True)
-            base_name = f"frota_lastmile_{data_inicial}_{data_final}_{'_'.join(map(str,k_list))}"
-            df_cons_last.to_csv(os.path.join(output_dir, tenant_id, base_name + ".csv"), index=False)
-            df_det_last.to_csv(os.path.join(output_dir, tenant_id, base_name + "_detalhado.csv"), index=False)
-            print(f"✅ CSV last-mile exportado.")
+                base_name = f"frota_transfer_{data_inicial}_{data_final}_k{k_fixo}"
+                csv_transfer = os.path.join(output_dir, tenant_id, base_name + ".csv")
+                df_frota.to_csv(csv_transfer, index=False)
 
-        if resultados_transf:
-            df_cons_transf = pd.concat(resultados_transf, ignore_index=True)
-            df_det_transf = pd.concat(detalhados_transf, ignore_index=True)
-            base_name = f"frota_transfer_{data_inicial}_{data_final}_{'_'.join(map(str,k_list))}"
-            df_cons_transf.to_csv(os.path.join(output_dir, tenant_id, base_name + ".csv"), index=False)
-            df_det_transf.to_csv(os.path.join(output_dir, tenant_id, base_name + "_detalhado.csv"), index=False)
-            print(f"✅ CSV transfer exportado.")
+        # 🔹 Sempre retorna 4 valores fixos
+        lastmile = pd.concat(resultados_last, ignore_index=True).to_dict(orient="records") if resultados_last else []
+        transfer = pd.concat(resultados_transf, ignore_index=True).to_dict(orient="records") if resultados_transf else []
 
-        # 🔹 Retorna DataFrame único com ambas origens
-        df_final = pd.concat(resultados_last + resultados_transf, ignore_index=True) if (resultados_last or resultados_transf) else pd.DataFrame()
-        return None, None, df_final
+        return csv_lastmile, csv_transfer, lastmile, transfer
 
     finally:
         try:
@@ -209,11 +203,11 @@ def gerar_grafico_frota_k_fixo(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Gera gráficos de frota média por tipo de veículo (last-mile e transferências) para cada k_fixo informado.")
+    parser = argparse.ArgumentParser(description="Gera gráficos de frota média por tipo de veículo (last-mile e transferências) para 1 k_fixo informado.")
     parser.add_argument("--tenant_id", required=True, type=str)
     parser.add_argument("--data_inicial", required=True, type=str)
     parser.add_argument("--data_final", required=True, type=str)
-    parser.add_argument("--k_fixo", required=True, nargs="+", type=int, help="Um ou mais valores de k (ex: 8 9 10)")
+    parser.add_argument("--k_fixo", required=True, type=int, help="Valor de k fixo (ex: 8)")
     parser.add_argument("--output_dir", default="exports/simulation/graphs")
     parser.add_argument("--min_cobertura_parcial", default=0.70, type=float)
     args = parser.parse_args()
@@ -222,7 +216,7 @@ if __name__ == "__main__":
         tenant_id=args.tenant_id,
         data_inicial=args.data_inicial,
         data_final=args.data_final,
-        k_list=args.k_fixo,
+        k_fixo=args.k_fixo,
         output_dir=args.output_dir,
         min_cobertura_parcial=args.min_cobertura_parcial,
     )

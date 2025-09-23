@@ -2,12 +2,11 @@
 
 import api from "@/services/api";
 
-
 // ===== Execução de simulação =====
 export type RunSimulationParams = {
-    data_inicial: string;        // yyyy-mm-dd
-    data_final?: string;         // opcional no front; se não vier, usamos a mesma do inicial
-    hub_id: number;              // 👈 Hub central (obrigatório no frontend)
+    data_inicial: string;
+    data_final?: string;
+    hub_id: number;
 
     // Clusterização
     k_min?: number;
@@ -46,7 +45,6 @@ export type RunSimulationParams = {
     permitir_rotas_excedentes?: boolean;
 };
 
-
 export async function runSimulation(params: RunSimulationParams) {
     const { data_inicial, data_final, ...rest } = params;
     const df = data_final && data_final.trim() !== "" ? data_final : data_inicial;
@@ -56,7 +54,6 @@ export async function runSimulation(params: RunSimulationParams) {
             data_inicial,
             data_final: df,
             ...rest,
-            // 🔒 não inclui modo_forcar → Gateway já injeta sempre como True
         },
     });
 
@@ -69,7 +66,7 @@ export async function runSimulation(params: RunSimulationParams) {
     };
 }
 
-// ===== Visualização de simulação (artefatos por data) =====
+// ===== Visualização de simulação =====
 export type VisualizeSimulationResponse = {
     data: string;
     relatorio_pdf?: string;
@@ -100,7 +97,7 @@ export type DistribuicaoKResponse = {
     status: string;
     data_inicial: string;
     data_final: string;
-    grafico: string; // caminho relativo do backend
+    grafico: string;
     dados: { k_clusters: number; qtd: number }[];
 };
 
@@ -108,31 +105,25 @@ export async function getDistribuicaoK(params: {
     data_inicial: string;
     data_final: string;
 }) {
-    const resp = await api.get("/simulation/distribuicao_k", {
-        params,
-    });
-
+    const resp = await api.get("/simulation/distribuicao_k", { params });
     return resp.data as DistribuicaoKResponse;
 }
 
-// ===== Frequência de cidades em pontos ótimos =====
+// ===== Frequência de cidades =====
 export type FrequenciaCidadesResponse = {
     status: string;
     data_inicial: string;
     data_final: string;
-    grafico: string; // PNG (Top 20)
-    csv: string;     // CSV completo
-    dados: { cluster_cidade: string; qtd: number }[]; // Top 20
+    grafico: string;
+    csv: string;
+    dados: { cluster_cidade: string; qtd: number }[];
 };
 
 export async function getFrequenciaCidades(params: {
     data_inicial: string;
     data_final: string;
 }) {
-    const resp = await api.get("/simulation/frequencia_cidades", {
-        params,
-    });
-
+    const resp = await api.get("/simulation/frequencia_cidades", { params });
     return resp.data as FrequenciaCidadesResponse;
 }
 
@@ -142,19 +133,15 @@ export type KFixoResponse = {
     tenant_id: string;
     data_inicial: string;
     data_final: string;
-    grafico: string;
-    csv: string;
-    dados: {
+    grafico: string | null;
+    csv: string | null;
+    cenarios: {
         k_clusters: number;
-        soma_custo_total: number;
-        media_custo_total: number;
-        soma_custo_transfer: number;
-        soma_custo_last_mile: number;
-        qtd_dias: number;
         dias_presentes: number;
         total_dias: number;
         cobertura_pct: number;
         custo_alvo: number;
+        regret_absoluto: number;
         regret_relativo: number;
     }[];
 };
@@ -162,7 +149,7 @@ export type KFixoResponse = {
 export async function getKFixo(params: {
     data_inicial: string;
     data_final: string;
-    usar_media?: boolean;
+    min_cobertura_parcial?: number;
 }) {
     const resp = await api.get("/simulation/k_fixo", { params });
     return resp.data as KFixoResponse;
@@ -174,7 +161,8 @@ export type FrotaKFixoResponse = {
     tenant_id: string;
     data_inicial: string;
     data_final: string;
-    csv: string | null;
+    csv_lastmile?: string | null;
+    csv_transfer?: string | null;
     lastmile: {
         k_clusters: number;
         tipo_veiculo: string;
@@ -198,37 +186,21 @@ export type FrotaKFixoResponse = {
 export async function getFrotaKFixo(params: {
     data_inicial: string;
     data_final: string;
-    k: number[];
+    k: number;   // ✅ agora apenas um k por vez
 }) {
-    const resp = await api.get("/simulation/frota_k_fixo", {
-        params,
-        paramsSerializer: (p) => {
-            const searchParams = new URLSearchParams();
-            Object.entries(p).forEach(([key, value]) => {
-                if (Array.isArray(value)) {
-                    // força ?k=8&k=9&k=10
-                    value.forEach((v) => searchParams.append(key, String(v)));
-                } else if (value !== undefined && value !== null) {
-                    searchParams.append(key, String(value));
-                }
-            });
-            return searchParams.toString();
-        },
-    });
+    const resp = await api.get("/simulation/frota_k_fixo", { params });
     return resp.data as FrotaKFixoResponse;
 }
 
-
 // ===== CRUD de Hubs =====
 export type Hub = {
-    hub_id: number;   // sempre vem do banco
+    hub_id: number;
     nome: string;
     cidade: string;
     latitude: number;
     longitude: number;
 };
 
-// Tipo separado só para criação (sem hub_id)
 export type HubCreate = Omit<Hub, "hub_id">;
 
 export async function listHubs() {
@@ -251,15 +223,18 @@ export async function deleteHub(id: number) {
     return resp.data;
 }
 
-
 // ===== CRUD de Custos de Centros =====
 export type ClusterCost = {
-    id?: number; // ← chave primária, útil em listagens
+    id?: number;
     limite_qtd_entregas: number;
     custo_fixo_diario: number;
     custo_variavel_por_entrega: number;
 };
 
+export async function listClusterCosts() {
+    const resp = await api.get("/simulation/cluster_costs/list");
+    return resp.data as ClusterCost[];
+}
 
 export async function getClusterCosts() {
     const resp = await api.get("/simulation/cluster_costs");
@@ -274,10 +249,4 @@ export async function saveClusterCosts(costs: ClusterCost) {
 export async function deleteClusterCost(id: number) {
     const resp = await api.delete(`/simulation/cluster_costs/${id}`);
     return resp.data;
-}
-
-
-export async function listClusterCosts() {
-    const resp = await api.get("/simulation/cluster_costs/list");
-    return resp.data as ClusterCost[]; // sempre array
 }

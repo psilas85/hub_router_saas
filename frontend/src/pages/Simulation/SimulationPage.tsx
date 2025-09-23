@@ -151,6 +151,8 @@ export default function SimulationPage() {
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
     const [artefatos, setArtefatos] = useState<VisualizeSimulationResponse | null>(null);
+    const [minCobertura, setMinCobertura] = useState(70);
+
 
     // 🔧 Estado centralizado
     const [params, setParams] = useState({
@@ -371,13 +373,11 @@ export default function SimulationPage() {
     // =========================
     // ABA: k Fixo (custos consolidados)
     // =========================
-    const [kFixoUsarMedia, setKFixoUsarMedia] = useState(false);
-    const [kFixoData, setKFixoData] = useState<KFixoResponse["dados"]>([]);
+    const [kFixoData, setKFixoData] = useState<KFixoResponse["cenarios"]>([]);
     const [kFixoGraficoUrl, setKFixoGraficoUrl] = useState<string | null>(null);
     const [loadingKFixo, setLoadingKFixo] = useState(false);
 
     const periodoKFixoDefault = useMemo(() => {
-        // mesmo padrão (~90 dias) se o usuário não preencher
         const end =
             dataFinal && dataFinal >= (dataInicial || "")
                 ? dataFinal
@@ -406,15 +406,14 @@ export default function SimulationPage() {
             const result = await getKFixo({
                 data_inicial: di,
                 data_final: df,
-                usar_media: kFixoUsarMedia,
+                min_cobertura_parcial: minCobertura / 100,
             });
-            setKFixoData(result.dados || []);
+
+            setKFixoData(result.cenarios || []); // ✅ agora usa cenarios
             setKFixoGraficoUrl(result.grafico ? resolveUrl(result.grafico) : null);
             toast.success("Custos por k carregados!");
         } catch (err: any) {
-            toast.error(
-                err?.response?.data?.detail || "Erro ao carregar custos por k."
-            );
+            toast.error(err?.response?.data?.detail || "Erro ao carregar custos por k.");
         } finally {
             setLoadingKFixo(false);
         }
@@ -424,9 +423,11 @@ export default function SimulationPage() {
     // =========================
     // ABA: Frota p/ k Fixo
     // =========================
-    const [frotaKsInput, setFrotaKsInput] = useState<string>("8,9,10");
+    const [frotaK, setFrotaK] = useState<number | null>(null);
     const [frotaLastmile, setFrotaLastmile] = useState<FrotaKFixoResponse["lastmile"]>([]);
     const [frotaTransfer, setFrotaTransfer] = useState<FrotaKFixoResponse["transfer"]>([]);
+    const [frotaCsvLastmile, setFrotaCsvLastmile] = useState<string | null>(null);
+    const [frotaCsvTransfer, setFrotaCsvTransfer] = useState<string | null>(null);
     const [loadingFrota, setLoadingFrota] = useState(false);
 
     const periodoFrotaDefault = useMemo(() => {
@@ -448,16 +449,8 @@ export default function SimulationPage() {
         const di = periodoFrotaDefault.data_inicial;
         const df = periodoFrotaDefault.data_final;
 
-        // força array de inteiros
-        const kList = frotaKsInput
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .map((s) => Number(s))
-            .filter((n) => Number.isFinite(n));
-
-        if (!kList.length) {
-            toast.error("Informe ao menos um valor de k (ex.: 8,9,10).");
+        if (!frotaK) {
+            toast.error("Informe um valor de k (ex.: 8)");
             return;
         }
         if (!di || !df || df < di) {
@@ -465,19 +458,21 @@ export default function SimulationPage() {
             return;
         }
 
-        console.log("🚚 Enviando frota_k_fixo:", { di, df, kList }); // debug
+        console.log("🚚 Enviando frota_k_fixo:", { di, df, frotaK }); // debug
 
         setLoadingFrota(true);
         try {
             const result = await getFrotaKFixo({
                 data_inicial: di,
                 data_final: df,
-                k: [...kList], // ✅ garante ?k=8&k=9&k=10
+                k: frotaK, // ✅ apenas um k inteiro
             });
 
-            // supondo que o backend retorna { lastmile: [...], transfer: [...] }
             setFrotaLastmile(result.lastmile || []);
             setFrotaTransfer(result.transfer || []);
+            setFrotaCsvLastmile(result.csv_lastmile || null);
+            setFrotaCsvTransfer(result.csv_transfer || null);
+
 
             toast.success("Frota sugerida carregada!");
         } catch (err: any) {
@@ -486,6 +481,7 @@ export default function SimulationPage() {
             setLoadingFrota(false);
         }
     };
+
 
 
     return (
@@ -1132,7 +1128,15 @@ export default function SimulationPage() {
                                             tickMargin={6}
                                         />
                                         <Tooltip />
-                                        <Bar dataKey="qtd" />
+                                        <Bar dataKey="qtd" fill="#4682B4" radius={[4, 4, 0, 0]}>
+                                            {distKData.map((_, index) => (
+                                                <Cell
+                                                    key={`cell-${index}`}
+                                                    fill="#4682B4" // 🔹 SteelBlue clássico
+                                                />
+                                            ))}
+                                        </Bar>
+
                                     </RBarChart>
                                 </ResponsiveContainer>
                             </div>
@@ -1151,6 +1155,7 @@ export default function SimulationPage() {
                             )}
                         </>
                     )}
+
                 </div>
             )}
 
@@ -1292,8 +1297,7 @@ export default function SimulationPage() {
             )}
 
 
-
-            {/* ===================== ABA: k Fixo (custos) ===================== */}
+            {/* ===================== ABA: k Fixo (custos) =====================*/}
             {activeTab === "custos" && (
                 <div className="bg-white rounded-2xl shadow p-4">
                     <h2 className="font-semibold mb-4 flex items-center gap-2">
@@ -1322,14 +1326,25 @@ export default function SimulationPage() {
                                 className="input"
                             />
                         </div>
-                        <label className="flex items-center gap-2">
+                        {/* 👇 Novo campo cobertura mínima */}
+                        <div>
+                            <label
+                                className="block text-sm text-gray-700"
+                                title="Mínimo de cobertura exigida em % dos dias válidos"
+                            >
+                                Cobertura mínima (%)
+                            </label>
                             <input
-                                type="checkbox"
-                                checked={kFixoUsarMedia}
-                                onChange={(e) => setKFixoUsarMedia(e.target.checked)}
+                                type="number"
+                                value={minCobertura}
+                                onChange={(e) => setMinCobertura(+e.target.value)}
+                                className="input"
+                                min={0}
+                                max={100}
+                                step={1}
+                                placeholder="Ex.: 70"
                             />
-                            Usar média (em vez de soma)
-                        </label>
+                        </div>
                         <div className="flex items-end">
                             <button
                                 onClick={carregarKFixo}
@@ -1370,7 +1385,7 @@ export default function SimulationPage() {
                                                 }).format(v)
                                             }
                                             label={{
-                                                value: kFixoUsarMedia ? "Custo médio (R$)" : "Custo acumulado (R$)",
+                                                value: "Custo consolidado (R$)",
                                                 angle: -90,
                                                 position: "insideLeft",
                                             }}
@@ -1385,19 +1400,7 @@ export default function SimulationPage() {
                                             }
                                             labelFormatter={(k) => `k = ${k}`}
                                         />
-                                        {/* Barras empilhadas (last-mile + transferência) */}
-                                        <Bar
-                                            dataKey="soma_custo_last_mile"
-                                            stackId="a"
-                                            fill="#2563eb"
-                                            radius={[6, 6, 0, 0]}
-                                        />
-                                        <Bar
-                                            dataKey="soma_custo_transfer"
-                                            stackId="a"
-                                            fill="#64748b"
-                                            radius={[6, 6, 0, 0]}
-                                        />
+                                        <Bar dataKey="custo_alvo" fill="#2563eb" radius={[6, 6, 0, 0]} />
                                     </RBarChart>
                                 </ResponsiveContainer>
                             </div>
@@ -1415,7 +1418,6 @@ export default function SimulationPage() {
                                 </div>
                             )}
 
-                            {/* Tabela rápida */}
                             <div className="overflow-auto mt-4">
                                 <table className="min-w-full text-sm">
                                     <thead>
@@ -1423,16 +1425,18 @@ export default function SimulationPage() {
                                             <th className="py-2 pr-4">k</th>
                                             <th className="py-2 pr-4">Dias válidos</th>
                                             <th className="py-2 pr-4">Cobertura</th>
-                                            <th className="py-2 pr-4">Custo (soma)</th>
-                                            <th className="py-2 pr-4">Custo (média)</th>
+                                            <th className="py-2 pr-4">Custo alvo (R$)</th>
                                             <th className="py-2 pr-4">Regret %</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {kFixoData
                                             .slice()
-                                            .sort((a, b) => a.k_clusters - b.k_clusters)
-                                            .map((r) => (
+                                            .sort(
+                                                (a: KFixoResponse["cenarios"][0], b: KFixoResponse["cenarios"][0]) =>
+                                                    a.k_clusters - b.k_clusters
+                                            )
+                                            .map((r: KFixoResponse["cenarios"][0]) => (
                                                 <tr key={r.k_clusters} className="border-b">
                                                     <td className="py-2 pr-4">{r.k_clusters}</td>
                                                     <td className="py-2 pr-4">
@@ -1442,10 +1446,10 @@ export default function SimulationPage() {
                                                         {(r.cobertura_pct * 100).toFixed(1)}%
                                                     </td>
                                                     <td className="py-2 pr-4">
-                                                        {r.soma_custo_total?.toLocaleString()}
-                                                    </td>
-                                                    <td className="py-2 pr-4">
-                                                        {r.media_custo_total?.toLocaleString()}
+                                                        {r.custo_alvo?.toLocaleString("pt-BR", {
+                                                            style: "currency",
+                                                            currency: "BRL",
+                                                        })}
                                                     </td>
                                                     <td className="py-2 pr-4">
                                                         {(r.regret_relativo * 100).toFixed(2)}%
@@ -1475,7 +1479,9 @@ export default function SimulationPage() {
                                 type="date"
                                 value={periodoFrotaDefault.data_inicial}
                                 max={todayISO()}
-                                onChange={(e) => setDataInicial(e.target.value)}
+                                onChange={(e) =>
+                                    setDataInicial(e.target.value)
+                                }
                                 className="input"
                             />
                         </div>
@@ -1485,20 +1491,22 @@ export default function SimulationPage() {
                                 type="date"
                                 value={periodoFrotaDefault.data_final}
                                 max={todayISO()}
-                                onChange={(e) => setDataFinal(e.target.value)}
+                                onChange={(e) =>
+                                    setDataFinal(e.target.value)
+                                }
                                 className="input"
                             />
                         </div>
                         <div>
                             <label className="block text-sm text-gray-700">
-                                Valores de k (ex.: 8,9,10)
+                                Valor de k (ex.: 8)
                             </label>
                             <input
-                                type="text"
-                                value={frotaKsInput}
-                                onChange={(e) => setFrotaKsInput(e.target.value)}
+                                type="number"
+                                value={frotaK || ""}
+                                onChange={(e) => setFrotaK(Number(e.target.value))}
                                 className="input"
-                                placeholder="8,9,10"
+                                placeholder="Informe um k"
                             />
                         </div>
                         <div className="flex items-end">
@@ -1519,20 +1527,30 @@ export default function SimulationPage() {
                     </div>
 
                     {/* Sem dados */}
-                    {!loadingFrota &&
-                        !frotaLastmile.length &&
-                        !frotaTransfer.length && (
-                            <div className="text-sm text-gray-500">
-                                Informe o período e os valores de <strong>k</strong>, depois clique em{" "}
-                                <strong>Gerar frota</strong>.
-                            </div>
-                        )}
+                    {!loadingFrota && !frotaLastmile.length && !frotaTransfer.length && (
+                        <div className="text-sm text-gray-500">
+                            Informe o período e o valor de <strong>k</strong>, depois clique em{" "}
+                            <strong>Gerar frota</strong>.
+                        </div>
+                    )}
 
                     {/* Bloco Last-mile */}
                     {frotaLastmile.length > 0 && (
                         <div className="mb-10">
                             <h3 className="text-lg font-bold mb-3">🚚 Last-mile</h3>
                             <FrotaChartTable data={frotaLastmile} chartId="frotaLastmileChart" />
+                            {frotaCsvLastmile && (
+                                <div className="mt-2 text-right">
+                                    <a
+                                        href={frotaCsvLastmile}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-emerald-600 hover:underline"
+                                    >
+                                        📥 Baixar CSV Last-mile
+                                    </a>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1541,12 +1559,22 @@ export default function SimulationPage() {
                         <div>
                             <h3 className="text-lg font-bold mb-3">🚛 Transferências</h3>
                             <FrotaChartTable data={frotaTransfer} chartId="frotaTransferChart" />
+                            {frotaCsvTransfer && (
+                                <div className="mt-2 text-right">
+                                    <a
+                                        href={frotaCsvTransfer}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-emerald-600 hover:underline"
+                                    >
+                                        📥 Baixar CSV Transferências
+                                    </a>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
             )}
-
-
 
         </div>
     );
