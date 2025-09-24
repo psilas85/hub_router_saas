@@ -8,6 +8,10 @@ import {
     getKFixo,
     getFrotaKFixo,
     listHubs,
+    getHistorico,          // 👈 novo
+    getSimulationStatus,   // 👈 novo
+    type HistoricoSimulation,
+    type SimulationJobStatus,
     type VisualizeSimulationResponse,
     type DistribuicaoKResponse,
     type FrequenciaCidadesResponse,
@@ -139,7 +143,6 @@ function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
 
 export default function SimulationPage() {
     const [activeTab, setActiveTab] = useState<TabKey>("simulacao");
-
     const [dataInicial, setDataInicial] = useState("");
     const [dataFinal, setDataFinal] = useState("");
     const [dataVisualizar, setDataVisualizar] = useState("");
@@ -147,6 +150,9 @@ export default function SimulationPage() {
     const [msg, setMsg] = useState<string | null>(null);
     const [artefatos, setArtefatos] = useState<VisualizeSimulationResponse | null>(null);
     const [minCobertura, setMinCobertura] = useState(70);
+    const [historico, setHistorico] = useState<HistoricoSimulation[]>([]);
+    const [loadingHistorico, setLoadingHistorico] = useState(false);
+
 
 
     // 🔧 Estado centralizado
@@ -228,7 +234,7 @@ export default function SimulationPage() {
             }
 
             await runSimulation(simParams);
-
+            await carregarHistorico(); // 👈 recarrega histórico depois de enviar simulação
 
             setMsg("⏳ Simulação enviada para processamento.");
         } catch (e: any) {
@@ -240,6 +246,37 @@ export default function SimulationPage() {
         }
     };
 
+    async function carregarHistorico() {
+        try {
+            setLoadingHistorico(true);
+            const dados = await getHistorico(3);
+            setHistorico(dados.historico || []);
+        } catch (err: any) {
+            toast.error("Erro ao carregar histórico de simulações");
+        } finally {
+            setLoadingHistorico(false);
+        }
+    }
+
+    async function atualizarStatus(jobId: string) {
+        try {
+            const status: SimulationJobStatus = await getSimulationStatus(jobId);
+            toast(`Job ${jobId} → ${status.status}`);
+            await carregarHistorico();
+        } catch (err: any) {
+            toast.error("Erro ao atualizar status");
+        }
+    }
+
+    useEffect(() => {
+        carregarHistorico(); // primeira carga
+
+        const interval = setInterval(() => {
+            carregarHistorico();
+        }, 30000); // ⏱️ atualiza a cada 30s
+
+        return () => clearInterval(interval);
+    }, []);
 
     // =========================
     // Ações: Visualizar artefatos (por dataVisualizar)
@@ -603,6 +640,77 @@ export default function SimulationPage() {
                             </div>
                         </div>
 
+                        {/* ===================== Histórico ===================== */}
+                        <div className="bg-white rounded-2xl shadow p-4 mt-6">
+                            <div className="flex justify-between items-center mb-2">
+                                <h2 className="text-lg font-semibold">📜 Histórico de Simulações</h2>
+                                <button
+                                    onClick={carregarHistorico}
+                                    disabled={loadingHistorico}
+                                    className="px-3 py-1 bg-emerald-500 text-white rounded-md hover:bg-emerald-600 disabled:opacity-50"
+                                >
+                                    {loadingHistorico ? "Atualizando..." : "Atualizar"}
+                                </button>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full text-sm border">
+                                    <thead className="bg-gray-100">
+                                        <tr>
+                                            <th className="px-3 py-2 text-left">Data</th>
+                                            <th className="px-3 py-2 text-left">Status</th>
+                                            <th className="px-3 py-2 text-left">Mensagem</th>
+                                            <th className="px-3 py-2 text-left">Job</th>
+                                            <th className="px-3 py-2 text-left"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {historico.length > 0 ? (
+                                            historico.map((h) => (
+                                                <tr key={h.id} className="border-t">
+                                                    <td className="px-3 py-2">
+                                                        {new Date(h.criado_em).toLocaleString("pt-BR", {
+                                                            dateStyle: "short",
+                                                            timeStyle: "short",
+                                                        })}
+                                                    </td>
+
+                                                    <td className="px-3 py-2">
+                                                        <span
+                                                            className={`px-2 py-1 rounded ${h.status === "finished"
+                                                                ? "bg-green-100 text-green-700"
+                                                                : h.status === "failed"
+                                                                    ? "bg-red-100 text-red-700"
+                                                                    : "bg-yellow-100 text-yellow-700"
+                                                                }`}
+                                                        >
+                                                            {h.status}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-3 py-2">{h.mensagem}</td>
+                                                    <td className="px-3 py-2 font-mono text-xs">{h.job_id}</td>
+                                                    <td className="px-3 py-2">
+                                                        <button
+                                                            onClick={() => atualizarStatus(h.job_id)}
+                                                            className="px-2 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300"
+                                                        >
+                                                            🔄
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        ) : (
+                                            <tr>
+                                                <td colSpan={5} className="text-center py-4 text-gray-500">
+                                                    Nenhum histórico encontrado
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+
                         {/* Linha 2 */}
                         <div className="grid md:grid-cols-4 gap-4">
                             <div className="md:col-span-3">
@@ -629,6 +737,7 @@ export default function SimulationPage() {
                                 </button>
                             </div>
                         </div>
+
                     </div>
 
 
@@ -1307,7 +1416,7 @@ export default function SimulationPage() {
                                 )}
                             </div>
 
-                            {/* Tabela Top 20 */}
+                            {/* Tabela Top 3 */}
                             <div className="overflow-auto mt-4">
                                 <table className="min-w-full text-sm">
                                     <thead>

@@ -61,7 +61,7 @@ export async function runSimulation(params: RunSimulationParams) {
     });
 
     return resp.data as {
-        status: "ok" | "queued";
+        status: "ok" | "queued" | "processing";
         job_id?: string;   // 👈 para acompanhar no frontend
         tenant_id?: string;
         mensagem: string;
@@ -73,11 +73,21 @@ export async function runSimulation(params: RunSimulationParams) {
 
 // ===== Status de execução da simulação =====
 export type SimulationJobStatus = {
-    status: "queued" | "running" | "done" | "error";
-    step?: string;
+    status: "queued" | "processing" | "done" | "error";
+    job_id: string;
+    tenant_id: string;
     progress?: number;
+    step?: string;
+    mensagem?: string;
     error?: string;
+    datas_processadas?: string[];
+    ended_at?: string;
 };
+
+export async function getSimulationStatus(job_id: string) {
+    const resp = await api.get(`/simulation/status/${job_id}`);
+    return resp.data as SimulationJobStatus;
+}
 
 // ===== Visualização de simulação =====
 export type VisualizeSimulationResponse = {
@@ -104,7 +114,6 @@ export async function visualizeSimulation(data: string) {
     });
     return resp.data as VisualizeSimulationResponse;
 }
-
 
 // ===== Distribuição de k_clusters =====
 export type DistribuicaoKResponse = {
@@ -265,3 +274,24 @@ export async function deleteClusterCost(id: number) {
     return resp.data;
 }
 
+// ===== Histórico de Simulações =====
+export type HistoricoSimulation = {
+    id: number;
+    tenant_id: string;
+    job_id: string;
+    status: "processing" | "finished" | "failed";
+    mensagem: string;
+    datas?: any;
+    parametros?: any;
+    criado_em: string;
+    updated_at: string;
+};
+
+export async function getHistorico(limit: number = 10) {
+    const resp = await api.get("/simulation/historico", { params: { limit } });
+    return resp.data as {
+        status: string;
+        tenant_id: string;
+        historico: HistoricoSimulation[];
+    };
+}
