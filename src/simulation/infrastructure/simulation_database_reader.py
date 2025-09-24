@@ -330,20 +330,20 @@ def carregar_rotas_last_mile(db_conn, tenant_id, envio_data, k_clusters):
 
 def carregar_detalhes_last_mile(simulation_db, clusterization_db, tenant_id, envio_data, k_clusters):
     query = """
-        SELECT 
-            rota_id, 
-            cte_numero, 
-            cluster, 
+        SELECT
+            rota_id,
+            cte_numero,
+            cluster,
             ordem_entrega,
-            distancia_km, 
-            tempo_minutos, 
+            distancia_km,
+            tempo_minutos,
             tipo_veiculo,
-            peso_total as cte_peso, 
+            peso_total as cte_peso,
             volumes_total as cte_volumes,
             coordenadas_seq  -- ✅ agora incluído
         FROM rotas_last_mile
-        WHERE tenant_id = %s 
-          AND envio_data = %s 
+        WHERE tenant_id = %s
+          AND envio_data = %s
           AND k_clusters = %s
         ORDER BY rota_id, ordem_entrega
     """
@@ -371,7 +371,7 @@ def buscar_latlon_ctes(clusterization_db, simulation_db, tenant_id, envio_data, 
     lista_ctes = list(map(str, lista_ctes))
 
     query_sim = """
-        SELECT 
+        SELECT
             cte_numero,
             centro_lat,
             centro_lon
@@ -386,7 +386,7 @@ def buscar_latlon_ctes(clusterization_db, simulation_db, tenant_id, envio_data, 
         logger.info(f"📌 df_sim.columns: {df_sim.columns.tolist()}")
 
     query_clu = """
-    SELECT 
+    SELECT
         cte_numero,
         destino_latitude,
         destino_longitude,
@@ -469,9 +469,20 @@ __all__ = [
     "obter_capacidade_veiculo",
     "carregar_resumo_clusters",
     "carregar_resumo_transferencias",
-    "carregar_resumo_lastmile",      
-    "carregar_entregas_clusterizadas"  
+    "carregar_resumo_lastmile",
+    "carregar_entregas_clusterizadas"
 ]
+
+
+def carregar_historico_simulation(db_conn, tenant_id: str, limit: int = 10) -> pd.DataFrame:
+    query = """
+        SELECT job_id, status, mensagem, datas, parametros, criado_em
+        FROM historico_simulation
+        WHERE tenant_id = %s
+        ORDER BY criado_em DESC
+        LIMIT %s
+    """
+    return pd.read_sql(query, db_conn, params=(tenant_id, limit))
 
 
 

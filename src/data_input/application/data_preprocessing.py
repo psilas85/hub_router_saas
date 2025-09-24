@@ -1,4 +1,4 @@
-#hub_router_1.0.1/src/data_input/application/data_preprocessing.py
+# hub_router_1.0.1/src/data_input/application/data_preprocessing.py
 import locale
 
 # ✅ Ajuste robusto para suportar diferentes nomes de locale
@@ -23,8 +23,8 @@ from clusterization.domain.entities import Entrega
 
 logging.basicConfig(level=logging.INFO)
 
-class DataPreprocessing:
 
+class DataPreprocessing:
 
     def __init__(self, writer, reader, tenant_id: str, path_saida_invalidos: str = None):
         self.writer = writer
@@ -72,7 +72,9 @@ class DataPreprocessing:
                     self.path_saida_coord_invalidas = f"./tenants/{self.tenant_id}/output/coordenadas_invalidas.csv"
                     os.makedirs(os.path.dirname(self.path_saida_coord_invalidas), exist_ok=True)
                     df_coord_invalidas.to_csv(self.path_saida_coord_invalidas, index=False, sep=";", encoding="utf-8-sig")
-                    logging.warning(f"📍 {len(df_coord_invalidas)} registro(s) com coordenadas fora da UF esperada salvos em: {self.path_saida_coord_invalidas}")
+                    logging.warning(
+                        f"📍 {len(df_coord_invalidas)} registro(s) com coordenadas fora da UF esperada salvos em: {self.path_saida_coord_invalidas}"
+                    )
 
             df = self.validar_dados(df)
 
@@ -101,49 +103,28 @@ class DataPreprocessing:
             logging.error(f"❌ Erro ao executar pré-processamento: {e}", exc_info=True)
             return None
 
-
     def carregar_dados(self, filepath, sep=","):
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Arquivo não encontrado: {filepath}")
 
         df = pd.read_csv(filepath, sep=sep, encoding="utf-8-sig", dtype=str)
 
-
-        # 🔧 Padroniza nomes das colunas para evitar problemas com espaços e símbolos
+        # 🔧 Padroniza nomes das colunas
         df.columns = df.columns.str.strip()
-
-        # Aplica mapeamento de colunas
         df.rename(columns=self.mapeamento_colunas, inplace=True)
 
         # ✅ Conversão segura de campos numéricos
         def converter_coluna_valores(df, col):
-            """
-            Converte valores numéricos de diferentes formatos:
-            - Formato brasileiro: 1.234,56
-            - Formato americano: 1,234.56
-            - Valor simples: 1234.56 ou 1234,56
-            """
             serie = df[col].astype(str).str.strip()
-
-            # Detecção de padrão americano: tem ',' antes de '.' → troca ',' por nada e mantém '.'
             padrao_americano = serie.str.contains(r"\d+,\d{3}\.\d{2}$")
-
             serie_formatada = serie.copy()
-            serie_formatada[padrao_americano] = (
-                serie_formatada[padrao_americano]
-                .str.replace(",", "", regex=False)
-            )
-
-            # Demais formatos → remove '.' de milhar e troca ',' decimal por '.'
+            serie_formatada[padrao_americano] = serie_formatada[padrao_americano].str.replace(",", "", regex=False)
             serie_formatada[~padrao_americano] = (
                 serie_formatada[~padrao_americano]
                 .str.replace(".", "", regex=False)
                 .str.replace(",", ".", regex=False)
             )
-
             return pd.to_numeric(serie_formatada, errors="coerce")
-
-
 
         colunas_milhar = ["cte_valor_nf", "cte_valor_frete"]
         colunas_decimais = ["cte_peso", "cte_volumes"]
@@ -155,22 +136,19 @@ class DataPreprocessing:
         # Limpa CNPJs
         for col in ["remetente_cnpj", "destinatario_cnpj"]:
             if col in df.columns:
-                df[col] = df[col].astype(str).str.replace(r'[^0-9]', '', regex=True)
+                df[col] = df[col].astype(str).str.replace(r"[^0-9]", "", regex=True)
 
         # Conversão de data
         if "envio_data" in df.columns:
             df["envio_data"] = pd.to_datetime(df["envio_data"], dayfirst=True, errors="coerce").dt.date
 
-        # Colunas geográficas e extras obrigatórias
-        for col in [
-            "cluster", "cluster_cidade", "cluster_endereco",
-            "centro_lat", "centro_lon", "destino_latitude", "destino_longitude"
-        ]:
+        # Colunas geográficas extras obrigatórias
+        for col in ["cluster", "cluster_cidade", "cluster_endereco",
+                    "centro_lat", "centro_lon", "destino_latitude", "destino_longitude"]:
             if col not in df.columns:
                 df[col] = np.nan
 
         return df
-
 
     def criar_cte_numero(self, df):
         if "doc_min" in df.columns:
@@ -178,26 +156,58 @@ class DataPreprocessing:
         return df
 
     def criar_endereco_completo(self, df):
-        df[["cte_rua", "cte_numero", "cte_cidade", "cte_uf"]] = df[["cte_rua", "cte_numero", "cte_cidade", "cte_uf"]].fillna("").astype(str)
-        df["endereco_completo"] = df.apply(lambda x: EnderecoHelper.montar_endereco_completo(x["cte_rua"], x["cte_numero"], x["cte_cidade"], x["cte_uf"]), axis=1)
+        df[["cte_rua", "cte_numero", "cte_cidade", "cte_uf"]] = df[
+            ["cte_rua", "cte_numero", "cte_cidade", "cte_uf"]
+        ].fillna("").astype(str)
+        df["endereco_completo"] = df.apply(
+            lambda x: EnderecoHelper.montar_endereco_completo(x["cte_rua"], x["cte_numero"], x["cte_cidade"], x["cte_uf"]),
+            axis=1,
+        )
         return df
 
     def buscar_coordenadas(self, df):
+        """
+        Busca coordenadas apenas para entregas sem latitude/longitude,
+        aproveitando coordenadas já existentes no banco.
+        """
         ignorados_por_uf = 0
-        for idx, row in df.iterrows():
-            if pd.isna(row["destino_latitude"]) or pd.isna(row["destino_longitude"]):
-                endereco = row["endereco_completo"]
-                uf_esperada = row["cte_uf"]
-                coordenadas = self.geo_service.buscar_coordenadas(endereco, uf_esperada)
-                if coordenadas:
-                    df.at[idx, "destino_latitude"], df.at[idx, "destino_longitude"] = coordenadas
-                else:
-                    ignorados_por_uf += 1
-                    df.at[idx, "coordenada_invalida"] = True  # marca para exclusão posterior
+
+        # 🔍 Busca cache no banco
+        try:
+            ctes = df["cte_numero"].dropna().unique().tolist()
+            if ctes:
+                df_cache = self.reader.buscar_latlon_ctes(
+                    tenant_id=self.tenant_id,
+                    lista_ctes=ctes
+                )
+                if not df_cache.empty:
+                    df = df.merge(
+                        df_cache[["cte_numero", "destino_latitude", "destino_longitude"]],
+                        on="cte_numero",
+                        how="left",
+                        suffixes=("", "_db")
+                    )
+                    df["destino_latitude"] = df["destino_latitude"].combine_first(df["destino_latitude_db"])
+                    df["destino_longitude"] = df["destino_longitude"].combine_first(df["destino_longitude_db"])
+                    df.drop(columns=["destino_latitude_db", "destino_longitude_db"], inplace=True)
+        except Exception as e:
+            logging.warning(f"⚠️ Falha ao carregar cache de coordenadas do banco: {e}")
+
+        # 🎯 Só os que continuam faltando
+        df_faltando_coords = df[df["destino_latitude"].isna() | df["destino_longitude"].isna()]
+
+        for idx, row in df_faltando_coords.iterrows():
+            endereco = row["endereco_completo"]
+            uf_esperada = row["cte_uf"]
+            coordenadas = self.geo_service.buscar_coordenadas(endereco, uf_esperada)
+            if coordenadas:
+                df.at[idx, "destino_latitude"], df.at[idx, "destino_longitude"] = coordenadas
+            else:
+                ignorados_por_uf += 1
+                df.at[idx, "coordenada_invalida"] = True
 
         self.registros_ignorados_uf = ignorados_por_uf
         return df
-
 
     def formatar_dados(self, df):
         for col in ["cte_peso", "cte_volumes", "cte_valor_nf", "cte_valor_frete"]:
@@ -218,15 +228,13 @@ class DataPreprocessing:
             "destino_latitude", "destino_longitude", "envio_data"
         ]
 
-        # Substitui valores vazios por NaN
+        # Normaliza vazios
         for col in colunas_obrigatorias:
             if col in df.columns:
                 df[col] = df[col].replace({"": np.nan, "nan": np.nan, "None": np.nan})
 
-        # Registros com campos obrigatórios ausentes
         registros_invalidos = df[df[colunas_obrigatorias].isna().any(axis=1)].copy()
 
-        # Adiciona motivo da invalidação
         def identificar_colunas_invalidas(row):
             faltantes = [col for col in colunas_obrigatorias if pd.isna(row[col])]
             return ", ".join(faltantes)
@@ -236,24 +244,13 @@ class DataPreprocessing:
             registros_invalidos.to_csv(self.path_saida_invalidos, index=False, encoding="utf-8-sig", sep=";")
             logging.warning(f"⚠️ {len(registros_invalidos)} registro(s) inválido(s) salvos em: {self.path_saida_invalidos}")
 
-        # Remove inválidos por campos obrigatórios
         df_validos = df.dropna(subset=colunas_obrigatorias)
 
-        # Remove registros com coordenadas inválidas, se houver a coluna
         if "coordenada_invalida" in df_validos.columns:
             removidos_coord = df_validos[df_validos["coordenada_invalida"] == True]
             if not removidos_coord.empty:
                 logging.info(f"🗑️ {len(removidos_coord)} registro(s) removido(s) por coordenadas fora da UF esperada.")
             df_validos = df_validos[df_validos["coordenada_invalida"] != True]
 
-        # Garante retorno de DataFrame (mesmo que vazio)
         self.qtde_invalidos = len(registros_invalidos)
-        if df_validos is None:
-            return pd.DataFrame()
-
-        return df_validos
-
-
-
-
-
+        return df_validos if df_validos is not None else pd.DataFrame()

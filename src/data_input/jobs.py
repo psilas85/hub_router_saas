@@ -1,4 +1,4 @@
-#hub_router_1.0.1/src/data_input/jobs.py
+# hub_router_1.0.1/src/data_input/jobs.py
 
 import logging
 import subprocess
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def salvar_historico(tenant_id, job_id, status, arquivo, total, validos, invalidos, mensagem):
     try:
-        db = Database(db_name="clusterization_db")  # 👈 força conexão no clusterization_db
+        db = Database()  # ✅ sem db_name
         db.conectar()
         cur = db.conexao.cursor()
         cur.execute(
@@ -44,7 +44,7 @@ def processar_csv(job_id, tenant_id, file_path, modo_forcar, limite_peso_kg):
     logger.info(f"🚀 Iniciando job {job_id} para tenant {tenant_id}")
 
     try:
-        comando = ["python", "-m", "data_input.main_preprocessing", "--tenant", tenant_id]
+        comando = ["python", "-u", "-m", "data_input.main_preprocessing", "--tenant", tenant_id]
 
         if modo_forcar:
             comando.append("--modo_forcar")
@@ -61,18 +61,27 @@ def processar_csv(job_id, tenant_id, file_path, modo_forcar, limite_peso_kg):
         job.meta["progress"] = 20
         job.save_meta()
 
-        result = subprocess.run(
+        # Executa subprocesso com logs em tempo real
+        process = subprocess.Popen(
             comando,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="ignore",
         )
 
-        if result.returncode != 0:
-            raise Exception(result.stderr or result.stdout)
+        stdout_lines = []
+        for line in iter(process.stdout.readline, ""):
+            line = line.strip()
+            if line:
+                logger.info(f"[{job_id}] {line}")  # 🔎 log em tempo real
+                stdout_lines.append(line)
 
-        stdout_lines = result.stdout.strip().splitlines()
+        process.wait()
+        if process.returncode != 0:
+            raise Exception("\n".join(stdout_lines))
+
         validos, invalidos, total_processados = 0, 0, 0
 
         # Atualiza progresso parcial

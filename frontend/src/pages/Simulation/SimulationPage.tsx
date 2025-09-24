@@ -1,5 +1,4 @@
 // hub_router_1.0.1/frontend/src/pages/Simulation/SimulationPage.tsx
-
 import { useMemo, useState, useEffect } from "react";
 import {
     runSimulation,
@@ -87,8 +86,7 @@ function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
     return (
         <>
             <div className="mb-4 text-emerald-700 font-semibold">
-                🚚 Total de veículos sugeridos:{" "}
-                {data.reduce((acc, r) => acc + r.frota_sugerida, 0)}
+                🚚 Total de veículos sugeridos: {data.reduce((acc, r) => acc + r.frota_sugerida, 0)}
             </div>
 
             <div id={chartId} className="w-full h-[420px] border rounded-lg p-2 mb-2 bg-white">
@@ -104,10 +102,7 @@ function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
                         <Tooltip formatter={(v: number) => `${v} veículos`} />
                         <Bar dataKey="frota" radius={[0, 6, 6, 0]} barSize={20}>
                             {chartData.map((entry, index) => (
-                                <Cell
-                                    key={`cell-${index}`}
-                                    fill={getColorForString(entry.tipo)}
-                                />
+                                <Cell key={`cell-${index}`} fill={getColorForString(entry.tipo)} />
                             ))}
                         </Bar>
                     </RBarChart>
@@ -142,12 +137,12 @@ function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
     );
 }
 
-
 export default function SimulationPage() {
     const [activeTab, setActiveTab] = useState<TabKey>("simulacao");
 
     const [dataInicial, setDataInicial] = useState("");
     const [dataFinal, setDataFinal] = useState("");
+    const [dataVisualizar, setDataVisualizar] = useState("");
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
     const [artefatos, setArtefatos] = useState<VisualizeSimulationResponse | null>(null);
@@ -202,12 +197,14 @@ export default function SimulationPage() {
 
     const datasValidas = () => Boolean(dataInicial && (!dataFinal || dataFinal >= dataInicial));
 
+
     // =========================
     // Ações: Processar simulação
     // =========================
     const processar = async () => {
         setMsg(null);
         setArtefatos(null);
+
         if (!datasValidas()) {
             toast.error("Informe uma data inicial válida.");
             return;
@@ -216,16 +213,24 @@ export default function SimulationPage() {
             toast.error("Selecione um hub central.");
             return;
         }
+
         setLoading(true);
         try {
-            const data = await runSimulation({
+            // 🔹 Monta os parâmetros dinamicamente
+            const simParams: any = {
                 data_inicial: dataInicial,
-                data_final: dataFinal || undefined,
                 hub_id: hubId,
                 ...params,
-            });
-            setMsg(data.mensagem);
-            toast.success("✅ Simulação processada!");
+            };
+
+            if (dataFinal && dataFinal.trim() !== "") {
+                simParams.data_final = dataFinal;  // só adiciona se o usuário preencheu
+            }
+
+            await runSimulation(simParams);
+
+
+            setMsg("⏳ Simulação enviada para processamento.");
         } catch (e: any) {
             const errMsg = e?.response?.data?.detail || "Erro ao executar simulação.";
             setMsg(errMsg);
@@ -235,16 +240,17 @@ export default function SimulationPage() {
         }
     };
 
+
     // =========================
-    // Ações: Visualizar artefatos (por dataInicial)
+    // Ações: Visualizar artefatos (por dataVisualizar)
     // =========================
     const gerarRelatorios = async () => {
-        if (!dataInicial) {
-            toast.error("Selecione a data inicial.");
+        if (!dataVisualizar) {
+            toast.error("Selecione a data para visualizar.");
             return;
         }
         try {
-            const data = await visualizeSimulation(dataInicial);
+            const data = await visualizeSimulation(dataVisualizar);
             setArtefatos(data);
             setMsg("✅ Artefatos carregados.");
             toast.success("Artefatos carregados!");
@@ -254,6 +260,7 @@ export default function SimulationPage() {
             toast.error(errMsg);
         }
     };
+
 
     // =========================
     // ABA: Distribuição de k
@@ -482,8 +489,6 @@ export default function SimulationPage() {
         }
     };
 
-
-
     return (
         <div className="max-w-6xl mx-auto p-6">
             <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
@@ -531,87 +536,101 @@ export default function SimulationPage() {
             {activeTab === "simulacao" && (
                 <>
                     {/* Formulário principal */}
-                    <div className="grid md:grid-cols-5 gap-4 mb-6 bg-white rounded-2xl shadow p-4">
-                        <div>
-                            <label className="block text-sm text-gray-700">Data inicial</label>
-                            <input
-                                type="date"
-                                value={dataInicial}
-                                max={todayISO()}
-                                onChange={(e) => setDataInicial(e.target.value)}
-                                className="input"
-                            />
-                        </div>
+                    <div className="bg-white rounded-2xl shadow p-4 mb-6">
+                        {/* Linha 1 */}
+                        <div className="grid md:grid-cols-4 gap-4 mb-4">
+                            <div>
+                                <label className="block text-sm text-gray-700">Data inicial</label>
+                                <input
+                                    type="date"
+                                    value={dataInicial}
+                                    max={todayISO()}
+                                    onChange={(e) => setDataInicial(e.target.value)}
+                                    className="input"
+                                />
+                            </div>
 
-                        <div>
-                            <label className="block text-sm text-gray-700">
-                                Data final (opcional)
-                            </label>
-                            <input
-                                type="date"
-                                value={dataFinal}
-                                max={todayISO()}
-                                onChange={(e) => setDataFinal(e.target.value)}
-                                className="input"
-                            />
-                        </div>
+                            <div>
+                                <label className="block text-sm text-gray-700">Data final (opcional)</label>
+                                <input
+                                    type="date"
+                                    value={dataFinal}
+                                    max={todayISO()}
+                                    onChange={(e) => setDataFinal(e.target.value)}
+                                    className="input"
+                                />
+                            </div>
 
-                        {/* 👇 novo campo */}
-                        <div>
-                            <label className="block text-sm text-gray-700">Hub Central</label>
-                            <select
-                                value={hubId ?? ""}
-                                onChange={(e) => setHubId(Number(e.target.value))}
-                                className="input"
-                                disabled={!hubs.length}
-                            >
-                                <option value="" disabled>
-                                    {hubs.length ? "Selecione um hub" : "Carregando hubs..."}
-                                </option>
-                                {hubs.map((h) => (
-                                    <option key={h.hub_id} value={h.hub_id}>
-                                        {h.nome} ({h.cidade})
+                            <div>
+                                <label className="block text-sm text-gray-700">Hub Central</label>
+                                <select
+                                    value={hubId ?? ""}
+                                    onChange={(e) => setHubId(Number(e.target.value))}
+                                    className="input"
+                                    disabled={!hubs.length}
+                                >
+                                    <option value="" disabled>
+                                        {hubs.length ? "Selecione um hub" : "Carregando hubs..."}
                                     </option>
-                                ))}
-                            </select>
+                                    {hubs.map((h) => (
+                                        <option key={h.hub_id} value={h.hub_id}>
+                                            {h.nome} ({h.cidade})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            {/* Botão Processar */}
+                            <div className="flex items-end">
+                                <button
+                                    disabled={loading || !datasValidas()}
+                                    onClick={processar}
+                                    className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-medium shadow transition-all duration-200
+                                        ${loading || !datasValidas()
+                                            ? "bg-emerald-300 text-white cursor-not-allowed"
+                                            : "bg-emerald-600 hover:bg-emerald-700 text-white hover:shadow-md"}`}
+                                >
+                                    {loading ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" /> Processando...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Play className="w-4 h-4" /> Processar
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                         </div>
 
-                        {/* Botão Processar */}
-                        <div className="flex items-end">
-                            <button
-                                disabled={loading || !datasValidas()}
-                                onClick={processar}
-                                className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-medium shadow transition-all duration-200
-                        ${loading || !datasValidas()
-                                        ? "bg-emerald-300 text-white cursor-not-allowed"
-                                        : "bg-emerald-600 hover:bg-emerald-700 text-white hover:shadow-md"}`}
-                            >
-                                {loading ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 animate-spin" /> Processando...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Play className="w-4 h-4" /> Processar
-                                    </>
-                                )}
-                            </button>
-                        </div>
+                        {/* Linha 2 */}
+                        <div className="grid md:grid-cols-4 gap-4">
+                            <div className="md:col-span-3">
+                                <label className="block text-sm text-gray-700">Data para visualizar</label>
+                                <input
+                                    type="date"
+                                    value={dataVisualizar}
+                                    max={todayISO()}
+                                    onChange={(e) => setDataVisualizar(e.target.value)}
+                                    className="input w-full"
+                                />
+                            </div>
 
-                        {/* Botão Relatórios */}
-                        <div className="flex items-end">
-                            <button
-                                disabled={!dataInicial}
-                                onClick={gerarRelatorios}
-                                className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-medium border transition-all duration-200
-                        ${!dataInicial
-                                        ? "border-gray-300 text-gray-400 cursor-not-allowed"
-                                        : "border-emerald-600 text-emerald-600 hover:bg-emerald-50 hover:shadow-sm"}`}
-                            >
-                                <FileText className="w-4 h-4" /> Relatórios & Gráficos
-                            </button>
+                            <div className="flex items-end">
+                                <button
+                                    disabled={!dataVisualizar}
+                                    onClick={gerarRelatorios}
+                                    className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-medium border transition-all duration-200
+                                        ${!dataVisualizar
+                                            ? "border-gray-300 text-gray-400 cursor-not-allowed"
+                                            : "border-emerald-600 text-emerald-600 hover:bg-emerald-50 hover:shadow-sm"}`}
+                                >
+                                    <FileText className="w-4 h-4" /> Gerar Relatórios & Gráficos
+                                </button>
+                            </div>
                         </div>
                     </div>
+
 
                     {/* Accordions com parâmetros */}
                     <div className="bg-white rounded-2xl shadow p-4 mb-6">
@@ -850,6 +869,7 @@ export default function SimulationPage() {
                             </label>
                         </Accordion>
                     </div>
+
 
                     {/* Mensagens */}
                     {msg && (
@@ -1132,11 +1152,10 @@ export default function SimulationPage() {
                                             {distKData.map((_, index) => (
                                                 <Cell
                                                     key={`cell-${index}`}
-                                                    fill="#4682B4" // 🔹 SteelBlue clássico
+                                                    fill="#4682B4"
                                                 />
                                             ))}
                                         </Bar>
-
                                     </RBarChart>
                                 </ResponsiveContainer>
                             </div>
@@ -1575,7 +1594,6 @@ export default function SimulationPage() {
                     )}
                 </div>
             )}
-
         </div>
     );
 }

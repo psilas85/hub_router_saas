@@ -43,6 +43,9 @@ export type RunSimulationParams = {
 
     // Rotas excedentes
     permitir_rotas_excedentes?: boolean;
+
+    // Forçar sobrescrita
+    modo_forcar?: boolean;
 };
 
 export async function runSimulation(params: RunSimulationParams) {
@@ -58,13 +61,23 @@ export async function runSimulation(params: RunSimulationParams) {
     });
 
     return resp.data as {
-        status: "ok";
+        status: "ok" | "queued";
+        job_id?: string;   // 👈 para acompanhar no frontend
+        tenant_id?: string;
         mensagem: string;
-        datas_processadas: string[];
-        datas_ignoradas: string[];
-        parametros: Record<string, unknown>;
+        datas_processadas?: string[];
+        datas_ignoradas?: string[];
+        parametros?: Record<string, unknown>;
     };
 }
+
+// ===== Status de execução da simulação =====
+export type SimulationJobStatus = {
+    status: "queued" | "running" | "done" | "error";
+    step?: string;
+    progress?: number;
+    error?: string;
+};
 
 // ===== Visualização de simulação =====
 export type VisualizeSimulationResponse = {
@@ -86,11 +99,12 @@ export type VisualizeSimulationResponse = {
 };
 
 export async function visualizeSimulation(data: string) {
-    const resp = await api.get("/simulation/simulacao/visualizar", {
+    const resp = await api.get("/simulation/visualizar", {
         params: { data },
     });
     return resp.data as VisualizeSimulationResponse;
 }
+
 
 // ===== Distribuição de k_clusters =====
 export type DistribuicaoKResponse = {
@@ -250,3 +264,4 @@ export async function deleteClusterCost(id: number) {
     const resp = await api.delete(`/simulation/cluster_costs/${id}`);
     return resp.data;
 }
+

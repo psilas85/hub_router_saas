@@ -65,7 +65,9 @@ services:
       context: .
       dockerfile: src/data_input/Dockerfile.data_input
     image: psilas85/hub_router-data_input:latest
-    command: rq worker -u redis://redis:6379 data_input   # ✅ remove --job-timeout
+    command: rq worker -u redis://redis:6379 data_input
+
+
 
     volumes:
       - ./src:/app/src
@@ -78,6 +80,27 @@ services:
       - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
     env_file:
       - ./src/data_input/.env
+    networks:
+      - hub_router_network
+    restart: always
+
+  simulation_worker:
+    build:
+      context: .
+      dockerfile: src/simulation/Dockerfile.simulation
+    image: psilas85/hub_router-simulation:latest
+    command: rq worker -u redis://redis:6379 simulation
+
+    volumes:
+      - ./src:/app/src
+      - ./exports/simulation:/app/exports/simulation
+    env_file:
+      - ./src/simulation/.env
+    environment:
+      - PYTHONPATH=/app/src
+    depends_on:
+      - redis
+      - postgres
     networks:
       - hub_router_network
     restart: always

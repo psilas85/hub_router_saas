@@ -1,5 +1,3 @@
-#simulation/visualization/gerador_relatorio_final.py
-
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -16,8 +14,10 @@ def executar_geracao_relatorio_final(
     modo_forcar: bool = False
 ):
     """
-    Executa a conversão de mapas .html → .png e gera o relatório final em PDF.
-    Se modo_forcar=True, força sobrescrita de gráficos e relatórios existentes.
+    Gera o relatório final em PDF com base nos resultados da simulação.
+    - Gráficos consolidados de custos (PNG).
+    - Dados de resultados por k_clusters.
+    - Não converte mais mapas HTML para PNG.
     """
     maps_dir = os.path.join(base_dir, "maps", tenant_id)
 
@@ -36,22 +36,10 @@ def executar_geracao_relatorio_final(
         print(f"❌ Nenhum resultado encontrado em resultados_simulacao para envio_data = {envio_data}")
         return
 
-    # Garantir que os mapas HTML estejam convertidos em PNG
-    for k in k_clusters_testados:
-        for tipo in ["clusterizacao", "transferencias", "last_mile"]:
-            html_path = os.path.join(maps_dir, f"{tenant_id}_mapa_{tipo}_{envio_data}_k{k}.html")
-            png_path = html_path.replace(".html", ".png")
-            if os.path.exists(html_path) and (modo_forcar or not os.path.exists(png_path)):
-                try:
-                    from simulation.utils.html_to_png import converter_html_para_png
-                    converter_html_para_png(html_path, png_path)
-                except Exception as e:
-                    print(f"⚠️ Erro ao converter {html_path} para PNG: {e}")
-
     # Caminho do gráfico consolidado
     grafico_custo_path = os.path.join(base_dir, "graphs", tenant_id, f"grafico_simulacao_{envio_data}.png")
 
-    # 🔹 Agora respeita modo_forcar
+    # 🔹 Respeita modo_forcar para gráficos
     if modo_forcar or not os.path.exists(grafico_custo_path):
         try:
             query = """
@@ -71,9 +59,12 @@ def executar_geracao_relatorio_final(
                 fig, ax = plt.subplots(figsize=(8, 5))
                 ax.bar(df["k_clusters"], df["custo_transferencia"], label="Transferência")
                 ax.bar(df["k_clusters"], df["custo_last_mile"], bottom=df["custo_transferencia"], label="Last-mile")
-                ax.bar(df["k_clusters"], df["custo_cluster"],
-                       bottom=df["custo_transferencia"] + df["custo_last_mile"],
-                       label="Cluster")
+                ax.bar(
+                    df["k_clusters"],
+                    df["custo_cluster"],
+                    bottom=df["custo_transferencia"] + df["custo_last_mile"],
+                    label="Cluster"
+                )
 
                 ax.plot(df["k_clusters"], df["custo_total"], color="black", marker="o", label="Custo Total")
                 ax.set_title(f"Custo Total por k_clusters — {envio_data}")

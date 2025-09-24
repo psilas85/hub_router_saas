@@ -1,4 +1,4 @@
-//hub_router_1.0.1/frontend/src/pages/Data_input/DataInputPage.tsx
+// hub_router_1.0.1/frontend/src/pages/Data_input/DataInputPage.tsx
 import { useState, useEffect } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
@@ -48,6 +48,7 @@ export default function DataInputPage() {
         setLimitePeso("");
         setJobId(null);
         setResultado(null);
+        localStorage.removeItem("dataInputJobId"); // 🔄 limpa persistência
     };
 
     const carregarHistorico = async () => {
@@ -85,6 +86,7 @@ export default function DataInputPage() {
 
             if (data.job_id) {
                 setJobId(data.job_id);
+                localStorage.setItem("dataInputJobId", data.job_id); // 🔄 salva persistência
                 toast.success("Arquivo enviado! Processamento iniciado.");
             } else {
                 toast.error("Não foi possível iniciar o processamento.");
@@ -123,8 +125,11 @@ export default function DataInputPage() {
                     };
 
                     setResultado(normalizado);
-                    stopProcessing(); // ✅ terminou → decrementa
+                    stopProcessing();
                     clearInterval(interval);
+
+                    // ❌ remove o jobId do localStorage (finalizado)
+                    localStorage.removeItem("dataInputJobId");
 
                     if (data.status === "done") {
                         toast.success(
@@ -137,21 +142,35 @@ export default function DataInputPage() {
                 } else {
                     setResultado((prev) => ({
                         ...prev,
-                        status: data.status,
+                        status: data.status || "processing", // 👈 fallback
                         progress: data.progress,
                         step: data.step,
                     }));
                 }
             } catch (err) {
                 console.error(err);
-                stopProcessing(); // ✅ fallback em erro
+                stopProcessing();
             }
         }, 3000);
 
         return () => clearInterval(interval);
     }, [jobId]);
 
+    // 🆕 Restaurar jobId salvo no localStorage ao recarregar a página
     useEffect(() => {
+        const savedJobId = localStorage.getItem("dataInputJobId");
+        if (savedJobId) {
+            setJobId(savedJobId);
+            // 👇 chamada imediata para restaurar a barrinha sem esperar polling
+            api.get<Resultado>(`/data_input/status/${savedJobId}`)
+                .then(({ data }) => {
+                    setResultado({
+                        ...data,
+                        status: data.status || "processing", // fallback
+                    });
+                })
+                .catch((err) => console.error("Erro ao restaurar status:", err));
+        }
         carregarHistorico();
     }, []);
 

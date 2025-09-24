@@ -1,7 +1,5 @@
 # hub_router_1.0.1/src/data_input/main_preprocessing.py
 
-# hub_router_1.0.1/src/data_input/main_preprocessing.py
-
 import argparse
 import logging
 import os

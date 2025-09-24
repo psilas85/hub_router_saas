@@ -67,7 +67,7 @@ class DatabaseReader:
             return None, None
 
         query = """
-        SELECT endereco, latitude, longitude 
+        SELECT endereco, latitude, longitude
         FROM localizacoes
         ORDER BY ST_Distance(
             ST_SetSRID(ST_MakePoint(longitude::double precision, latitude::double precision), 4326),
@@ -89,3 +89,28 @@ class DatabaseReader:
         except Exception as e:
             logging.error(f"❌ Erro ao buscar centro urbano: {e}")
             return None, None
+
+    def buscar_latlon_ctes(self, tenant_id: str, lista_ctes: list):
+        """
+        Busca coordenadas já existentes no banco para uma lista de CTEs.
+        Retorna DataFrame com colunas: cte_numero, destino_latitude, destino_longitude
+        """
+        if not lista_ctes:
+            logging.warning("⚠ Nenhum CTE informado para consulta de coordenadas.")
+            return pd.DataFrame()
+
+        query = """
+            SELECT cte_numero, destino_latitude, destino_longitude
+            FROM public.entregas
+            WHERE tenant_id = %s
+            AND cte_numero = ANY(%s)
+            AND destino_latitude IS NOT NULL
+            AND destino_longitude IS NOT NULL
+        """
+        try:
+            df = pd.read_sql(query, self.conexao, params=(tenant_id, lista_ctes))
+            logging.info(f"✅ {len(df)} coordenadas recuperadas do banco para tenant '{tenant_id}'.")
+            return df
+        except Exception as e:
+            logging.error(f"❌ Erro ao buscar coordenadas de CTEs: {e}")
+            return pd.DataFrame()

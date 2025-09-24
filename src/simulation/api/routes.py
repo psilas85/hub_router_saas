@@ -7,6 +7,15 @@ import uuid
 import os
 from pydantic import BaseModel
 from typing import List
+from rq import Queue
+from redis import Redis
+from rq.job import Job
+from rq import get_current_job
+
+from simulation.jobs import processar_simulacao
+from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
+from simulation.infrastructure.simulation_database_reader import carregar_historico_simulation
+from authentication.utils.dependencies import obter_tenant_id_do_token
 
 from authentication.utils.dependencies import obter_tenant_id_do_token
 from simulation.application.simulation_use_case import SimulationUseCase
@@ -22,11 +31,11 @@ from simulation.visualization.gerar_grafico_frequencia_cidades import gerar_graf
 from simulation.visualization.gerar_grafico_k_fixo import gerar_grafico_k_fixo
 from simulation.visualization.gerar_grafico_frota_k_fixo import gerar_grafico_frota_k_fixo
 
+router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
-router = APIRouter(
-    prefix="/simulacao",
-    tags=["Simulation"]
-)
+# 🔌 Conexão com Redis para fila de jobs
+redis_conn = Redis(host="redis", port=6379, decode_responses=True)
+q = Queue("simulation", connection=redis_conn)
 
 logger = logging.getLogger("simulation_service")
 logger.setLevel(logging.INFO)
@@ -59,154 +68,103 @@ def healthcheck():
 
 @router.post("/executar", summary="Executar Simulação Completa")
 def executar_simulacao(
-    # 📅 Datas e controle
     data_inicial: date = Query(..., description="Data inicial no formato YYYY-MM-DD"),
     data_final: date = Query(..., description="Data final no formato YYYY-MM-DD"),
     modo_forcar: bool = Query(False, description="Sobrescreve simulações existentes"),
-
-    # 🔗 Hub central
-    hub_id: int = Query(..., description="ID do hub central"),  # 👈 ADICIONAR
-
-    # 🔢 Clusterização
+    hub_id: int = Query(..., description="ID do hub central"),
     k_min: int = Query(2, description="Valor mínimo de k_clusters"),
     k_max: int = Query(50, description="Valor máximo de k_clusters"),
     k_inicial_transferencia: int = Query(1, description="K inicial para clusterização de transferências"),
     min_entregas_cluster: int = Query(25, description="Qtd mínima de entregas por cluster"),
-    fundir_clusters_pequenos: bool = Query(False, description="Funde clusters pequenos com menos entregas que o mínimo"),
-    desativar_cluster_hub: bool = Query(False, description="Desativa cluster automático para entregas próximas ao hub central"),
-    raio_hub_km: float = Query(80.0, description="Raio em km para considerar entregas como parte do cluster do hub central"),
-
-    # ⏱️ Tempos operacionais
+    fundir_clusters_pequenos: bool = Query(False, description="Funde clusters pequenos"),
+    desativar_cluster_hub: bool = Query(False, description="Desativa cluster automático próximo ao hub central"),
+    raio_hub_km: float = Query(80.0, description="Raio em km para considerar entregas no cluster do hub"),
     parada_leve: int = Query(10, description="Tempo de parada leve (min)"),
     parada_pesada: int = Query(20, description="Tempo de parada pesada (min)"),
     tempo_volume: float = Query(0.4, description="Tempo por volume (min)"),
-
-    # 🚚 Operações e peso
     velocidade: float = Query(60.0, description="Velocidade média (km/h)"),
     limite_peso: float = Query(50.0, description="Limite de peso para considerar parada pesada (kg)"),
-    peso_leve_max: float = Query(50.0, description="Peso máximo para considerar veículo leve"),
-
-    # 🔗 Transferências
+    peso_leve_max: float = Query(50.0, description="Peso máximo para veículo leve"),
     tempo_max_transferencia: int = Query(1200, description="Tempo máximo por rota de transferência (min)"),
     peso_max_transferencia: float = Query(15000.0, description="Peso máximo por rota de transferência (kg)"),
-
-    # 📦 Last-mile
-    entregas_por_subcluster: int = Query(25, description="Quantidade alvo de entregas por subcluster"),
+    entregas_por_subcluster: int = Query(25, description="Qtd alvo de entregas por subcluster"),
     tempo_max_roteirizacao: int = Query(1200, description="Tempo máximo total por rota last-mile (min)"),
-    tempo_max_k1: int = Query(2400, description="Tempo máximo para simulação direta do hub central (k=1)"),
-
-    # ⚙️ Restrições
-    permitir_rotas_excedentes: bool = Query(False, description="Permitir rotas que ultrapassem o tempo máximo"),
+    tempo_max_k1: int = Query(2400, description="Tempo máximo para k=1"),
+    permitir_rotas_excedentes: bool = Query(False, description="Permitir rotas que ultrapassem limite"),
     restricao_veiculo_leve_municipio: bool = Query(False, description="Restringe veículos leves em rotas intermunicipais"),
-
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
-    """
-    Executa a simulação de clusterização, roteirização e custeio,
-    com base nos parâmetros recebidos. Agora também gera gráficos e relatórios.
-    """
     if data_final < data_inicial:
         raise HTTPException(status_code=400, detail="Data final não pode ser anterior à data inicial.")
 
-    logger.info(f"🔹 Iniciando simulação de {data_inicial} a {data_final} para tenant {tenant_id}.")
+    job_id = str(uuid.uuid4())
 
-    # 🔌 Conexões com bancos
-    clusterization_db = conectar_clusterization_db()
-    simulation_db = conectar_simulation_db()
+    # 🔹 Define timeout dinâmico
+    timeout = 7200 if modo_forcar else 3600  # 2h se modo_forcar, senão 1h
 
-    parametros = {
-        # ⏱️ Tempos
-        "tempo_parada_min": parada_leve,
-        "tempo_parada_leve": parada_leve,
-        "tempo_parada_pesada": parada_pesada,
-        "tempo_descarga_por_volume": tempo_volume,
-        "tempo_por_volume": tempo_volume,
+    # 🔹 Enfileira execução no worker (sem duplicar job_id no enqueue!)
+    job = q.enqueue(
+        processar_simulacao,
+        job_id,
+        tenant_id,
+        str(data_inicial),
+        str(data_final),
+        hub_id,
+        {
+            "k_min": k_min,
+            "k_max": k_max,
+            "k_inicial_transferencia": k_inicial_transferencia,
+            "min_entregas_cluster": min_entregas_cluster,
+            "fundir_clusters_pequenos": fundir_clusters_pequenos,
+            "desativar_cluster_hub": desativar_cluster_hub,
+            "raio_hub_km": raio_hub_km,
+            "parada_leve": parada_leve,
+            "parada_pesada": parada_pesada,
+            "tempo_volume": tempo_volume,
+            "velocidade": velocidade,
+            "limite_peso": limite_peso,
+            "peso_leve_max": peso_leve_max,
+            "tempo_max_transferencia": tempo_max_transferencia,
+            "peso_max_transferencia": peso_max_transferencia,
+            "entregas_por_subcluster": entregas_por_subcluster,
+            "tempo_max_roteirizacao": tempo_max_roteirizacao,
+            "tempo_max_k1": tempo_max_k1,
+            "permitir_rotas_excedentes": permitir_rotas_excedentes,
+            "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
+        },
+        modo_forcar,
+        job_timeout=timeout
+    )
 
-        # 🚚 Operações
-        "velocidade_media_kmh": velocidade,
-        "limite_peso_parada": limite_peso,
-        "peso_leve_max": peso_leve_max,
-
-        # 🔗 Transferências
-        "tempo_maximo_transferencia": tempo_max_transferencia,
-        "peso_max_kg": peso_max_transferencia,
-
-        # 📦 Last-mile
-        "entregas_por_subcluster": entregas_por_subcluster,
-        "tempo_maximo_roteirizacao": tempo_max_roteirizacao,
-        "tempo_maximo_k1": tempo_max_k1,
-
-        # 🔢 Clusterização
-        "k_inicial_transferencia": k_inicial_transferencia,
-        "k_min": k_min,
-        "k_max": k_max,
-        "min_entregas_cluster": min_entregas_cluster,
-        "fundir_clusters_pequenos": fundir_clusters_pequenos,
-        "desativar_cluster_hub": desativar_cluster_hub,
-        "raio_hub_km": raio_hub_km,
-
-        # ⚙️ Restrições
-        "permitir_rotas_excedentes": permitir_rotas_excedentes,
-        "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
-    }
-
-    datas_processadas = []
-    datas_ignoradas = []
-
-    data_atual = data_inicial
-    while data_atual <= data_final:
-        try:
-            simulation_id = str(uuid.uuid4())
-
-            use_case = SimulationUseCase(
-                tenant_id=tenant_id,
-                envio_data=data_atual,
-                hub_id=hub_id,   # ✅ agora obrigatório
-                parametros=parametros,
-                clusterization_db=clusterization_db,
-                simulation_db=simulation_db,
-                logger=logger,
-                modo_forcar=modo_forcar,
-                fundir_clusters_pequenos=fundir_clusters_pequenos,
-                permitir_rotas_excedentes=permitir_rotas_excedentes
-            )
-
-
-            ponto = use_case.executar_simulacao_completa()
-
-            if ponto:
-                datas_processadas.append(str(data_atual))
-
-                # 🔹 Gera gráficos por envio
-                gerar_graficos_custos_por_envio(simulation_db, tenant_id, datas_filtradas=[data_atual])
-
-                # 🔹 Gera relatório final
-                executar_geracao_relatorio_final(
-                    tenant_id=tenant_id,
-                    envio_data=str(data_atual),
-                    simulation_id=simulation_id,
-                    simulation_db=simulation_db
-                )
-            else:
-                datas_ignoradas.append(str(data_atual))
-
-        except Exception as e:
-            logger.error(f"❌ Erro na simulação {data_atual}: {e}")
-            datas_ignoradas.append(str(data_atual))
-
-        data_atual += timedelta(days=1)
-
-    # 🔹 Gera gráficos consolidados para todas as datas processadas
-    if datas_processadas:
-        gerar_graficos_custos_por_envio(simulation_db, tenant_id, datas_filtradas=datas_processadas)
+    # 🔹 Registra no histórico imediatamente
+    try:
+        import json
+        conn = conectar_simulation_db()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO historico_simulation
+                (tenant_id, job_id, status, mensagem, datas, parametros)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            tenant_id,
+            job_id,
+            "processing",
+            f"Simulação de {data_inicial} a {data_final} enfileirada",
+            json.dumps({"data_inicial": str(data_inicial), "data_final": str(data_final)}),
+            json.dumps({"hub_id": hub_id, "k_min": k_min, "k_max": k_max})
+        ))
+        conn.commit()
+        cur.close(); conn.close()
+    except Exception as e:
+        logger.error(f"❌ Erro ao registrar histórico inicial: {e}")
 
     return {
-        "status": "ok",
-        "mensagem": f"✅ Simulação concluída. Processadas: {len(datas_processadas)}, Ignoradas: {len(datas_ignoradas)}",
-        "datas_processadas": datas_processadas,
-        "datas_ignoradas": datas_ignoradas,
-        "parametros": parametros
+        "status": "processing",
+        "job_id": job.get_id(),
+        "tenant_id": tenant_id,
+        "mensagem": f"🔄 Simulação de {data_inicial} a {data_final} enfileirada com sucesso."
     }
+
 
 @router.get("/visualizar", summary="Visualizar artefatos da simulação")
 def visualizar_simulacao(
@@ -622,3 +580,83 @@ def listar_costs(tenant_id: str = Depends(obter_tenant_id_do_token)):
         )
         for r in rows
     ]
+
+@router.get("/status/{job_id}", summary="Status do processamento da simulação")
+def status_simulacao(job_id: str, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    """
+    Retorna o status atual de um job de simulação, padronizado no mesmo formato do Data Input.
+    """
+
+    # 1. Primeiro tenta buscar no Redis
+    try:
+        job = Job.fetch(job_id, connection=redis_conn)
+
+        if job.is_finished:
+            return {
+                "status": "done",   # ✅ padronizado
+                "job_id": job.get_id(),
+                "tenant_id": tenant_id,
+                "result": job.result if isinstance(job.result, dict) else {
+                    "mensagem": "✅ Simulação finalizada"
+                },
+            }
+        elif job.is_failed:
+            return {
+                "status": "error",  # ✅ padronizado
+                "job_id": job.get_id(),
+                "tenant_id": tenant_id,
+                "error": str(job.exc_info),
+            }
+        else:
+            return {
+                "status": "processing",
+                "job_id": job.get_id(),
+                "tenant_id": tenant_id,
+                "progress": job.meta.get("progress", 0),
+                "step": job.meta.get("step", "Em andamento"),
+            }
+
+    except Exception:
+        pass  # se não achar no Redis, segue para o histórico
+
+    # 2. Fallback no banco de histórico
+    conn = conectar_simulation_db(); cur = conn.cursor()
+    cur.execute("""
+        SELECT status, mensagem, datas
+        FROM historico_simulation
+        WHERE job_id = %s AND tenant_id = %s
+        ORDER BY criado_em DESC
+        LIMIT 1
+    """, (job_id, tenant_id))
+    row = cur.fetchone()
+    cur.close(); conn.close()
+
+    if row:
+        status_map = {"finished": "done", "failed": "error", "processing": "processing"}
+        return {
+            "status": status_map.get(row[0], row[0]),  # ✅ converte
+            "job_id": job_id,
+            "tenant_id": tenant_id,
+            "mensagem": row[1],
+            "datas_processadas": (
+                list(row[2].values()) if isinstance(row[2], dict) else row[2]
+            ),
+        }
+
+    raise HTTPException(status_code=404, detail="Job não encontrado no Redis nem no histórico.")
+
+@router.get("/historico", summary="Histórico de simulações")
+def listar_historico_simulation(
+    limit: int = Query(10, description="Quantidade máxima de registros"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    db = conectar_simulation_db()
+    try:
+        df = carregar_historico_simulation(db, tenant_id, limit)
+        return {
+            "status": "ok",
+            "tenant_id": tenant_id,
+            "historico": df.to_dict(orient="records"),
+        }
+    finally:
+        db.close()

@@ -1,4 +1,4 @@
-#hub_router_1.0.1/src/simulation/main_simulation.py
+# hub_router_1.0.1/src/simulation/main_simulation.py
 
 import uuid
 import argparse
@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import os
 import logging
+import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 load_dotenv()
 
@@ -17,24 +19,29 @@ from simulation.infrastructure.simulation_database_connection import (
     conectar_simulation_db
 )
 
+# 🚫 Silencia warnings repetitivos do pandas
+warnings.filterwarnings("ignore", category=UserWarning, module="pandas.io.sql")
+
 
 def configurar_logger(log_file="/app/logs/simulation_debug.log"):
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-    logger = logging.getLogger("simulation")
+    logger = logging.getLogger(log_file)  # logger único por arquivo
     logger.setLevel(logging.INFO)
 
     if not logger.handlers:
-        # Console
         ch = logging.StreamHandler()
         ch.setLevel(logging.INFO)
-        ch_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        ch_formatter = logging.Formatter(
+            "%(asctime)s - PID:%(process)d - %(levelname)s - %(message)s"
+        )
         ch.setFormatter(ch_formatter)
 
-        # Arquivo
         fh = logging.FileHandler(log_file, mode="a", encoding="utf-8")
         fh.setLevel(logging.INFO)
-        fh_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        fh_formatter = logging.Formatter(
+            "%(asctime)s - PID:%(process)d - %(levelname)s - %(message)s"
+        )
         fh.setFormatter(fh_formatter)
 
         logger.addHandler(ch)
@@ -45,129 +52,46 @@ def configurar_logger(log_file="/app/logs/simulation_debug.log"):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Executa simulações de clusterização, roteirização e custeio.")
-
-    # 📅 Parâmetros principais
-    parser.add_argument("--tenant", required=True, help="Tenant ID")
-    parser.add_argument("--data-inicial", required=True, help="Data inicial (YYYY-MM-DD)")
-    parser.add_argument("--data-final", required=True, help="Data final (YYYY-MM-DD)")
-
-    # 🔗 Hub Central
-    parser.add_argument("--hub-id", type=int, required=True, help="ID do hub central a ser usado")
-
-    # 🔢 Clusterização
-    parser.add_argument("--k-min", type=int, default=2, help="Valor mínimo de k_clusters")
-    parser.add_argument("--k-max", type=int, default=50, help="Valor máximo de k_clusters")
-    parser.add_argument("--k-inicial-transferencia", type=int, default=1, help="Valor inicial de k para clusterização de transferências")
-    parser.add_argument("--fundir-clusters-pequenos", action="store_true", help="Funde clusters pequenos com menos entregas que o mínimo (default = NÃO funde)")
-    parser.add_argument("--min-entregas-cluster", type=int, default=25, help="Qtd mínima de entregas por cluster")
-
-    # ⏱️ Tempos operacionais
-    parser.add_argument("--parada-leve", type=int, default=10, help="Tempo de parada leve (min)")
-    parser.add_argument("--parada-pesada", type=int, default=20, help="Tempo de parada pesada (min)")
-    parser.add_argument("--tempo-volume", type=float, default=0.40, help="Tempo por volume (min)")
-
-    # 🚚 Operações e velocidade
-    parser.add_argument("--velocidade", type=float, default=60, help="Velocidade média (km/h)")
-    parser.add_argument("--limite-peso", type=float, default=50, help="Limite peso para considerar parada pesada (kg)")
-
-    # 🔗 Transferências
-    parser.add_argument("--tempo-max-transferencia", type=int, default=1200, help="Tempo máximo total de rota de transferência (min)")
-    parser.add_argument("--peso-max-transferencia", type=float, default=15000, help="Peso máximo por rota de transferência (kg)")
-
-    # 📦 Last-mile
-    parser.add_argument("--entregas-por-subcluster", type=int, default=25, help="🎯 Quantidade alvo de entregas por subcluster (por rota) na roteirização last-mile.")
-    parser.add_argument("--tempo-max-roteirizacao", type=int, default=1200, help="Tempo máximo total por rota last-mile (min)")
-    parser.add_argument("--tempo-max-k1", type=int, default=2400, help="Tempo máximo para simulação direta do hub central (k=1)")
-
-    # ⚙️ Restrições operacionais
-    parser.add_argument(
-        "--permitir-rotas-excedentes",
-        dest="permitir_rotas_excedentes",
-        action="store_true",
-        help="Permite aceitar rotas que ultrapassem o tempo máximo (default: NÃO permite)"
-    )
-    parser.add_argument(
-        "--restricao-veiculo-leve-municipio",
-        action="store_true",
-        help="Se ativado, impede que veículos leves operem fora da cidade do centro do cluster quando o peso do subcluster for menor ou igual a --peso-leve-max. (Default: desativado)"
-    )
-    parser.add_argument(
-        "--peso-leve-max",
-        type=float,
-        default=50.0,
-        help="Peso máximo (kg) para considerar que um veículo é leve para efeito de restrição municipal."
-    )
-
-    parser.add_argument("--desativar_cluster_hub", action="store_true", help="Desativa o cluster automático para entregas próximas ao hub central")
-    parser.add_argument("--raio_hub_km", type=float, default=80.0, help="Raio em km para considerar entregas como parte do cluster do hub central")
-
-    # ♻️ Modo forçar
-    parser.add_argument("--modo-forcar", action="store_true", help="Força reexecução mesmo com simulações existentes.")
-
+    parser.add_argument("--tenant", required=True)
+    parser.add_argument("--data-inicial", required=True)
+    parser.add_argument("--data-final", required=True)
+    parser.add_argument("--hub-id", type=int, required=True)
+    parser.add_argument("--k-min", type=int, default=2)
+    parser.add_argument("--k-max", type=int, default=50)
+    parser.add_argument("--k-inicial-transferencia", type=int, default=1)
+    parser.add_argument("--fundir-clusters-pequenos", action="store_true")
+    parser.add_argument("--min-entregas-cluster", type=int, default=25)
+    parser.add_argument("--parada-leve", type=int, default=10)
+    parser.add_argument("--parada-pesada", type=int, default=20)
+    parser.add_argument("--tempo-volume", type=float, default=0.40)
+    parser.add_argument("--velocidade", type=float, default=60)
+    parser.add_argument("--limite-peso", type=float, default=50)
+    parser.add_argument("--tempo-max-transferencia", type=int, default=1200)
+    parser.add_argument("--peso-max-transferencia", type=float, default=15000)
+    parser.add_argument("--entregas-por-subcluster", type=int, default=25)
+    parser.add_argument("--tempo-max-roteirizacao", type=int, default=1200)
+    parser.add_argument("--tempo-max-k1", type=int, default=2400)
+    parser.add_argument("--permitir-rotas-excedentes", dest="permitir_rotas_excedentes", action="store_true")
+    parser.add_argument("--restricao-veiculo-leve-municipio", action="store_true")
+    parser.add_argument("--peso-leve-max", type=float, default=50.0)
+    parser.add_argument("--desativar_cluster_hub", action="store_true")
+    parser.add_argument("--raio_hub_km", type=float, default=80.0)
+    parser.add_argument("--modo-forcar", action="store_true")
     return parser.parse_args()
 
 
-if __name__ == "__main__":
-    logger = configurar_logger("/app/logs/simulation_debug.log")
-    args = parse_args()
+def processar_data(data_atual, tenant_id, args, parametros):
+    """Executa simulação de uma data em processo separado."""
+    log_file = f"/app/logs/simulation_{data_atual}.log"
+    logger = configurar_logger(log_file)
 
-    tenant_id = args.tenant
-    data_inicial = datetime.strptime(args.data_inicial, "%Y-%m-%d").date()
-    data_final = datetime.strptime(args.data_final, "%Y-%m-%d").date()
+    logger.info(f"🚀 Iniciando simulação paralela para {data_atual}")
 
-    parametros = {
-        # ⏱️ Tempos
-        "tempo_parada_min": args.parada_leve,
-        "tempo_parada_leve": args.parada_leve,
-        "tempo_parada_pesada": args.parada_pesada,
-        "tempo_descarga_por_volume": args.tempo_volume,
-        "tempo_por_volume": args.tempo_volume,
-
-        # 🚚 Operações
-        "velocidade_media_kmh": args.velocidade,
-        "limite_peso_parada": args.limite_peso,
-
-        # 🔗 Transferências
-        "tempo_maximo_transferencia": args.tempo_max_transferencia,
-        "peso_max_kg": args.peso_max_transferencia,
-
-        # 📦 Last-mile
-        "entregas_por_subcluster": args.entregas_por_subcluster,
-        "tempo_maximo_roteirizacao": args.tempo_max_roteirizacao,
-        "tempo_maximo_k1": args.tempo_max_k1,
-
-        # 🔢 Clusterização
-        "k_inicial_transferencia": args.k_inicial_transferencia,
-        "k_min": args.k_min,
-        "k_max": args.k_max,
-        "min_entregas_cluster": args.min_entregas_cluster,
-
-        # ⚙️ Restrições
-        "permitir_rotas_excedentes": args.permitir_rotas_excedentes,
-        "restricao_veiculo_leve_municipio": args.restricao_veiculo_leve_municipio,
-        "peso_leve_max": args.peso_leve_max,
-
-        "desativar_cluster_hub": args.desativar_cluster_hub,
-        "raio_hub_km": args.raio_hub_km,
-    }
-
-    # 🔌 Conexões com bancos
     clusterization_db = conectar_clusterization_db()
     simulation_db = conectar_simulation_db()
 
-    datas_processadas = []
-    datas_ignoradas = []
-    pontos_inflexao = []
-
-    data_atual = data_inicial
-    while data_atual <= data_final:
-        logger.info(f"\n📦 Iniciando simulação para envio_data = {data_atual}...")
-        logger.info("🔧 Parâmetros da simulação:")
-        for chave, valor in parametros.items():
-            logger.info(f"   • {chave}: {valor}")
-
+    try:
         simulation_id = str(uuid.uuid4())
-
         use_case = SimulationUseCase(
             tenant_id=tenant_id,
             envio_data=data_atual,
@@ -181,44 +105,84 @@ if __name__ == "__main__":
             permitir_rotas_excedentes=args.permitir_rotas_excedentes
         )
 
+        ponto = use_case.executar_simulacao_completa()
+        if ponto:
+            gerar_graficos_custos_por_envio(simulation_db, tenant_id, datas_filtradas=[data_atual])
+            executar_geracao_relatorio_final(
+                tenant_id=tenant_id,
+                envio_data=str(data_atual),
+                simulation_id=simulation_id,
+                simulation_db=simulation_db
+            )
+            logger.info(f"✅ Simulação concluída para {data_atual}")
+            return ("ok", data_atual, ponto)
+        else:
+            logger.warning(f"⚠️ Simulação ignorada para {data_atual}")
+            return ("ignorada", data_atual, None)
+
+    except Exception as e:
+        logger.error(f"❌ Erro inesperado na simulação {data_atual}: {str(e)}")
+        return ("erro", data_atual, None)
+
+    finally:
         try:
-            ponto = use_case.executar_simulacao_completa()
-            if ponto is None:
-                datas_ignoradas.append(data_atual)
+            clusterization_db.close()
+            simulation_db.close()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    logger = configurar_logger("/app/logs/simulation_debug.log")
+    args = parse_args()
+
+    tenant_id = args.tenant
+    data_inicial = datetime.strptime(args.data_inicial, "%Y-%m-%d").date()
+    data_final = datetime.strptime(args.data_final, "%Y-%m-%d").date()
+
+    parametros = {
+        "tempo_parada_min": args.parada_leve,
+        "tempo_parada_leve": args.parada_leve,
+        "tempo_parada_pesada": args.parada_pesada,
+        "tempo_descarga_por_volume": args.tempo_volume,
+        "tempo_por_volume": args.tempo_volume,
+        "velocidade_media_kmh": args.velocidade,
+        "limite_peso_parada": args.limite_peso,
+        "tempo_maximo_transferencia": args.tempo_max_transferencia,
+        "peso_max_kg": args.peso_max_transferencia,
+        "entregas_por_subcluster": args.entregas_por_subcluster,
+        "tempo_maximo_roteirizacao": args.tempo_max_roteirizacao,
+        "tempo_maximo_k1": args.tempo_max_k1,
+        "k_inicial_transferencia": args.k_inicial_transferencia,
+        "k_min": args.k_min,
+        "k_max": args.k_max,
+        "min_entregas_cluster": args.min_entregas_cluster,
+        "permitir_rotas_excedentes": args.permitir_rotas_excedentes,
+        "restricao_veiculo_leve_municipio": args.restricao_veiculo_leve_municipio,
+        "peso_leve_max": args.peso_leve_max,
+        "desativar_cluster_hub": args.desativar_cluster_hub,
+        "raio_hub_km": args.raio_hub_km,
+    }
+
+    lista_datas = [data_inicial + timedelta(days=i) for i in range((data_final - data_inicial).days + 1)]
+    datas_processadas, datas_ignoradas, pontos_inflexao = [], [], []
+
+    max_workers = 4  # ⚡ Paralelismo fixo
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(processar_data, d, tenant_id, args, parametros): d for d in lista_datas}
+
+        for future in as_completed(futures):
+            status, data, ponto = future.result()
+            if status == "ok":
+                datas_processadas.append(data)
+                pontos_inflexao.append((data, ponto['k_clusters'], ponto['custo_total']))
             else:
-                datas_processadas.append(data_atual)
-                pontos_inflexao.append((data_atual, ponto['k_clusters'], ponto['custo_total']))
-
-                # 📊 Gera gráficos apenas da data atual
-                gerar_graficos_custos_por_envio(
-                    simulation_db,
-                    tenant_id,
-                    datas_filtradas=[data_atual]
-                )
-
-                executar_geracao_relatorio_final(
-                    tenant_id=tenant_id,
-                    envio_data=str(data_atual),
-                    simulation_id=simulation_id,
-                    simulation_db=simulation_db
-                )
-
-        except Exception as e:
-            logger.error(f"❌ Erro inesperado ao simular para {data_atual}: {str(e)}")
-            datas_ignoradas.append(data_atual)
-
-        data_atual += timedelta(days=1)
+                datas_ignoradas.append(data)
 
     logger.info("\n🏁 RESUMO FINAL DA SIMULAÇÃO")
     logger.info(f"✅ Datas processadas com sucesso: {len(datas_processadas)}")
     logger.info(f"📭 Datas ignoradas (sem entregas ou erro): {len(datas_ignoradas)}")
-    if datas_ignoradas:
-        logger.info(f"📅 Ignoradas: {', '.join(map(str, datas_ignoradas))}")
-
     if pontos_inflexao:
         logger.info("\n📉 Pontos de inflexão identificados:")
         for envio_data, k, custo in pontos_inflexao:
-            if custo is not None:
-                logger.info(f"🟢 {envio_data} → {k} clusters, Custo total: R${custo:,.2f}")
-            else:
-                logger.warning(f"🟡 {envio_data} → {k} clusters, simulação encerrada sem custo registrado.")
+            logger.info(f"🟢 {envio_data} → {k} clusters, Custo total: R${custo:,.2f}")
