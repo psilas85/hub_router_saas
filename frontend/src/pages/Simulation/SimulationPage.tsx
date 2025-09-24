@@ -934,21 +934,40 @@ export default function SimulationPage() {
                                                 <Map className="w-4 h-4" /> Mapas
                                             </h4>
                                             <ul className="list-disc ml-6">
-                                                {itens.mapas.map((m: string, idx: number) => (
-                                                    <li key={idx}>
-                                                        <a
-                                                            href={resolveUrl(m)}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="text-emerald-600 hover:underline"
-                                                        >
-                                                            Abrir mapa {idx + 1}
-                                                        </a>
-                                                    </li>
-                                                ))}
+                                                {["clusterizacao", "transferencias", "lastmile"].map((tipo) => {
+                                                    const arquivo = itens.mapas.find((m: string) => {
+                                                        if (tipo === "transferencias") {
+                                                            return (m.includes("transferencias") || m.includes("middlemile")) && m.endsWith(".html");
+                                                        }
+                                                        return m.includes(tipo) && m.endsWith(".html");
+                                                    });
+
+                                                    if (!arquivo) return null;
+
+                                                    let label = "";
+                                                    if (tipo === "clusterizacao") label = "Clusterização";
+                                                    if (tipo === "transferencias") label = "Middle-mile";
+                                                    if (tipo === "lastmile") label = "Last-mile";
+
+                                                    return (
+                                                        <li key={tipo}>
+                                                            <a
+                                                                href={resolveUrl(arquivo)}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-emerald-600 hover:underline"
+                                                            >
+                                                                {label}
+                                                            </a>
+                                                        </li>
+                                                    );
+                                                })}
+
                                             </ul>
                                         </div>
                                     )}
+
+
 
                                     {/* Tabelas Last-mile */}
                                     {itens.tabelas_lastmile && itens.tabelas_lastmile.length > 0 && (
@@ -1046,23 +1065,22 @@ export default function SimulationPage() {
                                             </div>
                                         )}
 
-                                    {/* Embed do cenário ótimo */}
-                                    {itens.otimo &&
-                                        itens.mapas?.some((m: string) => m.endsWith(".html")) && (
-                                            <div className="mt-4">
-                                                <h4 className="font-medium mb-2">
-                                                    📍 Mapa do Cenário Ótimo
-                                                </h4>
-                                                <iframe
-                                                    src={resolveUrl(
-                                                        itens.mapas.find((m: string) => m.endsWith(".html")) ||
-                                                        ""
-                                                    )}
-                                                    title={`Mapa k=${k}`}
-                                                    className="w-full h-[600px] border rounded-lg"
-                                                />
-                                            </div>
-                                        )}
+                                    {/* Embed do cenário Ótimo */}
+                                    {itens.otimo && (
+                                        <div className="mt-4">
+                                            <h4 className="font-medium">📍 Cenário Ótimo</h4>
+                                            <iframe
+                                                src={resolveUrl(
+                                                    itens.mapas.find((m: string) => m.includes("clusterizacao") && m.endsWith(".html"))
+                                                )}
+                                                title="Cenário Ótimo"
+                                                className="w-full h-[500px] border rounded-lg"
+                                            />
+                                        </div>
+                                    )}
+
+
+
                                 </div>
                             ))}
                         </div>
