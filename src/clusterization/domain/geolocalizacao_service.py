@@ -71,15 +71,37 @@ class GeolocalizacaoService:
     def _buscar_lat_lon_nominatim(self, endereco, tentativas=3):
         for tentativa in range(tentativas):
             try:
-                location = self.geolocator.geocode(endereco, timeout=10)
-                if location:
-                    return location.latitude, location.longitude
-            except GeocoderTimedOut:
-                time.sleep(2)
+                params = {
+                    "q": endereco,
+                    "format": "json",
+                    "limit": 1,
+                    "addressdetails": 1,  # 🔎 força trazer UF, cidade etc
+                }
+                response = requests.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params=params,
+                    headers={"User-Agent": "cluster_router"},
+                    timeout=30,  # ⏱ aumenta timeout
+                )
+                response.raise_for_status()
+                results = response.json()
+
+                if results:
+                    r = results[0]
+                    lat = float(r["lat"])
+                    lon = float(r["lon"])
+                    # ✅ validação adicional: checar se veio "CE"
+                    uf = r.get("address", {}).get("state")
+                    logging.debug(f"Nominatim raw → {r.get('display_name')} / UF detectada: {uf}")
+                    return lat, lon
+            except requests.exceptions.Timeout:
+                logging.warning(f"⏱ Timeout Nominatim (tentativa {tentativa+1}/{tentativas})")
+                time.sleep(2 * (tentativa + 1))  # ⏳ backoff progressivo
             except Exception as e:
                 logging.error(f"Erro Nominatim: {e}")
                 return None
         return None
+
 
     def _buscar_lat_lon_google(self, endereco):
         if not self.GOOGLE_MAPS_API_KEY:

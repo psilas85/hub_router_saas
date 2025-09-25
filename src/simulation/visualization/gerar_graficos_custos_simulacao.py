@@ -59,8 +59,8 @@ def gerar_graficos_custos_por_envio(
                 ax.plot(df_data["k_clusters"], df_data["custo_total"],
                         color="black", marker="o", label="Custo Total")
 
-                ax.set_title(f"Custo Total por k_clusters — {envio_data}")
-                ax.set_xlabel("k_clusters")
+                ax.set_title(f"Custo Total por cenário de clusters — {envio_data}")
+                ax.set_xlabel("Número de clusters (0 = baseline hub central)")
                 ax.set_ylabel("Custo (R$)")
                 ax.legend()
                 ax.grid(True)

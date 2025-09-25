@@ -42,7 +42,7 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, parametros, modo_forcar
             "peso_max_kg": parametros.get("peso_max_transferencia", 15000),
             "entregas_por_subcluster": parametros.get("entregas_por_subcluster", 25),
             "tempo_maximo_roteirizacao": parametros.get("tempo_max_roteirizacao", 1200),
-            "tempo_maximo_k1": parametros.get("tempo_max_k1", 2400),
+            "tempo_maximo_k0": parametros.get("tempo_max_k0", 2400),
             "k_inicial_transferencia": parametros.get("k_inicial_transferencia", 1),
             "k_min": parametros.get("k_min", 2),
             "k_max": parametros.get("k_max", 50),

@@ -135,23 +135,24 @@ def gerar_relatorio_simulacao(
         ]:
             elements.append(Paragraph(titulo, style_normal))
 
-            # ✅ Tratamento especial para k = 1 (hub central)
-            if k == 1 and tipo in ["clusterizacao", "transferencias"]:
+            # ✅ Tratamento especial para k = 0 (baseline hub central)
+            if k == 0 and tipo in ["clusterizacao", "transferencias"]:
                 if tipo == "clusterizacao":
                     elements.append(
                         Paragraph(
-                            "Simulação especial partindo do hub central. Clusterização não aplicável.",
+                            "Baseline partindo diretamente do hub central. Clusterização não aplicável.",
                             style_normal,
                         )
                     )
                 elif tipo == "transferencias":
                     elements.append(
                         Paragraph(
-                            "Não há rotas de transferência nesta simulação (k = 1).",
+                            "Não há rotas de transferência neste cenário baseline (k = 0).",
                             style_normal,
                         )
                     )
                 continue
+
 
             img_path = os.path.join(
                 maps_dir, f"{tenant_id}_mapa_{tipo}_{envio_data}_k{k}.png"

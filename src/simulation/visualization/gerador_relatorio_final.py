@@ -1,3 +1,5 @@
+#hub_router_1.0.1/src/simulation/visualization/gerador_relatorio_final.py
+
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -67,8 +69,8 @@ def executar_geracao_relatorio_final(
                 )
 
                 ax.plot(df["k_clusters"], df["custo_total"], color="black", marker="o", label="Custo Total")
-                ax.set_title(f"Custo Total por k_clusters — {envio_data}")
-                ax.set_xlabel("k_clusters")
+                ax.set_title(f"Custo Total por cenário de clusters — {envio_data}")
+                ax.set_xlabel("Número de clusters (0 = baseline hub central)")
                 ax.set_ylabel("Custo (R$)")
                 ax.legend()
                 ax.grid(True)

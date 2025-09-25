@@ -70,7 +70,7 @@ def parse_args():
     parser.add_argument("--peso-max-transferencia", type=float, default=15000)
     parser.add_argument("--entregas-por-subcluster", type=int, default=25)
     parser.add_argument("--tempo-max-roteirizacao", type=int, default=1200)
-    parser.add_argument("--tempo-max-k1", type=int, default=2400)
+    parser.add_argument("--tempo-max-k0", type=int, default=2400)
     parser.add_argument("--permitir-rotas-excedentes", dest="permitir_rotas_excedentes", action="store_true")
     parser.add_argument("--restricao-veiculo-leve-municipio", action="store_true")
     parser.add_argument("--peso-leve-max", type=float, default=50.0)
@@ -152,7 +152,7 @@ if __name__ == "__main__":
         "peso_max_kg": args.peso_max_transferencia,
         "entregas_por_subcluster": args.entregas_por_subcluster,
         "tempo_maximo_roteirizacao": args.tempo_max_roteirizacao,
-        "tempo_maximo_k1": args.tempo_max_k1,
+        "tempo_maximo_k0": args.tempo_max_k0,
         "k_inicial_transferencia": args.k_inicial_transferencia,
         "k_min": args.k_min,
         "k_max": args.k_max,

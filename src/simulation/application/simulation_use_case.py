@@ -99,12 +99,12 @@ class SimulationUseCase:
             return {"cluster_id": cluster_id, "rotas": None, "custo_last_mile": 0.0}
 
 
-    def _buscar_resultado_k1(self):
+    def _buscar_resultado_k0(self):
         cursor = self.simulation_db.cursor()
         cursor.execute("""
             SELECT custo_total, custo_transferencia, custo_last_mile, custo_cluster
             FROM resultados_simulacao
-            WHERE tenant_id = %s AND envio_data = %s AND simulation_id = %s AND k_clusters = 1
+            WHERE tenant_id = %s AND envio_data = %s AND simulation_id = %s AND k_clusters = 0
             ORDER BY created_at DESC
             LIMIT 1
         """, (self.tenant_id, self.envio_data, self.simulation_id))
@@ -114,13 +114,14 @@ class SimulationUseCase:
         if not row:
             return None
 
-        custo_total_k1, custo_transf_k1, custo_lm_k1, custo_cluster_k1 = row
+        custo_total, custo_transf, custo_lm, custo_cluster = row
         return {
-            "custo_total": float(custo_total_k1),
-            "custo_transferencia": float(custo_transf_k1 or 0.0),
-            "custo_last_mile": float(custo_lm_k1 or 0.0),
-            "custo_cluster": float(custo_cluster_k1 or 0.0),
+            "custo_total": float(custo_total),
+            "custo_transferencia": float(custo_transf or 0.0),
+            "custo_last_mile": float(custo_lm or 0.0),
+            "custo_cluster": float(custo_cluster or 0.0),
         }
+
 
     def executar_simulacao_completa(self):
         if not self.modo_forcar and self.simulation_service.simulacao_ja_existente():
@@ -173,31 +174,33 @@ class SimulationUseCase:
             self.logger.warning(f"⚠️ Nenhuma entrega encontrada para {self.envio_data}. Simulação será ignorada.")
             return None
 
-        self._executar_simulacao_k1(df_entregas, df_hub)
+        self._executar_simulacao_k0(df_entregas, df_hub)
 
         custos_totais: list[float] = []
         melhor_k = None
         menor_custo = float("inf")
         melhor_resultado = None
 
-        k1 = self._buscar_resultado_k1()
-        if k1:
+        k0 = self._buscar_resultado_k0()
+        if k0:
             qtd = int(df_entregas["cte_numero"].nunique())
-            custos_totais.append(k1["custo_total"])
-            melhor_k = 1
-            menor_custo = k1["custo_total"]
+            custos_totais.append(k0["custo_total"])
+            melhor_k = 0
+            menor_custo = k0["custo_total"]
             melhor_resultado = {
                 "simulation_id": self.simulation_id,
                 "tenant_id": self.tenant_id,
                 "envio_data": self.envio_data,
-                "k_clusters": 1,
-                "custo_total": k1["custo_total"],
+                "k_clusters": 0,
+                "custo_total": k0["custo_total"],
                 "quantidade_entregas": qtd,
-                "custo_transferencia": k1["custo_transferencia"],
-                "custo_last_mile": k1["custo_last_mile"],
-                "custo_cluster": k1["custo_cluster"],
+                "custo_transferencia": k0["custo_transferencia"],
+                "custo_last_mile": k0["custo_last_mile"],
+                "custo_cluster": k0["custo_cluster"],
             }
-            self.logger.info(f"🏁 k=1 incluído como candidato inicial: custo_total={k1['custo_total']:.2f}")
+            self.logger.info(f"🏁 k=0 incluído como candidato inicial: custo_total={k0['custo_total']:.2f}")
+
+
 
         k_inicial = self.simulation_service.obter_k_inicial(
             df_entregas, self.parametros['k_min'], self.parametros['k_max']
@@ -429,13 +432,13 @@ class SimulationUseCase:
             "custo_cluster": custo_cluster
         }
 
-    def _executar_simulacao_k1(self, df_entregas, df_hub=None):
-        self.logger.info("🚀 Executando simulação especial de last-mile com k=1 (hub central)")
+    def _executar_simulacao_k0(self, df_entregas, df_hub=None):
+        self.logger.info("🚀 Executando simulação baseline de last-mile com k=0 (hub central)")
         if df_hub is not None and not df_hub.empty:
             df_entregas = pd.concat([df_entregas, df_hub], ignore_index=True)
 
         df_entregas["cluster"] = 0
-        df_entregas["k_clusters"] = 1
+        df_entregas["k_clusters"] = 0
 
         hub = self.simulation_service.buscar_hub_central()
         df_entregas["centro_lat"] = hub.latitude
@@ -445,25 +448,25 @@ class SimulationUseCase:
         df_entregas["simulation_id"] = self.simulation_id
         df_entregas["is_ponto_otimo"] = False
 
-        self.cluster_service.salvar_clusterizacao_em_db(df_entregas, self.simulation_id, self.envio_data, k_clusters=1)
+        self.cluster_service.salvar_clusterizacao_em_db(df_entregas, self.simulation_id, self.envio_data, k_clusters=0)
 
         try:
             df_rotas_last_mile = self.last_mile_service.rotear_last_mile(
                 df_entregas,
-                k_clusters=1,
-                tempo_maximo=self.parametros.get("tempo_maximo_k1", 600)
+                k_clusters=0,
+                tempo_maximo=self.parametros.get("tempo_maximo_k0", 600)
             )
         except Exception as e:
-            self.logger.error(f"❌ Erro na roteirização last-mile k=1: {str(e)}")
-            return
+            self.logger.error(f"❌ Erro na roteirização last-mile k=0: {str(e)}")
+            return None
 
         if df_rotas_last_mile is None or df_rotas_last_mile.empty:
-            self.logger.warning("⚠️ Roteirização k=1 não gerou rotas.")
-            return
+            self.logger.warning("⚠️ Roteirização k=0 não gerou rotas.")
+            return None
 
         self.last_mile_service.salvar_rotas_last_mile_em_db(
             df_rotas_last_mile, self.tenant_id, self.envio_data,
-            self.simulation_id, 1, self.simulation_db
+            self.simulation_id, 0, self.simulation_db
         )
 
         custo_last_mile = self.cost_last_mile_service.calcular_custo(df_rotas_last_mile)
@@ -482,23 +485,27 @@ class SimulationUseCase:
             )
         except Exception as e:
             custo_cluster = 0.0
-            self.logger.warning(f"⚠️ Falha ao calcular custo cluster (k=1): {e}")
+            self.logger.warning(f"⚠️ Falha ao calcular custo cluster (k=0): {e}")
 
         custo_total = custo_last_mile + custo_cluster
         qtd = int(df_entregas["cte_numero"].nunique())
 
-        self.result_service.salvar_resultado({
+        resultado_k0 = {
             "simulation_id": self.simulation_id,
             "tenant_id": self.tenant_id,
             "envio_data": self.envio_data,
-            "k_clusters": 1,
+            "k_clusters": 0,
             "quantidade_entregas": qtd,
             "custo_transferencia": 0.0,
             "custo_last_mile": custo_last_mile,
             "custo_cluster": custo_cluster,
             "custo_total": custo_total,
             "is_ponto_otimo": False
-        }, modo_forcar=self.modo_forcar)
+        }
+
+        # 💾 Salvar no banco
+        self.result_service.salvar_resultado(resultado_k0, modo_forcar=self.modo_forcar)
+        self.logger.info(f"💾 Resultado k=0 salvo com custo_total={custo_total:.2f}")
 
         try:
             plotar_mapa_last_mile(
@@ -506,10 +513,12 @@ class SimulationUseCase:
                 clusterization_db=self.clusterization_db,
                 tenant_id=self.tenant_id,
                 envio_data=self.envio_data,
-                k_clusters=1,
+                k_clusters=0,
                 output_dir=self.output_dir,
                 modo_forcar=self.modo_forcar,
                 logger=self.logger
             )
         except Exception as e:
-            self.logger.warning(f"⚠️ Erro mapa last-mile k=1: {e}")
+            self.logger.warning(f"⚠️ Erro mapa last-mile k=0: {e}")
+
+        return resultado_k0
