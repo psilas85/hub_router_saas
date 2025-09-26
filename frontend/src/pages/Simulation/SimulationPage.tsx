@@ -493,8 +493,8 @@ export default function SimulationPage() {
         const di = periodoFrotaDefault.data_inicial;
         const df = periodoFrotaDefault.data_final;
 
-        if (!frotaK) {
-            toast.error("Informe um valor de k (ex.: 8)");
+        if (!frotaK && frotaK !== 0) {
+            toast.error("Informe um valor de k (ex.: 8 ou 0 para todos)");
             return;
         }
         if (!di || !df || df < di) {
@@ -502,21 +502,20 @@ export default function SimulationPage() {
             return;
         }
 
-        console.log("🚚 Enviando frota_k_fixo:", { di, df, frotaK }); // debug
+        console.log("🚚 Enviando frota_k_fixo:", { di, df, frotaK });
 
         setLoadingFrota(true);
         try {
             const result = await getFrotaKFixo({
                 data_inicial: di,
                 data_final: df,
-                k: frotaK, // ✅ apenas um k inteiro
+                k: frotaK,
             });
 
             setFrotaLastmile(result.lastmile || []);
             setFrotaTransfer(result.transfer || []);
             setFrotaCsvLastmile(result.csv_lastmile || null);
             setFrotaCsvTransfer(result.csv_transfer || null);
-
 
             toast.success("Frota sugerida carregada!");
         } catch (err: any) {
@@ -525,6 +524,7 @@ export default function SimulationPage() {
             setLoadingFrota(false);
         }
     };
+
 
     return (
         <div className="max-w-6xl mx-auto p-6">
@@ -1645,16 +1645,17 @@ export default function SimulationPage() {
                         </div>
                         <div>
                             <label className="block text-sm text-gray-700">
-                                Valor de k (ex.: 8)
+                                Valor de k (0 = todos, ex.: 8)
                             </label>
                             <input
                                 type="number"
-                                value={frotaK || ""}
+                                value={frotaK ?? ""}
                                 onChange={(e) => setFrotaK(Number(e.target.value))}
                                 className="input"
-                                placeholder="Informe um k"
+                                placeholder="Informe um k (0 = todos)"
                             />
                         </div>
+
                         <div className="flex items-end">
                             <button
                                 onClick={carregarFrota}
