@@ -60,6 +60,17 @@ class ClusterCostIn(BaseModel):
 class ClusterCostOut(ClusterCostIn):
     id: int
 
+class LastMileVehicleIn(BaseModel):
+    veiculo: str
+    capacidade_kg_min: float
+    capacidade_kg_max: float
+
+class TransferVehicleIn(BaseModel):
+    veiculo: str
+    capacidade_kg_min: float
+    capacidade_kg_max: float
+
+
 
 @router.get("/health", summary="Health Check", description="Verifica se o serviço de simulação está online.")
 def healthcheck():
@@ -660,3 +671,117 @@ def listar_historico_simulation(
         }
     finally:
         db.close()
+
+# ================================
+# CRUD Tarifas Veículos
+# ================================
+from simulation.infrastructure.simulation_database_writer import (
+    inserir_ou_atualizar_tarifa_last_mile,
+    remover_tarifa_last_mile,
+    inserir_ou_atualizar_tarifa_transferencia,
+    remover_tarifa_transferencia,
+)
+from simulation.infrastructure.simulation_database_reader import (
+    listar_tarifas_last_mile,
+    listar_tarifas_transferencia,
+)
+
+class TarifaLastMileIn(BaseModel):
+    veiculo: str
+    capacidade_kg_min: float
+    capacidade_kg_max: float
+    tarifa_km: float
+    tarifa_entrega: float
+
+class TarifaTransferenciaIn(BaseModel):
+    veiculo: str
+    capacidade_kg_min: float
+    capacidade_kg_max: float
+    tarifa_km: float
+    tarifa_fixa: float
+
+
+# ---------- Last-mile ----------
+@router.get("/tarifas/lastmile", summary="Listar tarifas last-mile")
+def listar_tarifas_lm(tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db()
+    try:
+        df = listar_tarifas_last_mile(conn, tenant_id)
+        return df.to_dict(orient="records")
+    finally:
+        conn.close()
+
+
+@router.post("/tarifas/lastmile", summary="Inserir ou atualizar tarifa last-mile")
+def upsert_tarifa_lm(payload: TarifaLastMileIn, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db()
+    try:
+        inserir_ou_atualizar_tarifa_last_mile(
+            conn,
+            tenant_id,
+            payload.veiculo.strip(),
+            payload.capacidade_kg_min,
+            payload.capacidade_kg_max,
+            payload.tarifa_km,
+            payload.tarifa_entrega,
+        )
+        conn.commit()
+        return {"status": "ok", "veiculo": payload.veiculo}
+    finally:
+        conn.close()
+
+
+@router.delete("/tarifas/lastmile/{veiculo:path}", summary="Remover tarifa last-mile")
+def remover_tarifa_lm(veiculo: str, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db()
+    try:
+        sucesso = remover_tarifa_last_mile(conn, veiculo)
+        conn.commit()
+        if not sucesso:
+            raise HTTPException(status_code=404, detail=f"Veículo '{veiculo}' não encontrado")
+        return {"deleted": True, "veiculo": veiculo}
+    finally:
+        conn.close()
+
+
+# ---------- Transferência ----------
+@router.get("/tarifas/transferencia", summary="Listar tarifas de transferência")
+def listar_tarifas_transf(tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db()
+    try:
+        df = listar_tarifas_transferencia(conn, tenant_id)
+        return df.to_dict(orient="records")
+    finally:
+        conn.close()
+
+
+@router.post("/tarifas/transferencia", summary="Inserir ou atualizar tarifa de transferência")
+def upsert_tarifa_transf(payload: TarifaTransferenciaIn, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db()
+    try:
+        inserir_ou_atualizar_tarifa_transferencia(
+            conn,
+            tenant_id,
+            payload.veiculo.strip(),
+            payload.capacidade_kg_min,
+            payload.capacidade_kg_max,
+            payload.tarifa_km,
+            payload.tarifa_fixa,
+        )
+        conn.commit()
+        return {"status": "ok", "veiculo": payload.veiculo}
+    finally:
+        conn.close()
+
+
+@router.delete("/tarifas/transferencia/{veiculo:path}", summary="Remover tarifa de transferência")
+def remover_tarifa_transf(veiculo: str, tenant_id: str = Depends(obter_tenant_id_do_token)):
+    conn = conectar_simulation_db()
+    try:
+        sucesso = remover_tarifa_transferencia(conn, veiculo)
+        conn.commit()
+        if not sucesso:
+            raise HTTPException(status_code=404, detail=f"Veículo '{veiculo}' não encontrado")
+        return {"deleted": True, "veiculo": veiculo}
+    finally:
+        conn.close()

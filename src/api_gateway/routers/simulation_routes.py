@@ -439,3 +439,74 @@ async def proxy_historico_simulation(
 
     return result["content"]
 
+from urllib.parse import quote
+
+# ============================
+# CRUD Tarifas Last-mile
+# ============================
+@router.get("/tarifas/lastmile", summary="Listar tarifas last-mile")
+async def listar_tarifas_lm(request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request("GET", f"{SIMULATION_URL}/simulation/tarifas/lastmile", headers=headers)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.post("/tarifas/lastmile", summary="Inserir/atualizar tarifa last-mile")
+async def upsert_tarifa_lm(request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    body = await request.json()
+    result = await forward_request("POST", f"{SIMULATION_URL}/simulation/tarifas/lastmile", headers=headers, json=body)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.delete("/tarifas/lastmile/{veiculo:path}", summary="Remover tarifa last-mile")
+async def remover_tarifa_lm(veiculo: str, request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request(
+        "DELETE",
+        f"{SIMULATION_URL}/simulation/tarifas/lastmile/{quote(veiculo, safe='')}",
+        headers=headers
+    )
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+# ============================
+# CRUD Tarifas Transferência
+# ============================
+@router.get("/tarifas/transferencia", summary="Listar tarifas de transferência")
+async def listar_tarifas_transf(request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request("GET", f"{SIMULATION_URL}/simulation/tarifas/transferencia", headers=headers)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.post("/tarifas/transferencia", summary="Inserir/atualizar tarifa de transferência")
+async def upsert_tarifa_transf(request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    body = await request.json()
+    result = await forward_request("POST", f"{SIMULATION_URL}/simulation/tarifas/transferencia", headers=headers, json=body)
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.delete("/tarifas/transferencia/{veiculo:path}", summary="Remover tarifa de transferência")
+async def remover_tarifa_transf(veiculo: str, request: Request, usuario: UsuarioToken = Depends(obter_tenant_id_do_token)):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request(
+        "DELETE",
+        f"{SIMULATION_URL}/simulation/tarifas/transferencia/{quote(veiculo, safe='')}",
+        headers=headers
+    )
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+

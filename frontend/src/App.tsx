@@ -31,6 +31,11 @@ import ExploratoryDashboardPage from "@/pages/Exploratory/ExploratoryDashboardPa
 // Context
 import { ProcessingProvider } from "@/context/ProcessingContext"; // ✅ novo
 
+// Simulação
+import SimulationLastMileVehiclesPage from "@/pages/Simulation/SimulationLastMileVehiclesPage";
+import SimulationTransferVehiclesPage from "@/pages/Simulation/SimulationTransferVehiclesPage";
+
+
 export default function App() {
   return (
     <ProcessingProvider>
@@ -217,6 +222,29 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+
+          <Route
+            path="/simulation/lastmile_vehicles"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <SimulationLastMileVehiclesPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/simulation/transfer_vehicles"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <SimulationTransferVehiclesPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+
 
           {/* Default */}
           <Route path="*" element={<Navigate to="/" replace />} />

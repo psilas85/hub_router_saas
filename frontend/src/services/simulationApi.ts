@@ -1,5 +1,4 @@
 // hub_router_1.0.1/frontend/src/services/simulationApi.ts
-
 import api from "@/services/api";
 
 // ===== Execução de simulação =====
@@ -62,7 +61,7 @@ export async function runSimulation(params: RunSimulationParams) {
 
     return resp.data as {
         status: "ok" | "queued" | "processing";
-        job_id?: string;   // 👈 para acompanhar no frontend
+        job_id?: string;
         tenant_id?: string;
         mensagem: string;
         datas_processadas?: string[];
@@ -209,7 +208,7 @@ export type FrotaKFixoResponse = {
 export async function getFrotaKFixo(params: {
     data_inicial: string;
     data_final: string;
-    k: number;   // ✅ agora apenas um k por vez
+    k: number;
 }) {
     const resp = await api.get("/simulation/frota_k_fixo", { params });
     return resp.data as FrotaKFixoResponse;
@@ -294,4 +293,57 @@ export async function getHistorico(limit: number = 10) {
         tenant_id: string;
         historico: HistoricoSimulation[];
     };
+}
+
+// ===== Veículos Simulation - Last-Mile =====
+export type SimulationLastMileVehicle = {
+    veiculo: string;  // 🔄 corrigido (antes era tipo_veiculo)
+    capacidade_kg_min: number;
+    capacidade_kg_max: number;
+    tarifa_km: number;
+    tarifa_entrega: number;
+};
+
+export async function simListLastMileVehicles() {
+    const resp = await api.get("/simulation/tarifas/lastmile");
+    return resp.data as SimulationLastMileVehicle[];
+}
+
+export async function simAddLastMileVehicle(v: SimulationLastMileVehicle) {
+    const resp = await api.post("/simulation/tarifas/lastmile", v);
+    return resp.data;
+}
+
+export async function simDeleteLastMileVehicle(veiculo: string) {
+    const resp = await api.delete(
+        `/simulation/tarifas/lastmile/${encodeURIComponent(veiculo)}`
+    );
+    return resp.data;
+}
+
+
+// ===== Veículos Simulation - Transferência =====
+export type SimulationTransferVehicle = {
+    veiculo: string;  // 🔄 corrigido
+    capacidade_kg_min: number;
+    capacidade_kg_max: number;
+    tarifa_km: number;
+    tarifa_fixa: number;
+};
+
+export async function simListTransferVehicles() {
+    const resp = await api.get("/simulation/tarifas/transferencia");
+    return resp.data as SimulationTransferVehicle[];
+}
+
+export async function simAddTransferVehicle(v: SimulationTransferVehicle) {
+    const resp = await api.post("/simulation/tarifas/transferencia", v);
+    return resp.data;
+}
+
+export async function simDeleteTransferVehicle(veiculo: string) {
+    const resp = await api.delete(
+        `/simulation/tarifas/transferencia/${encodeURIComponent(veiculo)}`
+    );
+    return resp.data;
 }

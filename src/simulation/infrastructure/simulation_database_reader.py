@@ -90,9 +90,6 @@ def definir_tipo_veiculo_last_mile(
         logger.error(f"❌ Nenhum veículo compatível com peso {peso_total:.2f}kg. Retornando 'DESCONHECIDO'")
     return "DESCONHECIDO", 0.0
 
-
-
-
 def carregar_entregas_clusterizacao(db_conn, tenant_id: str, envio_data: str, logger=None) -> pd.DataFrame:
 
     query = f"""
@@ -203,7 +200,12 @@ def obter_tarifa_km_veiculo_transferencia(tipo_veiculo: str, db_conn) -> float:
 
 def listar_tarifas_last_mile(db, tenant_id: str):
     query = """
-        SELECT *
+        SELECT
+            tipo_veiculo AS veiculo,
+            capacidade_kg_min,
+            capacidade_kg_max,
+            tarifa_km,
+            tarifa_entrega
         FROM veiculos_last_mile
         WHERE tenant_id = %s
         ORDER BY capacidade_kg_min
@@ -213,12 +215,18 @@ def listar_tarifas_last_mile(db, tenant_id: str):
 
 def listar_tarifas_transferencia(db, tenant_id: str):
     query = """
-        SELECT *
+        SELECT
+            tipo_veiculo AS veiculo,
+            capacidade_kg_min,
+            capacidade_kg_max,
+            tarifa_km,
+            tarifa_fixa
         FROM veiculos_transferencia
         WHERE tenant_id = %s
         ORDER BY capacidade_kg_min
     """
     return pd.read_sql(query, db, params=(tenant_id,))
+
 
 
 def obter_capacidade_veiculo(tipo_veiculo: str, db_conn) -> float:

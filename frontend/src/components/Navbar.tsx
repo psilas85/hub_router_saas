@@ -270,6 +270,20 @@ export default function Navbar() {
                     >
                         Custos de Centros
                     </Item>
+                    <Item
+                        to="/simulation/lastmile_vehicles"
+                        icon={<span className="text-base leading-none">🚐</span>}
+                        onClick={() => setDrawerOpen(false)}
+                    >
+                        Veículos Last-Mile
+                    </Item>
+                    <Item
+                        to="/simulation/transfer_vehicles"
+                        icon={<span className="text-base leading-none">🚛</span>}
+                        onClick={() => setDrawerOpen(false)}
+                    >
+                        Veículos Transferência
+                    </Item>
                 </SubMenu>
 
                 {/* Admin */}
