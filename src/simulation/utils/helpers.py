@@ -131,6 +131,9 @@ def ajustar_para_centro_urbano(lat, lon, db_conn, tenant_id, logger=None):
                 location.raw["address"].get("city")
                 or location.raw["address"].get("town")
                 or location.raw["address"].get("village")
+                or location.raw["address"].get("municipality")     # 👈 novo
+                or location.raw["address"].get("county")           # 👈 novo
+        or location.raw["address"].get("state_district")   # 👈 novo (útil no interior)
                 or "Desconhecido"
             )
 

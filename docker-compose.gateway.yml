@@ -1,6 +1,6 @@
 services:
   api_gateway:
-    container_name: api_gateway   # 👈 nome fixo para resolver no DNS
+    container_name: api_gateway
     image: psilas85/hub_router-api_gateway:latest
     build:
       context: ./src/api_gateway
@@ -8,14 +8,15 @@ services:
     ports:
       - "8010:8000"
     volumes:
-      - ./src:/app/src   # 👈 monta o src inteiro
+      - ./src:/app/src
       - ./exports:/app/exports
     env_file:
       - ./src/api_gateway/.env
     environment:
-      - PYTHONPATH=/app/src   # 👈 garante que todos os pacotes sejam encontrados
+      - PYTHONPATH=/app/src
     networks:
-      - hub_router_network   # 👈 força na rede correta
+      - hub_router_network
+    restart: always   # 👈 garante que volte sozinho após reboot
 
 networks:
   hub_router_network:
