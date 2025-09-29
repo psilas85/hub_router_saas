@@ -10,37 +10,44 @@ def carregar_tarifas_last_mile(db_conn) -> pd.DataFrame:
     query = "SELECT * FROM veiculos_last_mile"
     return pd.read_sql(query, db_conn)
 
-def definir_tipo_veiculo_transferencia(peso_total: float, db_conn) -> str:
+def definir_tipo_veiculo_transferencia(peso_total: float, db_conn, tenant_id: str) -> str:
     """
     Retorna o tipo de veículo adequado ao peso total da transferência
-    com base na tabela `veiculos_transferencia`. Se nenhum veículo for
-    compatível, retorna o de maior capacidade.
+    com base na tabela `veiculos_transferencia` do tenant.
+    Se nenhum veículo for compatível, retorna o de maior capacidade.
+    Sempre normaliza para lowercase.
     """
     cursor = db_conn.cursor()
     query = """
         SELECT tipo_veiculo
         FROM veiculos_transferencia
-        WHERE capacidade_kg_min <= %s AND capacidade_kg_max >= %s
+        WHERE tenant_id = %s
+          AND capacidade_kg_min <= %s
+          AND capacidade_kg_max >= %s
         ORDER BY capacidade_kg_max ASC
         LIMIT 1
     """
-    cursor.execute(query, (peso_total, peso_total))
+    cursor.execute(query, (tenant_id, peso_total, peso_total))
     resultado = cursor.fetchone()
 
     if resultado:
-        return resultado[0]
+        cursor.close()
+        return resultado[0].strip().lower()
 
-    # Fallback: retorna o veículo com maior capacidade
+    # fallback
     cursor.execute("""
         SELECT tipo_veiculo
         FROM veiculos_transferencia
+        WHERE tenant_id = %s
         ORDER BY capacidade_kg_max DESC
         LIMIT 1
-    """)
+    """, (tenant_id,))
     fallback = cursor.fetchone()
     cursor.close()
 
-    return fallback[0] if fallback else "Desconhecido"
+    return fallback[0].strip().lower() if fallback else "desconhecido"
+
+
 
 def definir_tipo_veiculo_last_mile(
     peso_total: float,
@@ -171,19 +178,24 @@ def carregar_hubs(db_conn, tenant_id):
 
     return hubs
 
-def obter_veiculo_transferencia_por_peso(peso_total: float, db_conn) -> str:
+def obter_veiculo_transferencia_por_peso(peso_total: float, db_conn, tenant_id: str) -> str:
+    """
+    Busca veículo pelo peso dentro do tenant informado.
+    Sempre retorna em lowercase.
+    """
     query = """
         SELECT tipo_veiculo
         FROM veiculos_transferencia
-        WHERE %s BETWEEN capacidade_kg_min AND capacidade_kg_max
+        WHERE tenant_id = %s
+          AND %s BETWEEN capacidade_kg_min AND capacidade_kg_max
         LIMIT 1
     """
     cursor = db_conn.cursor()
-    cursor.execute(query, (peso_total,))
+    cursor.execute(query, (tenant_id, peso_total))
     result = cursor.fetchone()
     cursor.close()
 
-    return result[0] if result else "Desconhecido"
+    return result[0].strip().lower() if result else "desconhecido"
 
 def obter_tarifa_km_veiculo_transferencia(tipo_veiculo: str, db_conn) -> float:
     query = """

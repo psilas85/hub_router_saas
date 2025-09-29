@@ -65,7 +65,7 @@ async def upload_data_input(
         # monta os dados multipart
         files = {"file": (file.filename, await file.read(), file.content_type)}
 
-        async with httpx.AsyncClient(timeout=1800.0) as client:
+        async with httpx.AsyncClient(timeout=7200.0) as client:
             response = await client.post(
                 url,
                 headers={k: v for k, v in request.headers.items() if k.lower() != "content-length"},
@@ -98,7 +98,7 @@ async def upload_data_input(
 @router.get("/status/{job_id}", summary="Consultar status de processamento de Data Input")
 async def job_status(job_id: str, request: Request):
     try:
-        async with httpx.AsyncClient(timeout=1800.0) as client:
+        async with httpx.AsyncClient(timeout=7200.0) as client:
             resp = await client.get(
                 f"{DATA_INPUT_URL}/data_input/status/{job_id}",
                 headers={k: v for k, v in request.headers.items() if k.lower() != "host"},

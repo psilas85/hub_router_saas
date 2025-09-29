@@ -165,7 +165,9 @@ class TransferRoutingService:
             peso = sum(p["peso"] for p in rota)
             volumes = sum(p["volumes"] for p in rota)
             valor_nf = sum(p["valor_nf"] for p in rota)
-            tipo_veiculo = definir_tipo_veiculo_transferencia(peso, self.simulation_db)
+            # ✅ Agora com tenant_id e normalização no próprio método
+            tipo_veiculo = definir_tipo_veiculo_transferencia(peso, self.simulation_db, self.tenant_id)
+
 
             dist_real = 0.0
             tempo_real = 0.0

@@ -124,7 +124,7 @@ async def upload_data_input(
         job = queue.enqueue(
             processar_csv,
             job_id, tenant_id, file_path, modo_forcar, limite_peso_kg,
-            job_timeout=1800,
+            job_timeout=7200,
             result_ttl=86400
         )
 
