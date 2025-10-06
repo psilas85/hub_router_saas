@@ -24,10 +24,19 @@ logger.setLevel(logging.DEBUG)
 DATA_INPUT_URL = settings.DATA_INPUT_URL
 
 
+# 🔹 Utilitário para normalizar headers
+def copiar_headers(request: Request):
+    return {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in ["host", "content-length"]
+    }
+
+
 # 🔹 Healthcheck (proxy)
 @router.get("/health", summary="Healthcheck Data Input")
 async def healthcheck(request: Request):
-    headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+    headers = copiar_headers(request)
     return await forward_request("GET", f"{DATA_INPUT_URL}/data_input/health", headers=headers)
 
 
@@ -35,7 +44,7 @@ async def healthcheck(request: Request):
 @router.post("/processar", summary="Executar pipeline de Data Input")
 async def processar_data_input(request: Request):
     body = await request.body()
-    headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+    headers = copiar_headers(request)
     return await forward_request(
         "POST",
         f"{DATA_INPUT_URL}/data_input/processar",
@@ -68,7 +77,7 @@ async def upload_data_input(
         async with httpx.AsyncClient(timeout=7200.0) as client:
             response = await client.post(
                 url,
-                headers={k: v for k, v in request.headers.items() if k.lower() != "content-length"},
+                headers=copiar_headers(request),
                 files=files,
             )
 
@@ -101,7 +110,7 @@ async def job_status(job_id: str, request: Request):
         async with httpx.AsyncClient(timeout=7200.0) as client:
             resp = await client.get(
                 f"{DATA_INPUT_URL}/data_input/status/{job_id}",
-                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                headers=copiar_headers(request),
             )
         resp.raise_for_status()
         result = resp.json()
@@ -126,13 +135,14 @@ async def job_status(job_id: str, request: Request):
         raise HTTPException(status_code=500, detail=f"Erro no proxy status: {str(e)}")
 
 
+# 🔹 Dashboard: últimos 30 dias
 @router.get("/dashboard/ultimos-30-dias")
 async def ultimos_30_dias(request: Request):
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.get(
-                f"{DATA_INPUT_URL}/dashboard/ultimos-30-dias",   # 👈 sem /data_input
-                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                f"{DATA_INPUT_URL}/dashboard/ultimos-30-dias",
+                headers=copiar_headers(request),
             )
         resp.raise_for_status()
         return resp.json()
@@ -140,14 +150,14 @@ async def ultimos_30_dias(request: Request):
         raise HTTPException(status_code=500, detail=f"Erro no proxy ultimos-30-dias: {str(e)}")
 
 
-
+# 🔹 Dashboard: mensal
 @router.get("/dashboard/mensal")
 async def mensal(request: Request):
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.get(
-                f"{DATA_INPUT_URL}/dashboard/mensal",   # 👈 sem /data_input
-                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                f"{DATA_INPUT_URL}/dashboard/mensal",
+                headers=copiar_headers(request),
             )
         resp.raise_for_status()
         return resp.json()
@@ -155,27 +165,29 @@ async def mensal(request: Request):
         raise HTTPException(status_code=500, detail=f"Erro no proxy mensal: {str(e)}")
 
 
-
+# 🔹 Dashboard: mapa
 @router.get("/dashboard/mapa")
 async def mapa(request: Request):
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.get(
-                f"{DATA_INPUT_URL}/dashboard/mapa",   # 👈 sem /data_input
-                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                f"{DATA_INPUT_URL}/dashboard/mapa",
+                headers=copiar_headers(request),
             )
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro no proxy mapa: {str(e)}")
 
+
+# 🔹 Histórico
 @router.get("/historico", summary="Histórico dos últimos processamentos de Data Input")
 async def historico(request: Request, limit: int = Query(5, ge=1, le=50)):
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.get(
                 f"{DATA_INPUT_URL}/data_input/historico?limit={limit}",
-                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                headers=copiar_headers(request),
             )
 
         # ⚠️ se backend respondeu mas deu erro
@@ -196,5 +208,3 @@ async def historico(request: Request, limit: int = Query(5, ge=1, le=50)):
         logger.error(f"❌ Erro no proxy historico: {e}", exc_info=True)
         # 🔹 devolve lista vazia ao frontend em vez de quebrar a UI
         return []
-
-

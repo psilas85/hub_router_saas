@@ -35,7 +35,6 @@ import L from "leaflet";
 let apiBase = import.meta.env.VITE_API_URL || window.location.origin;
 try {
     const u = new URL(apiBase);
-    u.port = "8010"; // sempre usar porta 8010 do gateway
     apiBase = u.toString().replace(/\/+$/, "");
 } catch {
     apiBase = "http://localhost:8010";

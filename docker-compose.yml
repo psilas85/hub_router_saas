@@ -334,15 +334,13 @@ services:
     networks:
       - hub_router_network
 
-
-
   frontend_service:
     build:
       context: ./frontend
       dockerfile: Dockerfile.frontend
     image: psilas85/hub_router-frontend:latest
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
       - ./exports:/app/exports
     networks:
@@ -371,6 +369,36 @@ services:
     networks:
       - hub_router_network
     restart: always
+
+  nginx:
+    image: nginx:latest
+    container_name: hub_router_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d        # Configurações do Nginx
+      - ./nginx/certs:/etc/letsencrypt          # Certificados SSL (Let’s Encrypt)
+      - ./nginx/www:/var/www/certbot
+    depends_on:
+      - frontend_service
+      - authentication_service
+    networks:
+      - hub_router_network
+    restart: always
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: hub_router_certbot
+    entrypoint: certbot
+    volumes:
+      - ./nginx/certs:/etc/letsencrypt
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/www:/var/www/certbot
+    networks:
+      - hub_router_network
+    restart: "no"              # não precisa reiniciar sempre
+
 
 networks:
   hub_router_network:

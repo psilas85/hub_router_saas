@@ -1,0 +1,9 @@
+services:
+  certbot:
+    image: certbot/certbot:latest
+    container_name: hub_router_certbot
+    volumes:
+      - ./nginx/certs:/etc/letsencrypt
+      - ./nginx/www:/var/www/certbot
+    networks:
+      - hub_router_network
