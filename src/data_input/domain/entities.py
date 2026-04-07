@@ -1,3 +1,5 @@
+#hub_router_1.0.1/src/data_input/domain/entities.py
+
 from dataclasses import dataclass
 from typing import Optional
 from datetime import date
@@ -9,6 +11,7 @@ class Entrega:
     cte_rua: Optional[str] = None
     cte_bairro: Optional[str] = None
     cte_complemento: Optional[str] = None
+    cte_numero_endereco: Optional[str] = None
     cte_cidade: Optional[str] = None
     cte_uf: Optional[str] = None
     cte_cep: Optional[str] = None

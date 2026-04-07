@@ -1,4 +1,4 @@
-#data_input/api/main.py
+#hub_router_1.0.1/src/data_input/api/main.py
 
 from fastapi import FastAPI
 from data_input.api.routes import router
@@ -10,10 +10,8 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     swagger_ui_parameters={"persistAuthorization": True},
-    root_path="/data_input"  # ✅ mantém root_path para gateway
 )
 
-# Router sem prefixo (já ajustado)
 app.include_router(router)
 
 @app.get("/", tags=["Healthcheck"])

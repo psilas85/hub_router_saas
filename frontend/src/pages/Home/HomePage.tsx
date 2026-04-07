@@ -1,9 +1,11 @@
 // hub_router_1.0.1/frontend/src/pages/Home/HomePage.tsx
 
+import api from "@/services/api";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/authStore";
 import MarkerClusterGroup from "react-leaflet-cluster";
+
 
 import {
     LayoutGrid,
@@ -53,32 +55,32 @@ export default function HomePage() {
     const [entregas12m, setEntregas12m] = useState<any[]>([]);
     const [entregasMapa, setEntregasMapa] = useState<any[]>([]);
 
-    useEffect(() => {
-        const headers = { Authorization: `Bearer ${token}` };
-
-        async function safeGet<T>(url: string): Promise<T | []> {
-            try {
-                const res = await fetch(url, { headers });
-                if (!res.ok) return [];
-                const txt = await res.text();
-                if (!txt) return [];
-                return JSON.parse(txt);
-            } catch {
-                return [];
-            }
+    async function safeGet<T>(url: string): Promise<T | []> {
+        try {
+            const { data } = await api.get<T>(url);
+            return data || [];
+        } catch (err) {
+            console.error("Erro GET:", url, err);
+            return [];
         }
+    }
+
+    useEffect(() => {
+        if (!token) return; // 🔥 CRÍTICO
 
         async function carregar() {
             setLoading(true);
-            setEntregas30d(
-                await safeGet<any[]>(`${API_URL}/data_input/dashboard/ultimos-30-dias`)
-            );
-            setEntregas12m(
-                await safeGet<any[]>(`${API_URL}/data_input/dashboard/mensal`)
-            );
-            setEntregasMapa(
-                await safeGet<any[]>(`${API_URL}/data_input/dashboard/mapa`)
-            );
+
+            const [d30, d12, mapa] = await Promise.all([
+                safeGet<any[]>("/data_input/dashboard/ultimos-30-dias"),
+                safeGet<any[]>("/data_input/dashboard/mensal"),
+                safeGet<any[]>("/data_input/dashboard/mapa"),
+            ]);
+
+            setEntregas30d(d30);
+            setEntregas12m(d12);
+            setEntregasMapa(mapa);
+
             setLoading(false);
         }
 

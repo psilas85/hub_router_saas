@@ -1,4 +1,4 @@
-#api_gateway/auth.py
+#hub_router_1.0.1/src/api_gateway/auth.py
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer

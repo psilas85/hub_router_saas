@@ -1,4 +1,4 @@
-# authentication/api/routes.py
+#hub_router_1.0.1/src/authentication/api/routes.py
 
 from fastapi import APIRouter, HTTPException, Depends, Path
 from pydantic import BaseModel

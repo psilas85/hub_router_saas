@@ -1,4 +1,4 @@
-// src/pages/Login/LoginPage.tsx
+//hub_router_1.0.1/frontend/src/pages/Login/LoginPage.tsx
 import { useState } from "react";
 import { useAuthStore } from "@/store/authStore";
 import { useNavigate } from "react-router-dom";
@@ -96,8 +96,8 @@ export default function LoginPage() {
                                     onChange={(e) => setEmail(e.target.value)}
                                     placeholder="seu@email.com"
                                     className={`w-full pl-10 pr-3 p-3 border rounded-lg focus:ring-2 focus:outline-none ${errors.email
-                                            ? 'border-red-500 focus:ring-red-500'
-                                            : 'border-gray-300 focus:ring-emerald-500'
+                                        ? 'border-red-500 focus:ring-red-500'
+                                        : 'border-gray-300 focus:ring-emerald-500'
                                         }`}
                                 />
                             </div>
@@ -119,8 +119,8 @@ export default function LoginPage() {
                                     onChange={(e) => setSenha(e.target.value)}
                                     placeholder="********"
                                     className={`w-full pl-10 pr-3 p-3 border rounded-lg focus:ring-2 focus:outline-none ${errors.senha
-                                            ? 'border-red-500 focus:ring-red-500'
-                                            : 'border-gray-300 focus:ring-emerald-500'
+                                        ? 'border-red-500 focus:ring-red-500'
+                                        : 'border-gray-300 focus:ring-emerald-500'
                                         }`}
                                 />
                             </div>

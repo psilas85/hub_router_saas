@@ -1,9 +1,11 @@
-# data_input/infrastructure/database_reader.py
+#hub_router_1.0.1/src/data_input/infrastructure/database_reader.py
 
 import os
 import logging
 import pandas as pd
 from typing import List, Optional
+
+from data_input.utils.address_normalizer import normalize_address
 
 
 class DatabaseReader:
@@ -24,14 +26,65 @@ class DatabaseReader:
             raise
 
     def buscar_localizacao(self, endereco):
-        query = "SELECT latitude, longitude FROM localizacoes WHERE endereco = %s"
+
+        if not endereco:
+            return None
+
+        endereco_norm = normalize_address(endereco)
+
+        query = """
+            SELECT latitude, longitude
+            FROM localizacoes
+            WHERE endereco = %s
+        """
+
         try:
             with self.conexao.cursor() as cursor:
-                cursor.execute(query, (endereco,))
-                return cursor.fetchone()
+                cursor.execute(query, (endereco_norm,))
+                result = cursor.fetchone()
+
+                if result:
+                    return {
+                        "latitude": float(result[0]),
+                        "longitude": float(result[1])
+                    }
+
+                return None
+
         except Exception as e:
             logging.error(f"❌ Erro ao buscar localização no banco: {e}")
             return None
+
+    def buscar_localizacoes_em_lote(self, enderecos: list):
+
+        if not enderecos:
+            return {}
+
+        # 🔥 normaliza tudo
+        enderecos_norm = [normalize_address(e) for e in enderecos if e]
+
+        query = """
+            SELECT endereco, latitude, longitude
+            FROM localizacoes
+            WHERE endereco = ANY(%s)
+        """
+
+        try:
+            with self.conexao.cursor() as cursor:
+                cursor.execute(query, (enderecos_norm,))
+                rows = cursor.fetchall()
+
+                return {
+                    row[0]: {
+                        "latitude": float(row[1]),
+                        "longitude": float(row[2])
+                    }
+                    for row in rows
+                }
+
+        except Exception as e:
+            logging.error(f"❌ Erro ao buscar cache em lote: {e}")
+            return {}
 
     def buscar_entregas(self, datas: list, tenant_id: str):
         """
@@ -44,6 +97,7 @@ class DatabaseReader:
         query = """
             SELECT
                 id AS id_entrega, cte_numero, transportadora, envio_data,
+                cte_rua, cte_bairro, cte_numero_endereco,
                 cte_cidade, cte_uf, cte_cep, cte_volumes,
                 cte_peso, cte_valor_nf, cte_valor_frete, destino_latitude, destino_longitude,
                 tenant_id

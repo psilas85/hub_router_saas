@@ -1,12 +1,15 @@
+#hub_router_1.0.1/docker-compose.yml
+
 version: "3.9"
 
 services:
 
-  base_image:
-    build:
-      context: .
-      dockerfile: Dockerfile.base
-    image: psilas85/hub_router-base:latest
+  # ❌ REMOVIDO BUILD DO BASE (usa imagem pronta)
+  # base_image:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.base
+  #   image: psilas85/hub_router-base:latest
 
   postgres:
     image: postgis/postgis:17-3.4
@@ -37,49 +40,92 @@ services:
     restart: always
 
   data_input_service:
+    image: psilas85/hub_router-data_input:latest
     build:
       context: .
       dockerfile: src/data_input/Dockerfile.data_input
-    image: psilas85/hub_router-data_input:latest
     ports:
       - "8008:8008"
     volumes:
       - ./src:/app/src
       - ./src/data_input/tenants:/app/src/data_input/tenants
+      - ./data/ibge:/app/data/ibge
     env_file:
       - ./src/data_input/.env
+    environment:
+      - PYTHONPATH=/app/src
+      - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
+      - REDIS_URL=redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
-    environment:
-      - PYTHONPATH=/app/src
-      - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
     networks:
       - hub_router_network
     restart: always
 
+    # 🔥 ADICIONAR ISSO
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   data_input_worker:
+    image: psilas85/hub_router-data_input:latest
     build:
       context: .
       dockerfile: src/data_input/Dockerfile.data_input
-    image: psilas85/hub_router-data_input:latest
-    command: rq worker -u redis://redis:6379 data_input
+
+    # 🔥 worker robusto
+    command: rq worker -u redis://redis:6379 data_input_jobs
 
     volumes:
       - ./src:/app/src
       - ./src/data_input/tenants:/app/src/data_input/tenants
-    depends_on:
-      - redis
-      - postgres
+      - ./data/ibge:/app/data/ibge
+    env_file:
+      - ./src/data_input/.env
     environment:
       - PYTHONPATH=/app/src
       - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
-    env_file:
-      - ./src/data_input/.env
+      - REDIS_URL=redis://redis:6379   # 🔥 garante redis correto
+    depends_on:
+      - redis
+      - postgres
     networks:
       - hub_router_network
+    restart: always
+
+  data_input_subjob_worker:
+    image: psilas85/hub_router-data_input:latest
+    build:
+      context: .
+      dockerfile: src/data_input/Dockerfile.data_input
+
+    command: rq worker -u redis://redis:6379 data_input_subjobs
+
+    volumes:
+      - ./src:/app/src
+      - ./src/data_input/tenants:/app/src/data_input/tenants
+      - ./data/ibge:/app/data/ibge
+
+    env_file:
+      - ./src/data_input/.env
+
+    environment:
+      - PYTHONPATH=/app/src
+      - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
+      - REDIS_URL=redis://redis:6379
+
+    depends_on:
+      - redis
+      - postgres
+
+    networks:
+      - hub_router_network
+
     restart: always
 
   simulation_worker:
@@ -377,12 +423,19 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d        # Configurações do Nginx
-      - ./nginx/certs:/etc/letsencrypt          # Certificados SSL (Let’s Encrypt)
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot
+
+    # 🔥 CORREÇÃO AQUI
     depends_on:
-      - frontend_service
-      - authentication_service
+      frontend_service:
+        condition: service_started
+      authentication_service:
+        condition: service_started
+      data_input_service:
+        condition: service_healthy   # 🔥 ESSENCIAL
+
     networks:
       - hub_router_network
     restart: always

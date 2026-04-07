@@ -1,4 +1,4 @@
-#authentication/api/main.py
+#hub_router_1.0.1/src/authentication/api/main.py
 
 from fastapi import FastAPI
 from authentication.api.routes import router

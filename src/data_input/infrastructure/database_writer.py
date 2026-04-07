@@ -1,119 +1,193 @@
-#data_input/infrastructure/database_writer.py
+#hub_router_1.0.1/src/data_input/infrastructure/database_writer.py
 
 import os
 import logging
 import pandas as pd
 from decimal import Decimal
 from typing import List
+from psycopg2.extras import execute_values
+import traceback
+
 
 from data_input.domain.entities import Entrega
+from data_input.utils.address_normalizer import normalize_address
 
 class DatabaseWriter:
+
     def __init__(self, conexao):
         self.conexao = conexao
 
-    def inserir_dados_entregas(self, entregas: List[Entrega]):
+
+    def inserir_dados_entregas(self, entregas):
+
+
         if self.conexao is None or not entregas:
             logging.warning("⚠ Conexão inativa ou lista de entregas vazia.")
             return
 
-        values = [
-            (
-                e.cte_numero, e.remetente_cnpj, e.cte_rua, e.cte_bairro, e.cte_complemento, e.cte_cidade,
-                e.cte_uf, e.cte_cep, e.cte_nf, e.cte_volumes,
-                Decimal(str(e.cte_peso)) if e.cte_peso is not None else None,
-                Decimal(str(e.cte_valor_nf)) if e.cte_valor_nf is not None else None,
-                Decimal(str(e.cte_valor_frete)) if e.cte_valor_frete is not None else None,
-                e.envio_data, e.endereco_completo, e.transportadora, e.remetente_nome,
-                e.destinatario_nome, e.destinatario_cnpj, e.destino_latitude,
-                e.destino_longitude, e.remetente_cidade, e.remetente_uf, e.doc_min,
-                e.tenant_id  # ✅ novo campo
-            ) for e in entregas
-        ]
-
-        query = """
-        INSERT INTO entregas (
-            cte_numero, remetente_cnpj, cte_rua, cte_bairro, cte_complemento, cte_cidade, cte_uf,
-            cte_cep, cte_nf, cte_volumes, cte_peso, cte_valor_nf, cte_valor_frete, envio_data,
-            endereco_completo, transportadora, remetente_nome, destinatario_nome, destinatario_cnpj,
-            destino_latitude, destino_longitude, remetente_cidade, remetente_uf, doc_min,
-            tenant_id
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (cte_numero, transportadora) DO UPDATE SET
-            remetente_cnpj = EXCLUDED.remetente_cnpj,
-            cte_rua = EXCLUDED.cte_rua,
-            cte_bairro = EXCLUDED.cte_bairro,
-            cte_complemento = EXCLUDED.cte_complemento,
-            cte_cidade = EXCLUDED.cte_cidade,
-            cte_uf = EXCLUDED.cte_uf,
-            cte_cep = EXCLUDED.cte_cep,
-            cte_nf = EXCLUDED.cte_nf,
-            cte_volumes = EXCLUDED.cte_volumes,
-            cte_peso = EXCLUDED.cte_peso,
-            cte_valor_nf = EXCLUDED.cte_valor_nf,
-            cte_valor_frete = EXCLUDED.cte_valor_frete,
-            envio_data = COALESCE(EXCLUDED.envio_data, entregas.envio_data),
-            endereco_completo = EXCLUDED.endereco_completo,
-            transportadora = EXCLUDED.transportadora,
-            remetente_nome = EXCLUDED.remetente_nome,
-            destinatario_nome = EXCLUDED.destinatario_nome,
-            destinatario_cnpj = EXCLUDED.destinatario_cnpj,
-            destino_latitude = EXCLUDED.destino_latitude,
-            destino_longitude = EXCLUDED.destino_longitude,
-            remetente_cidade = EXCLUDED.remetente_cidade,
-            remetente_uf = EXCLUDED.remetente_uf,
-            doc_min = EXCLUDED.doc_min,
-            tenant_id = EXCLUDED.tenant_id  -- ✅ garante update do tenant também
-        ;
-        """
-
         try:
+
+            values = []
+
+            for e in entregas:
+                values.append((
+                    e.cte_numero,
+                    e.transportadora,
+                    e.remetente_cnpj,
+                    e.cte_rua,
+                    e.cte_bairro,
+                    e.cte_complemento,
+                    e.cte_numero_endereco,  # ← NOVO CAMPO
+                    e.cte_cidade,
+                    e.cte_uf,
+                    e.cte_cep,
+                    e.cte_nf,
+                    float(e.cte_volumes) if e.cte_volumes is not None else None,
+                    float(e.cte_peso) if e.cte_peso is not None else None,
+                    float(e.cte_valor_nf) if e.cte_valor_nf is not None else None,
+                    float(e.cte_valor_frete) if e.cte_valor_frete is not None else None,
+                    e.envio_data,
+                    e.endereco_completo,
+                    e.remetente_nome,
+                    e.destinatario_nome,
+                    e.destinatario_cnpj,
+                    float(e.destino_latitude) if e.destino_latitude is not None else None,
+                    float(e.destino_longitude) if e.destino_longitude is not None else None,
+                    e.remetente_cidade,
+                    e.remetente_uf,
+                    e.doc_min,
+                    e.tenant_id
+                ))
+
+            # -----------------------------------------------------
+            # DEBUG
+            # -----------------------------------------------------
+            logging.info(f"[DEBUG] total registros para UPSERT: {len(values)}")
+
+            if values:
+                logging.info(f"[DEBUG SAMPLE] {values[:3]}")
+
+            # -----------------------------------------------------
+            # QUERY (SEM RETURNING!)
+            # -----------------------------------------------------
+            query = """
+            INSERT INTO entregas (
+                cte_numero,
+                transportadora,
+                remetente_cnpj,
+                cte_rua,
+                cte_bairro,
+                cte_complemento,
+                cte_numero_endereco,  -- ← NOVO CAMPO
+                cte_cidade,
+                cte_uf,
+                cte_cep,
+                cte_nf,
+                cte_volumes,
+                cte_peso,
+                cte_valor_nf,
+                cte_valor_frete,
+                envio_data,
+                endereco_completo,
+                remetente_nome,
+                destinatario_nome,
+                destinatario_cnpj,
+                destino_latitude,
+                destino_longitude,
+                remetente_cidade,
+                remetente_uf,
+                doc_min,
+                tenant_id
+            )
+            VALUES %s
+            ON CONFLICT (tenant_id, cte_numero, transportadora)
+            DO UPDATE SET
+                remetente_cnpj = EXCLUDED.remetente_cnpj,
+                cte_rua = EXCLUDED.cte_rua,
+                cte_bairro = EXCLUDED.cte_bairro,
+                cte_complemento = EXCLUDED.cte_complemento,
+                cte_numero_endereco = EXCLUDED.cte_numero_endereco,  -- ← NOVO CAMPO
+                cte_cidade = EXCLUDED.cte_cidade,
+                cte_uf = EXCLUDED.cte_uf,
+                cte_cep = EXCLUDED.cte_cep,
+                cte_nf = EXCLUDED.cte_nf,
+                cte_volumes = EXCLUDED.cte_volumes,
+                cte_peso = EXCLUDED.cte_peso,
+                cte_valor_nf = EXCLUDED.cte_valor_nf,
+                cte_valor_frete = EXCLUDED.cte_valor_frete,
+                envio_data = COALESCE(EXCLUDED.envio_data, entregas.envio_data),
+                endereco_completo = EXCLUDED.endereco_completo,
+                remetente_nome = EXCLUDED.remetente_nome,
+                destinatario_nome = EXCLUDED.destinatario_nome,
+                destinatario_cnpj = EXCLUDED.destinatario_cnpj,
+                destino_latitude = EXCLUDED.destino_latitude,
+                destino_longitude = EXCLUDED.destino_longitude,
+                remetente_cidade = EXCLUDED.remetente_cidade,
+                remetente_uf = EXCLUDED.remetente_uf,
+                doc_min = EXCLUDED.doc_min,
+                tenant_id = EXCLUDED.tenant_id
+            """
+
             with self.conexao.cursor() as cursor:
-                cursor.executemany(query, values)
-            self.conexao.commit()
-            logging.info(f"✅ {len(entregas)} registros inseridos/atualizados na tabela 'entregas'.")
-        except Exception as e:
-            self.conexao.rollback()
-            logging.error(f"❌ Erro ao inserir dados no banco: {e}")
+                execute_values(cursor, query, values)
+
+            logging.info(f"📊 UPSERT entregas concluído | total_processado={len(values)}")
+
+        except Exception:
+            logging.error(f"❌ Erro ao inserir dados:\n{traceback.format_exc()}")
             raise
 
+    def inserir_localizacao(self, endereco, latitude, longitude, origem=None):
 
-    def inserir_localizacao(self, endereco, latitude, longitude):
-        query = """
-        INSERT INTO localizacoes (endereco, latitude, longitude, criado_em)
-        VALUES (%s, %s, %s, NOW())
-        ON CONFLICT (endereco) DO NOTHING;
-        """
-        try:
-            with self.conexao.cursor() as cursor:
-                cursor.execute(query, (endereco, latitude, longitude))
-            self.conexao.commit()
-            logging.info(f"✅ Coordenadas salvas: {endereco} → ({latitude}, {longitude})")
-        except Exception as e:
-            self.conexao.rollback()
-            logging.error(f"❌ Erro ao inserir localização: {e}")
-
-    def atualizar_data_processamento(self, entregas: List[Entrega]):
-        if self.conexao is None or not entregas:
-            logging.warning("⚠ Conexão inativa ou entregas vazias para atualizar.")
+        if not endereco:
             return
 
+        endereco_norm = normalize_address(endereco)
+
+        if not endereco_norm:
+            return
+
+        if len(endereco_norm) < 10:
+            return
+
+        if endereco_norm in ["NAN", "NONE", "-", ""]:
+            return
+
+        if endereco_norm.replace(" ", "").isdigit():
+            return
+
+        if latitude is None or longitude is None:
+            return
+
+        query = """
+        INSERT INTO localizacoes (endereco, latitude, longitude, origem, criado_em, atualizado_em)
+        VALUES (%s, %s, %s, %s, NOW(), NOW())
+        ON CONFLICT (endereco)
+        DO UPDATE SET
+            latitude = EXCLUDED.latitude,
+            longitude = EXCLUDED.longitude,
+            origem = COALESCE(EXCLUDED.origem, localizacoes.origem),
+            atualizado_em = NOW()
+        RETURNING xmax = 0 AS inserted;
+        """
+
         try:
             with self.conexao.cursor() as cursor:
-                for entrega in entregas:
-                    cursor.execute(
-                        """
-                        UPDATE entregas
-                        SET data_processamento = NOW()
-                        WHERE cte_numero = %s;
-                        """, (entrega.cte_numero,)
-                    )
-            self.conexao.commit()
-            logging.info(f"✅ Data de processamento atualizada para {len(entregas)} CT-es.")
-        except Exception as e:
-            self.conexao.rollback()
-            logging.error(f"❌ Erro ao atualizar data_processamento: {e}")
 
+                cursor.execute(
+                    query,
+                    (endereco_norm, latitude, longitude, origem)
+                )
+
+                inserted = cursor.fetchone()[0]
+
+            if inserted:
+                logging.info(f"[CACHE INSERT] {endereco_norm}")
+            else:
+                logging.info(f"[CACHE UPDATE] {endereco_norm}")
+
+        except Exception as e:
+            logging.error(f"❌ Erro ao inserir localização: {e}")
 
     def salvar_clusterizacao(self, clustered_data):
         if self.conexao is None:
@@ -151,10 +225,10 @@ class DatabaseWriter:
         try:
             with self.conexao.cursor() as cursor:
                 cursor.executemany(insert_query, registros_novos)
-            self.conexao.commit()
+
             logging.info(f"✅ {len(registros_novos)} registros de clusterização salvos/atualizados.")
         except Exception as e:
-            self.conexao.rollback()
+
             logging.error(f"❌ Erro ao salvar clusterização: {e}")
 
     def salvar_resumo_clusters(self, df_resumo: pd.DataFrame, envio_data: str, tenant_id: str):
@@ -198,10 +272,10 @@ class DatabaseWriter:
         try:
             with self.conexao.cursor() as cursor:
                 cursor.executemany(query, registros)
-            self.conexao.commit()
+
             logging.info(f"✅ {len(registros)} registros salvos/atualizados em 'resumo_clusterizacao'.")
         except Exception as e:
-            self.conexao.rollback()
+
             logging.error(f"❌ Erro ao salvar resumo da clusterização: {e}")
 
     def salvar_historico_data_input(
@@ -219,9 +293,26 @@ class DatabaseWriter:
                     tenant_id, job_id, arquivo, status,
                     total_processados, validos, invalidos, mensagem
                 ))
-            self.conexao.commit()
+
             logging.info(f"📝 Histórico salvo em historico_data_input: job_id={job_id}")
         except Exception as e:
-            self.conexao.rollback()
+
             logging.error(f"❌ Erro ao salvar histórico do data input: {e}")
+
+
+    def atualizar_data_processamento_lote(self, entregas):
+
+        ctes = [e.cte_numero for e in entregas if e.cte_numero]
+
+        if not ctes:
+            return
+
+        query = """
+        UPDATE entregas
+        SET data_processamento = NOW()
+        WHERE cte_numero = ANY(%s)
+        """
+
+        with self.conexao.cursor() as cursor:
+            cursor.execute(query, (ctes,))
 

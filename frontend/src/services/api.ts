@@ -1,4 +1,4 @@
-// frontend/src/services/api.ts
+//hub_router_1.0.1/frontend/src/services/api.ts
 import axios from "axios";
 import { useAuthStore } from "@/store/authStore";
 
@@ -15,10 +15,14 @@ const api = axios.create({
 // request → injeta token automaticamente
 api.interceptors.request.use((config) => {
     const token = useAuthStore.getState().token;
+
+    console.log("🔐 Token no interceptor:", token);
+
     if (token) {
         config.headers = config.headers ?? {};
         config.headers.Authorization = `Bearer ${token}`;
     }
+
     return config;
 });
 
@@ -29,9 +33,13 @@ api.interceptors.response.use(
         const status = err.response?.status;
 
         if (status === 401) {
-            console.warn("⚠️ 401: deslogando...");
-            useAuthStore.getState().logout();
-            window.location.href = "/login";
+            console.warn("⚠️ 401 recebido:", err.config?.url);
+
+            // 🔥 só desloga se for rota de autenticação
+            if (err.config?.url?.includes("/auth")) {
+                useAuthStore.getState().logout();
+                window.location.href = "/login";
+            }
         } else if (status === 403) {
             alert("🚫 Você não tem permissão para acessar este recurso.");
         } else if (status === 404) {

@@ -1,4 +1,4 @@
-// src/store/authStore.ts
+// hub_router_1.0.1/frontend/src/store/authStore.ts
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import api from "@/services/api";
@@ -56,20 +56,25 @@ export const useAuthStore = create<AuthState>()(
                 try {
                     const { data } = await api.post("/auth/login", { email, senha });
 
-                    // 🔑 Normaliza tenant → se for objeto vazio, vira null
+                    const jwt = data.access_token || data.token;
+
+                    if (!jwt) {
+                        console.error("❌ Login sem token na resposta:", data);
+                        throw new Error("Token não retornado pelo backend");
+                    }
+
                     const tenant =
                         data.tenant && Object.keys(data.tenant).length > 0
                             ? data.tenant
                             : null;
 
-                    // 🔑 Normaliza role (sempre em formato único)
                     const usuario: Usuario = {
                         ...data.usuario,
                         role: normalizeRole(data.usuario.role),
                     };
 
                     set({
-                        token: data.access_token,
+                        token: jwt,
                         usuario,
                         tenant,
                     });
@@ -77,8 +82,7 @@ export const useAuthStore = create<AuthState>()(
                     console.log("✅ Login bem-sucedido:", { usuario, tenant });
                     console.log("📌 Role normalizado:", usuario.role);
 
-                    // Verifica expiração
-                    const decoded = decodeJwt(data.access_token);
+                    const decoded = decodeJwt(jwt);
                     if (decoded?.exp) {
                         const expiresIn = decoded.exp * 1000 - Date.now();
                         console.log("⏳ Token expira em:", expiresIn / 1000, "segundos");
@@ -88,7 +92,7 @@ export const useAuthStore = create<AuthState>()(
                                 console.warn("⚠️ Token expirou, deslogando...");
                                 get().logout();
                             }
-                        }, expiresIn);
+                        }, Math.max(expiresIn, 0));
                     }
                 } catch (error) {
                     console.error("❌ Erro no login:", error);
