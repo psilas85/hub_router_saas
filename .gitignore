@@ -61,4 +61,5 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
 data/ibge/municipios.geojson
