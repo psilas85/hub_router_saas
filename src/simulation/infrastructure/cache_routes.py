@@ -31,6 +31,35 @@ def _rota_minima(origem, destino, logger=None):
     ]
 
 
+def _montar_rota_json(origem_str, destino_str, distancia_km, tempo_min, rota_completa_dicts):
+    return {
+        "origem": origem_str,
+        "destino": destino_str,
+        "distancia_km": float(distancia_km),
+        "tempo_minutos": float(tempo_min),
+        "coordenadas": rota_completa_dicts,
+    }
+
+
+def _extrair_rota_cache(rota_json):
+    if not rota_json:
+        return None
+
+    coordenadas = rota_json.get("coordenadas") or rota_json.get("rota_completa") or []
+    if not coordenadas:
+        return None
+
+    tempo_min = rota_json.get("tempo_minutos")
+    if tempo_min is None:
+        tempo_min = rota_json.get("tempo_min")
+
+    distancia_km = rota_json.get("distancia_km")
+    if distancia_km is None or tempo_min is None:
+        return None
+
+    return float(distancia_km), float(tempo_min), coordenadas
+
+
 def _salvar_cache(db_conn, origem_str, destino_str, tenant_id,
                   distancia_km, tempo_min, rota_completa_dicts, logger=None):
     """
@@ -41,13 +70,13 @@ def _salvar_cache(db_conn, origem_str, destino_str, tenant_id,
             logger.warning(f"⚠️ Tentativa de salvar rota inválida {origem_str} -> {destino_str}. Ignorada.")
         return
 
-    rota_json = {
-        "origem": origem_str,
-        "destino": destino_str,
-        "distancia_km": float(distancia_km),
-        "tempo_minutos": float(tempo_min),   # 🔄 padronizado
-        "coordenadas": rota_completa_dicts   # 🔄 padronizado
-    }
+    rota_json = _montar_rota_json(
+        origem_str,
+        destino_str,
+        distancia_km,
+        tempo_min,
+        rota_completa_dicts,
+    )
 
     insert = """
         INSERT INTO cache_rotas (
@@ -86,22 +115,18 @@ def obter_rota_real(origem: tuple, destino: tuple, tenant_id: str, db_conn, logg
     cursor = db_conn.cursor()
     cursor.execute(query, (origem_str, destino_str, tenant_id))
     row = cursor.fetchone()
+    cursor.close()
 
     if row:
         rota_json = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-        cursor.close()
-
-        if not rota_json or "coordenadas" not in rota_json or not rota_json["coordenadas"]:
+        rota_cache = _extrair_rota_cache(rota_json)
+        if not rota_cache:
             if logger: logger.warning(f"⚠️ Cache inválido ignorado {origem_str} -> {destino_str}")
             return _rota_minima(origem, destino, logger)
 
         if logger:
             logger.info(f"🚗 Cache HIT (rota): {origem_str} → {destino_str}")
-        return (
-            float(rota_json.get("distancia_km")),
-            float(rota_json.get("tempo_minutos")),
-            rota_json.get("coordenadas", [])
-        )
+        return rota_cache
 
     if logger:
         logger.info(f"🔍 Cache MISS (rota): {origem_str} → {destino_str} → tentando OSRM...")
@@ -117,7 +142,6 @@ def obter_rota_real(origem: tuple, destino: tuple, tenant_id: str, db_conn, logg
 
     # 3️⃣ Se ainda falhar → fallback mínimo
     if not distancia_km or not tempo_min or not rota_raw:
-        cursor.close()
         return _rota_minima(origem, destino, logger)
 
     # 4️⃣ Padroniza coordenadas
@@ -127,7 +151,6 @@ def obter_rota_real(origem: tuple, destino: tuple, tenant_id: str, db_conn, logg
     ]
 
     if not rota_completa_dicts:
-        cursor.close()
         return _rota_minima(origem, destino, logger)
 
     # 5️⃣ Salva no cache
@@ -151,17 +174,19 @@ def obter_rota_last_mile(origem, destino, tenant_id, simulation_db, db_conn, log
     cursor = db_conn.cursor()
     cursor.execute(query, (origem_str, destino_str, tenant_id))
     row = cursor.fetchone()
+    cursor.close()
 
     if row:
+        rota_json = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        rota_cache = _extrair_rota_cache(rota_json)
+        if not rota_cache:
+            if logger:
+                logger.warning(f"⚠️ Cache inválido ignorado {origem_str} -> {destino_str}")
+            return _rota_minima(origem, destino, logger)
+
         if logger:
             logger.info(f"🚗 Cache HIT (rota): {origem_str} → {destino_str}")
-        rota_json = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-        cursor.close()
-        return (
-            float(rota_json.get("distancia_km")),
-            float(rota_json.get("tempo_min")),
-            rota_json.get("rota_completa", [])
-        )
+        return rota_cache
 
     if logger:
         logger.info(f"🔍 Cache MISS (rota): {origem_str} → {destino_str} → tentando OSRM...")
@@ -177,7 +202,6 @@ def obter_rota_last_mile(origem, destino, tenant_id, simulation_db, db_conn, log
 
     # 3️⃣ Se ainda falhar → fallback mínimo
     if not distancia_km or not tempo_min or not rota_raw:
-        cursor.close()
         return _rota_minima(origem, destino, logger)
 
     # 4️⃣ Padroniza coordenadas
@@ -187,31 +211,9 @@ def obter_rota_last_mile(origem, destino, tenant_id, simulation_db, db_conn, log
     ]
 
     if not rota_completa_dicts:
-        cursor.close()
         return _rota_minima(origem, destino, logger)
 
     # 5️⃣ Salva no cache
-    rota_json = {
-        "origem": origem_str,
-        "destino": destino_str,
-        "distancia_km": float(distancia_km),
-        "tempo_min": float(tempo_min),
-        "rota_completa": rota_completa_dicts
-    }
-
-    insert = """
-        INSERT INTO cache_rotas (
-            origem, destino, distancia_km, tempo_minutos, rota_json, tenant_id
-        )
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (origem, destino, tenant_id) DO NOTHING
-    """
-    cursor.execute(insert, (
-        origem_str, destino_str,
-        float(distancia_km), float(tempo_min),
-        json.dumps(rota_json), tenant_id
-    ))
-    db_conn.commit()
-    cursor.close()
+    _salvar_cache(db_conn, origem_str, destino_str, tenant_id, distancia_km, tempo_min, rota_completa_dicts, logger)
 
     return float(distancia_km), float(tempo_min), rota_completa_dicts

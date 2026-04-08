@@ -85,14 +85,14 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, parametros, modo_forcar
                 modo_forcar=modo_forcar
             )
             logger.info(f"✅ Simulação concluída para {envio_data}")
-            return ("ok", envio_data)
+            return ("ok", envio_data, None)
         else:
             logger.warning(f"⚠️ Simulação ignorada para {envio_data}")
-            return ("ignorada", envio_data)
+            return ("ignorada", envio_data, None)
 
     except Exception as e:
         logger.error(f"❌ Erro inesperado na simulação {envio_data}: {e}")
-        return ("erro", envio_data)
+        return ("erro", envio_data, str(e))
     finally:
         clusterization_db.close()
         simulation_db.close()
@@ -141,33 +141,74 @@ def processar_simulacao(
                     job.meta["progress"] = int((idx / len(lista_datas)) * 100)
                     job.save_meta()
 
-        if job:
-            job.meta["step"] = "Finalizado"
-            job.meta["progress"] = 100
-            job.save_meta()
+        erros = [resultado for resultado in results if resultado[0] == "erro"]
+        ignoradas = [resultado for resultado in results if resultado[0] == "ignorada"]
 
-        # ✅ Atualiza histórico como concluído
         conn = conectar_simulation_db()
         try:
             cur = conn.cursor()
-            cur.execute("""
-                UPDATE historico_simulation
-                SET status = %s, mensagem = %s, datas = %s
-                WHERE job_id = %s AND tenant_id = %s
-            """, (
-                "finished",
-                f"Simulação de {data_inicial} a {data_final} concluída com sucesso.",
-                json.dumps([str(d) for d in lista_datas]),
-                job_id,
-                tenant_id
-            ))
+
+            if erros:
+                datas_com_erro = ", ".join(str(resultado[1]) for resultado in erros)
+                primeira_mensagem = erros[0][2] or "Erro não identificado"
+                mensagem = (
+                    f"Simulação de {data_inicial} a {data_final} falhou. "
+                    f"Datas com erro: {datas_com_erro}. Detalhe: {primeira_mensagem}"
+                )
+                cur.execute("""
+                    UPDATE historico_simulation
+                    SET status = %s, mensagem = %s, datas = %s
+                    WHERE job_id = %s AND tenant_id = %s
+                """, (
+                    "failed",
+                    mensagem,
+                    json.dumps([str(d) for d in lista_datas]),
+                    job_id,
+                    tenant_id
+                ))
+
+                if job:
+                    job.meta["step"] = "Erro"
+                    job.meta["progress"] = 100
+                    job.save_meta()
+
+                status_final = "error"
+            else:
+                if ignoradas:
+                    datas_ignoradas = ", ".join(str(resultado[1]) for resultado in ignoradas)
+                    mensagem = (
+                        f"Simulação de {data_inicial} a {data_final} concluída com ressalvas. "
+                        f"Datas ignoradas: {datas_ignoradas}."
+                    )
+                else:
+                    mensagem = f"Simulação de {data_inicial} a {data_final} concluída com sucesso."
+
+                cur.execute("""
+                    UPDATE historico_simulation
+                    SET status = %s, mensagem = %s, datas = %s
+                    WHERE job_id = %s AND tenant_id = %s
+                """, (
+                    "finished",
+                    mensagem,
+                    json.dumps([str(d) for d in lista_datas]),
+                    job_id,
+                    tenant_id
+                ))
+
+                if job:
+                    job.meta["step"] = "Finalizado"
+                    job.meta["progress"] = 100
+                    job.save_meta()
+
+                status_final = "ok"
+
             conn.commit()
         finally:
             cur.close()
             conn.close()
 
         return {
-            "status": "ok",
+            "status": status_final,
             "tenant_id": tenant_id,
             "datas": [str(d) for d in lista_datas],
             "resultados": results,

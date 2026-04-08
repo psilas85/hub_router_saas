@@ -100,6 +100,7 @@ def executar_simulacao(
     peso_max_transferencia: float = Query(15000.0, description="Peso máximo por rota de transferência (kg)"),
     entregas_por_subcluster: int = Query(25, description="Qtd alvo de entregas por subcluster"),
     tempo_max_roteirizacao: int = Query(1200, description="Tempo máximo total por rota last-mile (min)"),
+    tempo_max_k0: int = Query(2400, description="Tempo máximo para rotas partindo do hub central (k=0)"),
     tempo_max_k1: int = Query(2400, description="Tempo máximo para k=1"),
     permitir_rotas_excedentes: bool = Query(False, description="Permitir rotas que ultrapassem limite"),
     restricao_veiculo_leve_municipio: bool = Query(False, description="Restringe veículos leves em rotas intermunicipais"),
@@ -139,6 +140,7 @@ def executar_simulacao(
             "peso_max_transferencia": peso_max_transferencia,
             "entregas_por_subcluster": entregas_por_subcluster,
             "tempo_max_roteirizacao": tempo_max_roteirizacao,
+            "tempo_max_k0": tempo_max_k0,
             "tempo_max_k1": tempo_max_k1,
             "permitir_rotas_excedentes": permitir_rotas_excedentes,
             "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
@@ -162,7 +164,13 @@ def executar_simulacao(
             "processing",
             f"Simulação de {data_inicial} a {data_final} enfileirada",
             json.dumps({"data_inicial": str(data_inicial), "data_final": str(data_final)}),
-            json.dumps({"hub_id": hub_id, "k_min": k_min, "k_max": k_max})
+            json.dumps({
+                "hub_id": hub_id,
+                "k_min": k_min,
+                "k_max": k_max,
+                "tempo_max_k0": tempo_max_k0,
+                "tempo_max_k1": tempo_max_k1,
+            })
         ))
         conn.commit()
         cur.close(); conn.close()
@@ -603,11 +611,20 @@ def status_simulacao(job_id: str, tenant_id: str = Depends(obter_tenant_id_do_to
         job = Job.fetch(job_id, connection=redis_conn)
 
         if job.is_finished:
+            result = job.result if isinstance(job.result, dict) else None
+            if result and result.get("status") == "error":
+                return {
+                    "status": "error",
+                    "job_id": job.get_id(),
+                    "tenant_id": tenant_id,
+                    "result": result,
+                }
+
             return {
                 "status": "done",   # ✅ padronizado
                 "job_id": job.get_id(),
                 "tenant_id": tenant_id,
-                "result": job.result if isinstance(job.result, dict) else {
+                "result": result if result else {
                     "mensagem": "✅ Simulação finalizada"
                 },
             }

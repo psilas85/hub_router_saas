@@ -38,8 +38,12 @@ class LastMileRoutingService:
             self.logger.info(f"➔ Processando cluster {cluster_id} com {len(df_cluster)} entregas")
 
             df_cluster = df_cluster.copy()
-            df_cluster['cte_peso'] = df_cluster['cte_peso'].astype(float)
-            df_cluster['cte_volumes'] = df_cluster['cte_volumes'].astype(int)
+            df_cluster['cte_peso'] = pd.to_numeric(
+                df_cluster['cte_peso'], errors='coerce'
+            ).fillna(0.0)
+            df_cluster['cte_volumes'] = pd.to_numeric(
+                df_cluster['cte_volumes'], errors='coerce'
+            ).fillna(0).astype(int)
             df_cluster['cte_numero'] = df_cluster['cte_numero'].astype(str)
 
             df_coords = buscar_latlon_ctes(
@@ -330,7 +334,7 @@ class LastMileRoutingService:
                 %s, %s
             )
         """
-       
+
         # 📊 Resumo por rota
         self.logger.info("📝 Gerando resumo por rota para salvar...")
 

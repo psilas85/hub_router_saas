@@ -99,7 +99,7 @@ def definir_tipo_veiculo_last_mile(
 
 def carregar_entregas_clusterizacao(db_conn, tenant_id: str, envio_data: str, logger=None) -> pd.DataFrame:
 
-    query = f"""
+    query = """
         SELECT
             cte_numero,
             cte_uf,
@@ -119,20 +119,16 @@ def carregar_entregas_clusterizacao(db_conn, tenant_id: str, envio_data: str, lo
             remetente_cidade,
             remetente_uf
         FROM entregas
-        WHERE tenant_id = '{tenant_id}' AND envio_data = '{envio_data}'
+        WHERE tenant_id = %s AND envio_data = %s
     """
 
-    df = pd.read_sql(query, db_conn)
+    df = pd.read_sql(query, db_conn, params=(tenant_id, envio_data))
 
     # Renomear manualmente as colunas para latitude/longitude
     df.rename(columns={
-    'destino_latitude': 'latitude',
-    'destino_longitude': 'longitude'
+        'destino_latitude': 'latitude',
+        'destino_longitude': 'longitude'
     }, inplace=True)
-    df.rename(columns={
-    'destino_latitude': 'latitude',
-    'destino_longitude': 'longitude'
-}, inplace=True)
 
     if logger:
         logger.info(f"🔍 Colunas após renomear: {df.columns.tolist()}")

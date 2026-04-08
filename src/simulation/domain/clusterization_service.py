@@ -200,6 +200,12 @@ class ClusterizationService:
         self.simulation_db.commit()
 
         self.logger.info("💾 Salvando clusterização no banco...")
+        df_clusterizado["k_clusters"] = pd.to_numeric(
+            df_clusterizado["k_clusters"], errors="coerce"
+        ).fillna(k_clusters).astype(int)
+        df_clusterizado["cte_volumes"] = pd.to_numeric(
+            df_clusterizado["cte_volumes"], errors="coerce"
+        ).fillna(0).clip(-2147483648, 2147483647).astype(int)
         df_clusterizado["cluster"] = df_clusterizado["cluster"].astype(str) # <-- conversão para string
         df_clusterizado["id"] = [str(uuid.uuid4()) for _ in range(len(df_clusterizado))]
         df_clusterizado["created_at"] = pd.Timestamp.now()
@@ -217,7 +223,7 @@ class ClusterizationService:
 
 
         for _, row in df_clusterizado.iterrows():
-           cursor.execute(insert_query, (
+            payload = (
                 row["id"],
                 row["tenant_id"],
                 row["envio_data"],
@@ -228,15 +234,27 @@ class ClusterizationService:
                 row["centro_lon"],
                 row["created_at"],
                 row["simulation_id"],
-                row["k_clusters"],
+                int(row["k_clusters"]),
                 row["is_ponto_otimo"],
                 row["cte_peso"],
-                row["cte_volumes"],
+                int(row["cte_volumes"]),
                 row["cte_valor_nf"],
                 row["cte_valor_frete"],
                 row.get("latitude"),
                 row.get("longitude")
-            ))
+            )
+            try:
+                cursor.execute(insert_query, payload)
+            except Exception as e:
+                self.simulation_db.rollback()
+                self.logger.error(
+                    "❌ Falha ao inserir em entregas_clusterizadas | "
+                    f"cte_numero={row.get('cte_numero')} | "
+                    f"k_clusters={row.get('k_clusters')} | "
+                    f"cte_volumes={row.get('cte_volumes')} | erro={e}"
+                )
+                cursor.close()
+                raise
 
 
         self.simulation_db.commit()
@@ -264,7 +282,15 @@ class ClusterizationService:
         df_resumo_clusters = df_resumo_clusters.merge(df_cluster_cidade, on="cluster", how="left")
         df_resumo_clusters["created_at"] = pd.Timestamp.now()
 
-        salvar_resumo_clusters_em_db(self.simulation_db, df_resumo_clusters, self.logger)
+        try:
+            salvar_resumo_clusters_em_db(self.simulation_db, df_resumo_clusters, self.logger)
+        except Exception as e:
+            self.logger.error(
+                "❌ Falha ao salvar resumo_clusters | "
+                f"simulation_id={simulation_id} | envio_data={envio_data} | "
+                f"k_clusters={k_clusters} | erro={e}"
+            )
+            raise
 
 
 
@@ -277,7 +303,7 @@ class ClusterizationService:
         from geopy.distance import geodesic
 
         df_entregas = df_entregas.copy()
-        df_entregas['cluster'] = np.nan
+        df_entregas['cluster'] = pd.Series([None] * len(df_entregas), dtype='object')
 
         for hub in hubs:
             hub_coord = (hub["latitude"], hub["longitude"])
