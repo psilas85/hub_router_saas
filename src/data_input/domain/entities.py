@@ -32,3 +32,4 @@ class Entrega:
     remetente_uf: Optional[str] = None
     doc_min: Optional[str] = None
     tenant_id: Optional[str] = None
+    geocode_source: Optional[str] = None

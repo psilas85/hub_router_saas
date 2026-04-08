@@ -11,8 +11,9 @@ from functools import lru_cache
 from shapely.geometry import shape, Point
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-BUFFER_GRAUS = float(os.getenv("MUNICIPIO_BUFFER_GRAUS", "0.005"))
+BUFFER_GRAUS = float(os.getenv("MUNICIPIO_BUFFER_GRAUS", "0.02"))
 
 BASE_PATH = Path(
     os.getenv(
@@ -69,27 +70,35 @@ def _load_polygons():
 
 
 def ponto_dentro_municipio(lat, lon, cidade, uf):
+    print(f"[DEBUG][POLYGON] lat={lat} lon={lon} cidade={cidade} uf={uf}")
 
     if lat is None or lon is None:
+        logger.warning(f"[POLYGON][INVALID_COORDS] lat={lat} lon={lon}")
         return False
 
     try:
         lat = float(lat)
         lon = float(lon)
     except Exception:
+        logger.warning(f"[POLYGON][COORD_CAST_FAIL] lat={lat} lon={lon}")
         return False
 
+    cidade_orig = cidade
+    uf_orig = uf
     cidade = _norm(cidade)
     uf = _norm(uf)
 
     if not cidade or not uf:
+        logger.warning(f"[POLYGON][NORM_FAIL] cidade='{cidade_orig}' uf='{uf_orig}'")
+        print(f"[DEBUG][POLYGON] NORM_FAIL cidade_orig='{cidade_orig}' uf_orig='{uf_orig}' cidade='{cidade}' uf='{uf}'")
         return None
 
     polygons = _load_polygons()
     poly = polygons.get((cidade, uf))
 
     if poly is None:
-        logger.warning(f"[POLYGON][NOT_FOUND] {cidade}-{uf}")
+        logger.warning(f"[POLYGON][NOT_FOUND] cidade='{cidade}' uf='{uf}' (orig: '{cidade_orig}'/'{uf_orig}')")
+        print(f"[DEBUG][POLYGON] NOT_FOUND cidade='{cidade}' uf='{uf}' (orig: '{cidade_orig}'/'{uf_orig}')")
         return None
 
     ponto = Point(lon, lat)
@@ -97,13 +106,19 @@ def ponto_dentro_municipio(lat, lon, cidade, uf):
     inside_strict = poly.contains(ponto)
     inside_buffer = poly.buffer(BUFFER_GRAUS).contains(ponto)
 
+    logger.info(f"[POLYGON][CHECK] cidade='{cidade}' uf='{uf}' lat={lat} lon={lon} inside_strict={inside_strict} inside_buffer={inside_buffer} buffer={BUFFER_GRAUS}")
+    print(f"[DEBUG][POLYGON] CHECK cidade='{cidade}' uf='{uf}' lat={lat} lon={lon} inside_strict={inside_strict} inside_buffer={inside_buffer} buffer={BUFFER_GRAUS}")
+
     if inside_strict:
+        logger.info(f"[POLYGON][INSIDE] cidade='{cidade}' uf='{uf}' lat={lat} lon={lon}")
+        print(f"[DEBUG][POLYGON] INSIDE cidade='{cidade}' uf='{uf}' lat={lat} lon={lon}")
         return True
 
     if inside_buffer:
-        logger.warning(f"[POLYGON][BUFFER_HIT] {cidade}-{uf}")
+        logger.warning(f"[POLYGON][BUFFER_HIT] cidade='{cidade}' uf='{uf}' lat={lat} lon={lon}")
+        print(f"[DEBUG][POLYGON] BUFFER_HIT cidade='{cidade}' uf='{uf}' lat={lat} lon={lon}")
         return True
 
-    logger.warning(f"[POLYGON][OUTSIDE] {cidade}-{uf}")
-
+    logger.warning(f"[POLYGON][OUTSIDE] cidade='{cidade}' uf='{uf}' lat={lat} lon={lon}")
+    print(f"[DEBUG][POLYGON] OUTSIDE cidade='{cidade}' uf='{uf}' lat={lat} lon={lon}")
     return False

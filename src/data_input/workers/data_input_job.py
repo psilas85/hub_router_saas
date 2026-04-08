@@ -27,7 +27,8 @@ def salvar_historico(
     total,
     validos,
     invalidos,
-    mensagem
+    mensagem,
+    tipo_processamento="padrao",
 ):
 
     try:
@@ -37,8 +38,11 @@ def salvar_historico(
                 cur.execute(
                     """
                     INSERT INTO historico_data_input
-                    (tenant_id, job_id, arquivo, status, total_processados, validos, invalidos, mensagem, criado_em)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (
+                        tenant_id, job_id, arquivo, status, total_processados,
+                        validos, invalidos, mensagem, tipo_processamento, criado_em
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         tenant_id,
@@ -49,6 +53,7 @@ def salvar_historico(
                         validos,
                         invalidos,
                         mensagem,
+                        tipo_processamento,
                         datetime.utcnow(),
                     ),
                 )

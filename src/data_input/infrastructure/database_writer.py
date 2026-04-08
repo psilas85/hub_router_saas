@@ -56,7 +56,8 @@ class DatabaseWriter:
                     e.remetente_cidade,
                     e.remetente_uf,
                     e.doc_min,
-                    e.tenant_id
+                    e.tenant_id,
+                    e.geocode_source
                 ))
 
             # -----------------------------------------------------
@@ -97,7 +98,8 @@ class DatabaseWriter:
                 remetente_cidade,
                 remetente_uf,
                 doc_min,
-                tenant_id
+                tenant_id,
+                geocode_source
             )
             VALUES %s
             ON CONFLICT (tenant_id, cte_numero, transportadora)
@@ -125,7 +127,8 @@ class DatabaseWriter:
                 remetente_cidade = EXCLUDED.remetente_cidade,
                 remetente_uf = EXCLUDED.remetente_uf,
                 doc_min = EXCLUDED.doc_min,
-                tenant_id = EXCLUDED.tenant_id
+                tenant_id = EXCLUDED.tenant_id,
+                geocode_source = EXCLUDED.geocode_source
             """
 
             with self.conexao.cursor() as cursor:
@@ -280,18 +283,23 @@ class DatabaseWriter:
 
     def salvar_historico_data_input(
         self, tenant_id: str, job_id: str, arquivo: str, status: str,
-        total_processados: int, validos: int, invalidos: int, mensagem: str
+        total_processados: int, validos: int, invalidos: int, mensagem: str,
+        tipo_processamento: str = "padrao"
     ):
         query = """
             INSERT INTO historico_data_input
-                (tenant_id, job_id, arquivo, status, total_processados, validos, invalidos, mensagem, criado_em)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                (
+                    tenant_id, job_id, arquivo, status, total_processados,
+                    validos, invalidos, mensagem, tipo_processamento, criado_em
+                )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
         """
         try:
             with self.conexao.cursor() as cursor:
                 cursor.execute(query, (
                     tenant_id, job_id, arquivo, status,
-                    total_processados, validos, invalidos, mensagem
+                    total_processados, validos, invalidos, mensagem,
+                    tipo_processamento,
                 ))
 
             logging.info(f"📝 Histórico salvo em historico_data_input: job_id={job_id}")

@@ -116,11 +116,14 @@ class ReprocessInvalidsService:
                 continue
 
             # ⭐ ESTRATÉGIA 1: Google full address
-            logger.info(f"[FALLBACK][ESTRATEGIA_1] google_full idx={idx}")
+
+            logger.info(f"[FALLBACK][ESTRATEGIA_1] google_full idx={idx} endereco='{endereco}'")
             lat_g, lon_g = geocode_google_direto(endereco)
+            logger.info(f"[FALLBACK][GOOGLE_RESPONSE] idx={idx} lat={lat_g} lon={lon_g}")
 
             if lat_g is not None and lon_g is not None:
-                status = GeoValidator.validar_ponto(lat_g, lon_g, uf)
+                status = GeoValidator.validar_ponto(lat_g, lon_g, cidade, uf)
+                logger.info(f"[FALLBACK][GOOGLE_VALIDATION] idx={idx} status={status}")
                 if status == "ok":
                     row["destino_latitude"] = lat_g
                     row["destino_longitude"] = lon_g
@@ -133,11 +136,15 @@ class ReprocessInvalidsService:
                 logger.warning(f"[FALLBACK][POLY_FAIL_1] idx={idx} status={status}")
 
             # ⭐ ESTRATÉGIA 2: City-level (só cidade+UF)
-            logger.info(f"[FALLBACK][ESTRATEGIA_2] city_uf idx={idx}")
-            lat_c, lon_c = geocode_google_direto(f"{cidade}, {uf}, Brasil")
+
+            endereco_cidade_uf = f"{cidade}, {uf}, Brasil"
+            logger.info(f"[FALLBACK][ESTRATEGIA_2] city_uf idx={idx} endereco='{endereco_cidade_uf}'")
+            lat_c, lon_c = geocode_google_direto(endereco_cidade_uf)
+            logger.info(f"[FALLBACK][CITY_UF_RESPONSE] idx={idx} lat={lat_c} lon={lon_c}")
 
             if lat_c is not None and lon_c is not None:
-                status = GeoValidator.validar_ponto(lat_c, lon_c, uf)
+                status = GeoValidator.validar_ponto(lat_c, lon_c, cidade, uf)
+                logger.info(f"[FALLBACK][CITY_UF_VALIDATION] idx={idx} status={status}")
                 if status == "ok":
                     row["destino_latitude"] = lat_c
                     row["destino_longitude"] = lon_c

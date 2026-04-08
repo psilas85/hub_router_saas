@@ -12,7 +12,9 @@ from rq import Queue
 from rq.job import Job
 
 from data_input.workers.data_input_job import processar_data_input
+from data_input.infrastructure.manual_data_entry import process_manual_data_input
 from data_input.infrastructure.db_connection import get_connection_context
+from data_input.infrastructure.database_writer import DatabaseWriter
 from data_input.api.dependencies import verify_token
 
 from fastapi.responses import FileResponse
@@ -54,6 +56,34 @@ def normalizar_tenant(tenant_id: str) -> str:
         return tenant_id
     except Exception:
         return tenant_id
+
+
+def salvar_historico_manual(
+    tenant_id: str,
+    request_id: str,
+    arquivo: str,
+    status: str,
+    total_processados: int,
+    validos: int,
+    invalidos: int,
+    mensagem: str,
+) -> None:
+    try:
+        with get_connection_context() as conn:
+            writer = DatabaseWriter(conn)
+            writer.salvar_historico_data_input(
+                tenant_id=tenant_id,
+                job_id=request_id,
+                arquivo=arquivo,
+                status=status,
+                total_processados=total_processados,
+                validos=validos,
+                invalidos=invalidos,
+                mensagem=mensagem,
+                tipo_processamento="manual",
+            )
+    except Exception:
+        logger.exception("Erro ao salvar histórico manual")
 
 
 # ============================================================
@@ -119,6 +149,85 @@ async def upload_data_input(
         raise
     except Exception as e:
         logger.exception("Erro upload")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/upload/manual", dependencies=[Depends(verify_token)])
+async def upload_data_input_manual(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    request_id = str(uuid.uuid4())
+    tenant_id = None
+    try:
+        tenant_id = get_tenant_id(request)
+
+        logger.info(
+            f"[UPLOAD_MANUAL] tenant={tenant_id} arquivo={file.filename}"
+        )
+
+        if not file.filename.endswith(".xlsx"):
+            raise HTTPException(400, "Arquivo deve ser .xlsx")
+
+        BASE_PATH = os.getenv("DATA_INPUT_PATH", "/app/src/data_input")
+        tenant_dir = os.path.join(BASE_PATH, "tenants", tenant_id, "input")
+        os.makedirs(tenant_dir, exist_ok=True)
+
+        file_path = os.path.join(
+            tenant_dir,
+            f"dados_input_manual_{request_id}.xlsx"
+        )
+
+        content = await file.read()
+        if not content:
+            raise HTTPException(400, "Arquivo vazio")
+
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        result = process_manual_data_input(file_path, tenant_id)
+        result["request_id"] = request_id
+        result["arquivo"] = file.filename
+        salvar_historico_manual(
+            tenant_id=tenant_id,
+            request_id=request_id,
+            arquivo=file.filename,
+            status="done",
+            total_processados=result.get("total_processados", 0),
+            validos=result.get("validos", 0),
+            invalidos=result.get("invalidos", 0),
+            mensagem=result.get("mensagem", "Entrada manual concluída"),
+        )
+        return result
+
+    except ValueError as e:
+        if tenant_id:
+            salvar_historico_manual(
+                tenant_id=tenant_id,
+                request_id=request_id,
+                arquivo=file.filename,
+                status="error",
+                total_processados=0,
+                validos=0,
+                invalidos=0,
+                mensagem=str(e),
+            )
+        raise HTTPException(400, str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        if tenant_id:
+            salvar_historico_manual(
+                tenant_id=tenant_id,
+                request_id=request_id,
+                arquivo=file.filename,
+                status="error",
+                total_processados=0,
+                validos=0,
+                invalidos=0,
+                mensagem=str(e),
+            )
+        logger.exception("Erro upload manual")
         raise HTTPException(500, str(e))
 
 
@@ -281,7 +390,7 @@ def listar_historico(
 
     query = """
         SELECT job_id, arquivo, status, total_processados,
-               validos, invalidos, mensagem, criado_em
+             validos, invalidos, mensagem, tipo_processamento, criado_em
         FROM historico_data_input
         WHERE tenant_id = %s
         ORDER BY criado_em DESC
@@ -295,7 +404,8 @@ def listar_historico(
 
     cols = [
         "job_id", "arquivo", "status", "total_processados",
-        "validos", "invalidos", "mensagem", "criado_em"
+        "validos", "invalidos", "mensagem", "tipo_processamento",
+        "criado_em"
     ]
 
     return [dict(zip(cols, r)) for r in rows]

@@ -1,5 +1,5 @@
 // hub_router_1.0.1/frontend/src/pages/Data_input/DataInputPage.tsx
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
 import {
@@ -46,17 +46,22 @@ type Historico = {
     validos: number;
     invalidos: number;
     mensagem?: string;
+    tipo_processamento?: string;
 };
 
 const STORAGE_KEY = "dataInputJobId";
 const DEFAULT_LIMITE_PESO = 15000;
 
+const isHistoricoManual = (item: Historico) => item.tipo_processamento === "manual";
+
 export default function DataInputPage() {
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [file, setFile] = useState<File | null>(null);
     const [modoForcar, setModoForcar] = useState(false);
     const [limitePeso, setLimitePeso] = useState<number | "">(DEFAULT_LIMITE_PESO);
 
     const [uploading, setUploading] = useState(false);
+    const [manualUploading, setManualUploading] = useState(false);
     const [jobId, setJobId] = useState<string | null>(null);
     const [resultado, setResultado] = useState<Resultado | null>(null);
     const [historico, setHistorico] = useState<Historico[]>([]);
@@ -70,6 +75,8 @@ export default function DataInputPage() {
         [jobId, resultado]
     );
 
+    const isBusy = uploading || manualUploading || isProcessing;
+
     const limitePesoAplicado =
         limitePeso === "" || Number.isNaN(Number(limitePeso))
             ? DEFAULT_LIMITE_PESO
@@ -81,6 +88,9 @@ export default function DataInputPage() {
         setLimitePeso(DEFAULT_LIMITE_PESO);
         setJobId(null);
         setResultado(null);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = "";
+        }
         localStorage.removeItem(STORAGE_KEY);
     };
 
@@ -262,6 +272,9 @@ export default function DataInputPage() {
 
             setFile(null);
             setModoForcar(false);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = "";
+            }
         } catch (err: any) {
             const detail =
                 err?.response?.data?.detail || err?.message || "Erro desconhecido";
@@ -274,6 +287,71 @@ export default function DataInputPage() {
             stopProcessing();
         } finally {
             setUploading(false);
+        }
+    };
+
+    const processarManual = async () => {
+        if (!file) {
+            toast.error("Selecione um arquivo .xlsx primeiro.");
+            return;
+        }
+
+        try {
+            setManualUploading(true);
+            setJobId(null);
+            localStorage.removeItem(STORAGE_KEY);
+            setResultado({
+                status: "processing",
+                progress: 15,
+                step: "Enviando arquivo para processamento manual...",
+                total_processados: 0,
+                validos: 0,
+                invalidos: 0,
+            });
+
+            startProcessing();
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            const { data } = await api.post<Resultado>(
+                "/data_input/upload/manual",
+                formData,
+                { headers: { "Content-Type": "multipart/form-data" } }
+            );
+
+            setResultado({
+                status: data.status || "done",
+                tenant_id: data.tenant_id,
+                mensagem: data.mensagem || "Entrada manual concluída com sucesso.",
+                total_processados: data.total_processados ?? 0,
+                validos: data.validos ?? 0,
+                invalidos: data.invalidos ?? 0,
+                progress: 100,
+                step: "Concluído",
+            });
+
+            stopProcessing();
+            await carregarHistorico();
+            setFile(null);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = "";
+            }
+            toast.success("Processamento manual concluído.");
+        } catch (err: any) {
+            const detail =
+                err?.response?.data?.detail || err?.message || "Erro desconhecido";
+            setResultado({
+                status: "error",
+                mensagem: "Erro no processamento manual.",
+                error: typeof detail === "string" ? detail : JSON.stringify(detail),
+                progress: 100,
+                step: "Falha no processamento manual",
+            });
+            stopProcessing();
+            toast.error(typeof detail === "string" ? detail : JSON.stringify(detail));
+        } finally {
+            setManualUploading(false);
         }
     };
 
@@ -343,6 +421,22 @@ export default function DataInputPage() {
         return <span className="text-rose-700 font-medium">❌ Erro</span>;
     };
 
+    const tipoHistoricoBadge = (item: Historico) => {
+        if (isHistoricoManual(item)) {
+            return (
+                <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">
+                    Manual
+                </span>
+            );
+        }
+
+        return (
+            <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                Padrão
+            </span>
+        );
+    };
+
     return (
         <div className="max-w-6xl mx-auto p-6 space-y-6">
             <div className="flex items-center gap-2">
@@ -356,13 +450,14 @@ export default function DataInputPage() {
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 space-y-5">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-3">
                     <div className="space-y-3">
                         <label className="text-sm font-medium text-gray-700 block">
                             Arquivo (.xlsx)
                         </label>
 
                         <input
+                            ref={fileInputRef}
                             type="file"
                             accept=".xlsx"
                             onChange={(e) => setFile(e.target.files?.[0] || null)}
@@ -372,7 +467,7 @@ export default function DataInputPage() {
                 file:text-sm file:font-semibold
                 file:bg-emerald-600 file:text-white
                 hover:file:bg-emerald-700"
-                            disabled={uploading || isProcessing}
+                            disabled={isBusy}
                         />
 
                         {file ? (
@@ -391,96 +486,150 @@ export default function DataInputPage() {
                         )}
                     </div>
 
-                    <div className="space-y-4">
-                        <label className="flex items-center gap-2 text-sm text-gray-700">
-                            <input
-                                type="checkbox"
-                                checked={modoForcar}
-                                onChange={(e) => setModoForcar(e.target.checked)}
-                                className="h-4 w-4 rounded border-gray-300 text-emerald-600"
-                                disabled={uploading || isProcessing}
-                            />
-                            Forçar reprocessamento
-                        </label>
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_0.9fr] gap-5">
+                        <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 space-y-4">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <h3 className="text-sm font-semibold text-gray-900">
+                                        Fluxo padrão
+                                    </h3>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Usa geocoding, validações completas e reprocessamento.
+                                    </p>
+                                </div>
+                            </div>
 
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                                Limite de peso (kg)
+                            <label className="flex items-center gap-2 text-sm text-gray-700">
+                                <input
+                                    type="checkbox"
+                                    checked={modoForcar}
+                                    onChange={(e) => setModoForcar(e.target.checked)}
+                                    className="h-4 w-4 rounded border-gray-300 text-emerald-600"
+                                    disabled={isBusy}
+                                />
+                                Forçar reprocessamento
+                            </label>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                                    Limite de peso (kg)
+                                    <span
+                                        className="text-gray-400"
+                                        title="CT-es acima desse peso serão marcados como inválidos. Valor padrão: 15000 kg."
+                                    >
+                                        <Info className="w-4 h-4" />
+                                    </span>
+                                </label>
+
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    placeholder="15000"
+                                    value={limitePeso}
+                                    onChange={(e) =>
+                                        setLimitePeso(e.target.value === "" ? "" : Number(e.target.value))
+                                    }
+                                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                    disabled={isBusy}
+                                />
+
+                                <p className="text-xs text-gray-500">
+                                    CT-es acima desse peso serão marcados como inválidos.
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                    Limite aplicado: <strong>{limitePesoAplicado.toLocaleString("pt-BR")} kg</strong>
+                                </p>
+                            </div>
+
+                            <div className="flex flex-wrap gap-3">
+                                <button
+                                    disabled={!file || isBusy}
+                                    onClick={processar}
+                                    className="bg-emerald-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {uploading ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Enviando...
+                                        </>
+                                    ) : isProcessing ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Processando...
+                                        </>
+                                    ) : (
+                                        "Processar Data Input"
+                                    )}
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={limparEstado}
+                                    className="px-4 py-2 rounded-lg border text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                                    disabled={isBusy}
+                                >
+                                    Limpar
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={carregarHistorico}
+                                    className="px-4 py-2 rounded-lg border text-gray-700 hover:bg-gray-50 disabled:opacity-50 flex items-center gap-2"
+                                    disabled={carregandoHistorico}
+                                >
+                                    {carregandoHistorico ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                        <RefreshCw className="w-4 h-4" />
+                                    )}
+                                    Atualizar histórico
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-4">
+                            <div>
+                                <h3 className="text-sm font-semibold text-gray-800">
+                                    Processamento manual
+                                </h3>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Fluxo direto para arquivos já georreferenciados.
+                                </p>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <button
+                                    disabled={!file || isBusy}
+                                    onClick={processarManual}
+                                    className="bg-blue-600 text-white px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                                >
+                                    {manualUploading ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Processando...
+                                        </>
+                                    ) : (
+                                        "Processamento Manual"
+                                    )}
+                                </button>
+
                                 <span
-                                    className="text-gray-400"
-                                    title="CT-es acima desse peso serão marcados como inválidos. Valor padrão: 15000 kg."
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500"
+                                    title="Usa coordenadas já informadas no arquivo, sem geocoding ou reprocessamento. Aplica hardfail nas validações iniciais e persiste diretamente em entregas e localizações."
                                 >
                                     <Info className="w-4 h-4" />
                                 </span>
-                            </label>
+                            </div>
 
-                            <input
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                placeholder="15000"
-                                value={limitePeso}
-                                onChange={(e) =>
-                                    setLimitePeso(e.target.value === "" ? "" : Number(e.target.value))
-                                }
-                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                                disabled={uploading || isProcessing}
-                            />
-
-                            <p className="text-xs text-gray-500">
-                                CT-es acima desse peso serão marcados como inválidos.
-                            </p>
-                            <p className="text-xs text-gray-500">
-                                Limite aplicado: <strong>{limitePesoAplicado.toLocaleString("pt-BR")} kg</strong>
-                            </p>
+                            <div className="text-xs text-slate-500 space-y-1">
+                                <p>Indicado para cargas com latitude e longitude já validadas.</p>
+                                <p>Não usa polling nem fila de subjobs.</p>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div className="flex flex-wrap gap-3">
-                    <button
-                        disabled={!file || uploading || isProcessing}
-                        onClick={processar}
-                        className="bg-emerald-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {uploading ? (
-                            <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                Enviando...
-                            </>
-                        ) : isProcessing ? (
-                            <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                Processando...
-                            </>
-                        ) : (
-                            "Processar Data Input"
-                        )}
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={limparEstado}
-                        className="px-4 py-2 rounded-lg border text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                        disabled={uploading}
-                    >
-                        Limpar
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={carregarHistorico}
-                        className="px-4 py-2 rounded-lg border text-gray-700 hover:bg-gray-50 disabled:opacity-50 flex items-center gap-2"
-                        disabled={carregandoHistorico}
-                    >
-                        {carregandoHistorico ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                            <RefreshCw className="w-4 h-4" />
-                        )}
-                        Atualizar histórico
-                    </button>
-                </div>
             </div>
 
             {resultado?.status === "processing" && (
@@ -625,6 +774,7 @@ export default function DataInputPage() {
                             <thead className="bg-gray-50">
                                 <tr>
                                     <th className="p-3 text-left">Data</th>
+                                    <th className="p-3 text-left">Fluxo</th>
                                     <th className="p-3 text-left">Arquivo</th>
                                     <th className="p-3 text-left">Status</th>
                                     <th className="p-3 text-center">Total</th>
@@ -639,10 +789,16 @@ export default function DataInputPage() {
                                         <td className="p-3 whitespace-nowrap">
                                             {new Date(h.criado_em).toLocaleString("pt-BR")}
                                         </td>
+                                        <td className="p-3 whitespace-nowrap">{tipoHistoricoBadge(h)}</td>
                                         <td className="p-3">
                                             <div className="max-w-[280px] truncate" title={h.arquivo}>
                                                 {h.arquivo}
                                             </div>
+                                            {h.mensagem && (
+                                                <div className="mt-1 max-w-[280px] truncate text-xs text-gray-500" title={h.mensagem}>
+                                                    {h.mensagem}
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="p-3">{statusHistoricoBadge(h.status)}</td>
                                         <td className="p-3 text-center">{h.total_processados ?? 0}</td>

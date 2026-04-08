@@ -16,15 +16,11 @@ class DataFrameBuilder:
         "UF Origem": "remetente_uf",
         "Destinatário": "destinatario_nome",
         "CNPJ/CPF.1": "destinatario_cnpj",
-        "Endereço entrega": "cte_rua",
-        "Rua": "cte_rua",
         "Logradouro": "cte_rua",
-        "Número": "cte_numero_endereco",
         "Numero": "cte_numero_endereco",
-        "Número Endereço": "cte_numero_endereco",
-        "Numero Endereco": "cte_numero_endereco",
-        "Número do Endereço": "cte_numero_endereco",
-        "Numero do Endereco": "cte_numero_endereco",
+        "Numero Cte": "cte_numero",
+        "Número Cte": "cte_numero",
+        "Nº Cte": "cte_numero",
         "Bairro": "cte_bairro",
         "Complemento": "cte_complemento",
         "Cidade": "cte_cidade",
@@ -37,6 +33,8 @@ class DataFrameBuilder:
         "Valor Frete": "cte_valor_frete",
         "Doc/Min": "doc_min",
         "Data Frete": "envio_data",
+        "Prazo Entrega": "cte_prazo",
+        "Tempo Atendimento": "cte_tempo_atendimento",
     }
 
     # ---------------------------------------------------------
@@ -74,7 +72,15 @@ class DataFrameBuilder:
         if not cidade or not uf:
             return None
 
-        endereco = f"{rua}, {bairro}, {cidade} - {uf}"
+        # Monta endereço sem vírgula extra se bairro estiver vazio
+        if bairro:
+            endereco = f"{rua}, {bairro}, {cidade} - {uf}"
+        else:
+            endereco = f"{rua}, {cidade} - {uf}"
+
+        # Remove vírgulas duplicadas e espaços
+        endereco = re.sub(r",\s*,", ",", endereco)
+        endereco = re.sub(r",\s*", ", ", endereco)
         endereco = re.sub(r"\s+", " ", endereco).strip()
 
         return endereco
@@ -113,9 +119,30 @@ class DataFrameBuilder:
             return pd.to_numeric(valor, errors="coerce")
 
 
-        for col in ["cte_peso", "cte_volumes", "cte_valor_nf", "cte_valor_frete"]:
+        for col in ["cte_peso", "cte_volumes", "cte_valor_nf", "cte_valor_frete", "cte_prazo"]:
             if col in df.columns:
                 df[col] = df[col].apply(parse_numero)
+
+        # Tempo Atendimento: converter para minutos inteiros
+        def parse_tempo_minutos(valor):
+            if pd.isna(valor) or valor is None:
+                return None
+            if isinstance(valor, (int, float)):
+                return int(valor)
+            valor = str(valor).strip()
+            match = re.match(r"^(\d{1,2}):(\d{2})$", valor)
+            if match:
+                horas = int(match.group(1))
+                minutos = int(match.group(2))
+                return horas * 60 + minutos
+            # Se vier só número, tenta converter
+            try:
+                return int(valor)
+            except Exception:
+                return None
+
+        if "cte_tempo_atendimento" in df.columns:
+            df["cte_tempo_atendimento"] = df["cte_tempo_atendimento"].apply(parse_tempo_minutos)
 
         # ---------------------------------------------
         # DATA
@@ -126,12 +153,16 @@ class DataFrameBuilder:
             ).dt.date
 
         # ---------------------------------------------
-        # CTE NUMERO
+        # CTE NUMERO (FLEXÍVEL E OBRIGATÓRIO)
         # ---------------------------------------------
-        if "doc_min" in df.columns:
-            df["cte_numero"] = df["doc_min"].astype(str).apply(
-                lambda x: re.split(r"/", x)[0] if "/" in x else x
-            )
+        if "cte_numero" not in df.columns:
+            if "doc_min" in df.columns:
+                df["cte_numero"] = df["doc_min"].astype(str).apply(
+                    lambda x: re.split(r"/", x)[0] if "/" in x else x
+                )
+            else:
+                logger.error("[DATAFRAME][ERRO] Nenhuma coluna de número de CTe encontrada (cte_numero ou doc_min)")
+                raise ValueError("Arquivo de entrada deve conter a coluna 'cte_numero' ou 'doc_min'")
 
         # ---------------------------------------------
         # ENDEREÇO COMPLETO (CORRIGIDO)

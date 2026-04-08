@@ -76,20 +76,21 @@ class GeolocationService:
     def _geocode_nominatim_structured(self, row):
 
         # 🔥 NOVO: Sanitiza strings
+
+        # Normalização inspirada no SalesRouter
         street = self._sanitize_string(row.get("cte_rua"), "street")
         city = self._sanitize_string(row.get("cte_cidade"), "city")
         state = self._sanitize_string(row.get("cte_uf"), "state")
-        postalcode = row.get("cte_cep")
 
-        if not street or not city or not state:
-            logger.debug(f"[NOMINATIM][SKIP] dados insuficientes")
-            return None
+        # Remove duplicidade tipo "RUA RUA ..."
+        if street:
+            street = re.sub(r"^(RUA|AVENIDA|RODOVIA) \\1 ", r"\\1 ", street)
+            street = re.sub(r"^(RUA|AVENIDA|RODOVIA) +", lambda m: m.group(1) + " ", street)
+            street = re.sub(r"\b(RUA|AVENIDA|RODOVIA) +\\1 ", r"\\1 ", street)
+            street = re.sub(r",", " ", street)
+            street = re.sub(r"\s+", " ", street).strip()
 
-        import re
-
-        street = street.replace(",", " ").strip()
-        street = re.sub(r"\b0+(\d+)\b", r"\1", street)
-
+        # Remove postalcode do request (padrão que funcionou melhor)
         params = {
             "street": street,
             "city": city,
@@ -99,13 +100,11 @@ class GeolocationService:
             "limit": 1
         }
 
-        if postalcode:
-            params["postalcode"] = str(postalcode)
-
         headers = {
             "User-Agent": "HubRouter-Geocoder"
         }
 
+        logger.info(f"[NOMINATIM][QUERY] params={params}")
         for retry_num in range(self.max_retries + 1):
             try:
                 r = requests.get(
@@ -135,8 +134,9 @@ class GeolocationService:
                     logger.warning(f"[NOMINATIM][INVALID_JSON] {e}")
                     return None
 
+
                 if not data:
-                    logger.debug(f"[NOMINATIM][MISS] params={params}")
+                    logger.info(f"[NOMINATIM][MISS] params={params}")
                     return None
 
                 item = data[0]
@@ -148,7 +148,8 @@ class GeolocationService:
                     logger.warning(f"[NOMINATIM][INVALID_COORDS] erro={e} item={item}")
                     return None
 
-                logger.info(f"[NOMINATIM][HIT] lat={lat} lon={lon}")
+
+                logger.info(f"[NOMINATIM][HIT] lat={lat} lon={lon} params={params}")
 
                 return lat, lon, "nominatim_structured"
 

@@ -58,10 +58,10 @@ class ValidationService:
         "cte_numero",
         "cte_cidade",
         "cte_uf",
-        "cte_cep",
         "cte_peso",
-        "cte_volumes",
         "envio_data",
+        # "cte_cep",  # Agora opcional
+        # "cte_volumes",  # Agora opcional
     ]
 
     def execute(self, df: pd.DataFrame):
@@ -115,18 +115,23 @@ class ValidationService:
 
         # ---------------------------
         # 2. PESO / VOLUME
-        # ---------------------------
-        mask_peso = df["cte_peso"].fillna(0) <= 0
-        mask_vol = df["cte_volumes"].fillna(0) <= 0
 
+        mask_peso = df["cte_peso"].fillna(0) <= 0
+        # Volume agora realmente opcional: não invalida se vazio ou zero
         df.loc[mask_peso, "motivo_invalidade"] = "peso_invalido"
-        df.loc[mask_vol, "motivo_invalidade"] = "volume_invalido"
 
         # ---------------------------
         # 3. DUPLICIDADE CTE
         # ---------------------------
         duplicados = df.duplicated(subset=["cte_numero"], keep=False)
         df.loc[duplicados, "motivo_invalidade"] = "cte_duplicado"
+        # Log detalhado dos duplicados
+        if duplicados.any():
+            cte_duplicados = df.loc[duplicados, "cte_numero"]
+            contagem = cte_duplicados.value_counts()
+            logger.warning("[VALIDACAO][DUPLICADOS] cte_numero duplicados e suas contagens:")
+            for cte, count in contagem.items():
+                logger.warning(f"[VALIDACAO][DUPLICADO] cte_numero={cte} count={count}")
 
         # ---------------------------
         # 4. GEOCODE
