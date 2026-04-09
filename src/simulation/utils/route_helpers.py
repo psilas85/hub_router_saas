@@ -500,7 +500,7 @@ def calcular_elbow_last_mile(coordenadas, k_min=1, k_max=10):
     k_values = list(range(k_min, min(k_max + 1, len(coordenadas))))
 
     for k in k_values:
-        kmeans = KMeans(n_clusters=k, random_state=42).fit(coordenadas)
+        kmeans = KMeans(n_clusters=k, random_state=42, n_init="auto").fit(coordenadas)
         distortions.append(kmeans.inertia_)
 
     # Cotovelo: identifica o ponto com maior queda relativa
@@ -567,7 +567,11 @@ def subdividir_subcluster_por_veiculo(
 
     while k_subveic <= len(coordenadas):
         try:
-            df_subcluster['subveic'] = KMeans(n_clusters=k_subveic, random_state=42).fit_predict(coordenadas)
+            df_subcluster['subveic'] = KMeans(
+                n_clusters=k_subveic,
+                random_state=42,
+                n_init="auto",
+            ).fit_predict(coordenadas)
         except Exception as e:
             logger.error(f"❌ Erro no KMeans com k={k_subveic}: {e}")
             break
@@ -654,13 +658,22 @@ def subdividir_subcluster_por_veiculo(
 
 
 
-def expandir_pontos_por_capacidade_veiculo(pontos: list[dict], db_conn, logger=None) -> list[dict]:
+def expandir_pontos_por_capacidade_veiculo(
+    pontos: list[dict],
+    db_conn,
+    tenant_id: str,
+    logger=None,
+) -> list[dict]:
     """
     Divide pontos com peso maior que a capacidade máxima de veículos disponíveis.
     Retorna uma nova lista de pontos com divisões aplicadas.
     """
     # Carrega tabela de veículos
-    df_veiculos = pd.read_sql("SELECT * FROM veiculos_transferencia", db_conn)
+    df_veiculos = pd.read_sql(
+        "SELECT * FROM veiculos_transferencia WHERE tenant_id = %s",
+        db_conn,
+        params=(tenant_id,),
+    )
     capacidade_maxima = df_veiculos["capacidade_kg_max"].max()
 
     novos_pontos = []

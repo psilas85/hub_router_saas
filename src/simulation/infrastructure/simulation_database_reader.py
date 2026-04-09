@@ -2,13 +2,15 @@
 
 import pandas as pd
 
-def carregar_tarifas_transferencia(db_conn) -> pd.DataFrame:
-    query = "SELECT * FROM veiculos_transferencia"
-    return pd.read_sql(query, db_conn)
 
-def carregar_tarifas_last_mile(db_conn) -> pd.DataFrame:
-    query = "SELECT * FROM veiculos_last_mile"
-    return pd.read_sql(query, db_conn)
+def carregar_tarifas_transferencia(db_conn, tenant_id: str) -> pd.DataFrame:
+    query = "SELECT * FROM veiculos_transferencia WHERE tenant_id = %s"
+    return pd.read_sql(query, db_conn, params=(tenant_id,))
+
+
+def carregar_tarifas_last_mile(db_conn, tenant_id: str) -> pd.DataFrame:
+    query = "SELECT * FROM veiculos_last_mile WHERE tenant_id = %s"
+    return pd.read_sql(query, db_conn, params=(tenant_id,))
 
 def definir_tipo_veiculo_transferencia(peso_total: float, db_conn, tenant_id: str) -> str:
     """
@@ -174,6 +176,33 @@ def carregar_hubs(db_conn, tenant_id):
 
     return hubs
 
+
+def carregar_hub_por_id(db_conn, tenant_id, hub_id):
+    """
+    Carrega um hub específico do tenant.
+    Retorna um dicionário com os campos: hub_id, nome, latitude, longitude.
+    """
+    query = """
+        SELECT hub_id, nome, latitude, longitude
+        FROM hubs
+        WHERE tenant_id = %s AND hub_id = %s
+        LIMIT 1
+    """
+    cursor = db_conn.cursor()
+    cursor.execute(query, (tenant_id, hub_id))
+    row = cursor.fetchone()
+    cursor.close()
+
+    if not row:
+        return None
+
+    return {
+        'hub_id': row[0],
+        'nome': row[1],
+        'latitude': row[2],
+        'longitude': row[3]
+    }
+
 def obter_veiculo_transferencia_por_peso(peso_total: float, db_conn, tenant_id: str) -> str:
     """
     Busca veículo pelo peso dentro do tenant informado.
@@ -193,14 +222,18 @@ def obter_veiculo_transferencia_por_peso(peso_total: float, db_conn, tenant_id: 
 
     return result[0].strip().lower() if result else "desconhecido"
 
-def obter_tarifa_km_veiculo_transferencia(tipo_veiculo: str, db_conn) -> float:
+def obter_tarifa_km_veiculo_transferencia(
+    tipo_veiculo: str,
+    db_conn,
+    tenant_id: str,
+) -> float:
     query = """
         SELECT tarifa_km
         FROM veiculos_transferencia
-        WHERE tipo_veiculo = %s
+        WHERE tenant_id = %s AND tipo_veiculo = %s
     """
     cursor = db_conn.cursor()
-    cursor.execute(query, (tipo_veiculo,))
+    cursor.execute(query, (tenant_id, tipo_veiculo))
     result = cursor.fetchone()
     cursor.close()
 
@@ -237,17 +270,17 @@ def listar_tarifas_transferencia(db, tenant_id: str):
 
 
 
-def obter_capacidade_veiculo(tipo_veiculo: str, db_conn) -> float:
+def obter_capacidade_veiculo(tipo_veiculo: str, db_conn, tenant_id: str) -> float:
     """
     Retorna a capacidade máxima em kg do tipo de veículo informado.
     """
     query = """
         SELECT capacidade_kg_max
         FROM veiculos_transferencia
-        WHERE tipo_veiculo = %s
+        WHERE tenant_id = %s AND tipo_veiculo = %s
     """
     cursor = db_conn.cursor()
-    cursor.execute(query, (tipo_veiculo,))
+    cursor.execute(query, (tenant_id, tipo_veiculo))
     result = cursor.fetchone()
     cursor.close()
 
@@ -318,8 +351,6 @@ def carregar_entregas_clusterizadas(simulation_db, clusterization_db, tenant_id:
 
     # 3. Merge
     df = pd.merge(df_cluster, df_coords, on=["cte_numero", "tenant_id", "envio_data"], how="left")
-    print("📌 Colunas após merge clusterizado:", df.columns.tolist())
-    print("🔍 Amostra cte_cidade:", df["cte_cidade"].dropna().unique())
 
     return df
 
@@ -398,8 +429,8 @@ def buscar_latlon_ctes(clusterization_db, simulation_db, tenant_id, envio_data, 
     df_sim.columns = df_sim.columns.str.strip()
 
     if logger:
-        logger.info(f"📄 entregas_clusterizadas (simulation_db): {df_sim.shape[0]} linhas")
-        logger.info(f"📌 df_sim.columns: {df_sim.columns.tolist()}")
+        logger.debug(f"📄 entregas_clusterizadas (simulation_db): {df_sim.shape[0]} linhas")
+        logger.debug(f"📌 df_sim.columns: {df_sim.columns.tolist()}")
 
     query_clu = """
     SELECT
@@ -415,16 +446,16 @@ def buscar_latlon_ctes(clusterization_db, simulation_db, tenant_id, envio_data, 
     df_clu.columns = df_clu.columns.str.strip()
 
     if logger:
-        logger.info(f"📄 entregas (clusterization_db): {df_clu.shape[0]} linhas")
-        logger.info(f"📌 df_clu.columns: {df_clu.columns.tolist()}")
+        logger.debug(f"📄 entregas (clusterization_db): {df_clu.shape[0]} linhas")
+        logger.debug(f"📌 df_clu.columns: {df_clu.columns.tolist()}")
 
     df = pd.merge(df_sim, df_clu, on="cte_numero", how="inner")
     df.columns = df.columns.str.strip()
 
     if logger:
-        logger.info(f"🔗 Após merge: {df.shape[0]} linhas | colunas: {df.columns.tolist()}")
+        logger.debug(f"🔗 Após merge: {df.shape[0]} linhas | colunas: {df.columns.tolist()}")
         if not df.empty:
-            logger.info(f"🧪 Amostra dict (bruto): {df.head().to_dict(orient='records')}")
+            logger.debug(f"🧪 Amostra dict (bruto): {df.head().to_dict(orient='records')}")
             if 'centro_lat' not in df.columns:
                 logger.error("🚨 ERRO: coluna 'centro_lat' ausente após merge!")
         else:

@@ -233,7 +233,11 @@ def consolidar_resumos_por_rota(resumos: list[TransferenciaResumo], simulation_d
             total_distancia = sum(r.distancia_total_km for r in subrotas)
             total_clusters = sum(r.qde_clusters_rota for r in subrotas)
 
-            capacidade_kg = obter_capacidade_veiculo(primeiro.tipo_veiculo, simulation_db)
+            capacidade_kg = obter_capacidade_veiculo(
+                primeiro.tipo_veiculo,
+                simulation_db,
+                primeiro.tenant_id,
+            )
             aproveitamento = min((total_peso / capacidade_kg) * 100, 100.0) if capacidade_kg else 0
 
             consolidado = TransferenciaResumo(

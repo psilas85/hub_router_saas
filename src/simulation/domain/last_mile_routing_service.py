@@ -31,7 +31,7 @@ class LastMileRoutingService:
     def rotear_last_mile(self, df_clusterizado: pd.DataFrame, k_clusters: int, tempo_maximo: int = None) -> pd.DataFrame:
         self.logger.info("📦 Iniciando roteirização de last-mile...")
 
-        df_tarifas = carregar_tarifas_last_mile(self.simulation_db)
+        df_tarifas = carregar_tarifas_last_mile(self.simulation_db, self.tenant_id)
         detalhes_totais = []
 
         for cluster_id, df_cluster in df_clusterizado.groupby('cluster'):
@@ -78,7 +78,10 @@ class LastMileRoutingService:
 
             coordenadas = df_coords[['destino_latitude', 'destino_longitude']].dropna()
             if coordenadas.empty:
-                raise ValueError(f"❌ Coordenadas ausentes para cluster {cluster_id}")
+                self.logger.warning(
+                    f"⚠️ Cluster {cluster_id} sem coordenadas válidas para last-mile. Ignorando cluster."
+                )
+                continue
 
             if coordenadas.shape[0] <= 1:
                 self.logger.error(f"❌ Cluster {cluster_id} possui {coordenadas.shape[0]} ponto(s). Roteirização cancelada para este cluster.")
@@ -104,7 +107,11 @@ class LastMileRoutingService:
                     self.logger.warning(f"⚠️ Número de pontos ({len(coordenadas)}) menor que k_sub ({k_sub}). Ajustando para {len(coordenadas)}.")
                     k_sub = len(coordenadas)
 
-                df_coords['subcluster'] = KMeans(n_clusters=k_sub, random_state=42).fit_predict(coordenadas.values)
+                df_coords['subcluster'] = KMeans(
+                    n_clusters=k_sub,
+                    random_state=42,
+                    n_init="auto",
+                ).fit_predict(coordenadas.values)
 
                 violou_restricao = False
                 detalhes_cluster = []
@@ -282,8 +289,15 @@ class LastMileRoutingService:
                 self.logger.error(msg)
                 raise RuntimeError(msg)
 
+        if not detalhes_totais:
+            self.logger.warning("⚠️ Roteirização last-mile não gerou nenhuma rota válida.")
+            return pd.DataFrame()
+
         df_detalhes = pd.DataFrame(detalhes_totais)
-        self.logger.info(f"✅ Roteirização last-mile finalizada com {len(df_detalhes)} entregas em {df_detalhes['rota_id'].nunique()} rotas.")
+        self.logger.info(
+            f"✅ Roteirização last-mile finalizada com {len(df_detalhes)} entregas em "
+            f"{df_detalhes['rota_id'].nunique()} rotas."
+        )
         return df_detalhes
 
 

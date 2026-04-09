@@ -11,8 +11,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 load_dotenv()
 
-from simulation.visualization.gerador_relatorio_final import executar_geracao_relatorio_final
-from simulation.visualization.gerar_graficos_custos_simulacao import gerar_graficos_custos_por_envio
 from simulation.application.simulation_use_case import SimulationUseCase
 from simulation.infrastructure.simulation_database_connection import (
     conectar_clusterization_db,
@@ -101,24 +99,18 @@ def processar_data(data_atual, tenant_id, args, parametros):
             simulation_db=simulation_db,
             logger=logger,
             modo_forcar=args.modo_forcar,
+            simulation_id=simulation_id,
             fundir_clusters_pequenos=args.fundir_clusters_pequenos,
             permitir_rotas_excedentes=args.permitir_rotas_excedentes
         )
 
         ponto = use_case.executar_simulacao_completa()
-        if ponto:
-            gerar_graficos_custos_por_envio(simulation_db, tenant_id, datas_filtradas=[data_atual])
-            executar_geracao_relatorio_final(
-                tenant_id=tenant_id,
-                envio_data=str(data_atual),
-                simulation_id=simulation_id,
-                simulation_db=simulation_db
-            )
+        if ponto and ponto.get("k_clusters") is not None:
             logger.info(f"✅ Simulação concluída para {data_atual}")
             return ("ok", data_atual, ponto)
         else:
             logger.warning(f"⚠️ Simulação ignorada para {data_atual}")
-            return ("ignorada", data_atual, None)
+            return ("ignorada", data_atual, ponto)
 
     except Exception as e:
         logger.error(f"❌ Erro inesperado na simulação {data_atual}: {str(e)}")
@@ -173,7 +165,7 @@ if __name__ == "__main__":
 
         for future in as_completed(futures):
             status, data, ponto = future.result()
-            if status == "ok":
+            if status == "ok" and ponto and ponto.get("k_clusters") is not None:
                 datas_processadas.append(data)
                 pontos_inflexao.append((data, ponto['k_clusters'], ponto['custo_total']))
             else:

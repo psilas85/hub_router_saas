@@ -10,7 +10,7 @@ from simulation.utils.format_utils import formatar
 from simulation.utils.route_helpers import gerar_rotas_savings_transfer, expandir_pontos_por_capacidade_veiculo
 from simulation.infrastructure.cache_routes import obter_rota_real
 from simulation.infrastructure.simulation_database_reader import (
-    carregar_hubs,
+    carregar_hub_por_id,
     definir_tipo_veiculo_transferencia,
 )
 from simulation.domain.entities import TransferenciaResumo
@@ -21,39 +21,44 @@ from simulation.infrastructure.simulation_database_writer import (
 
 
 class TransferRoutingService:
-    def __init__(self, clusterization_db, simulation_db, logger, tenant_id, parametros):
+    def __init__(self, clusterization_db, simulation_db, logger, tenant_id, parametros, hub_id):
         self.clusterization_db = clusterization_db
         self.simulation_db = simulation_db
         self.logger = logger
         self.tenant_id = tenant_id
         self.parametros = parametros
+        self.hub_id = hub_id
+
+    @staticmethod
+    def _retorno_vazio():
+        return [], []
 
     def rotear_transferencias(self, envio_data, simulation_id, k_clusters, is_ponto_otimo):
         self.logger.info("📦 Iniciando roteirização de transferências com Savings Algorithm...")
 
-        query = f"""
+        query = """
             SELECT cluster, centro_lat, centro_lon, cte_numero,
                 cte_peso, cte_volumes, cte_valor_nf, cte_valor_frete
             FROM entregas_clusterizadas
-            WHERE tenant_id = '{self.tenant_id}'
-            AND envio_data = '{envio_data}'
-            AND k_clusters = {k_clusters}
+            WHERE tenant_id = %s
+            AND envio_data = %s
+            AND k_clusters = %s
         """
 
         try:
             cursor = self.simulation_db.cursor()
-            cursor.execute(query)
+            cursor.execute(query, (self.tenant_id, envio_data, k_clusters))
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
             df = pd.DataFrame(rows, columns=columns)
             cursor.close()
         except Exception as e:
             self.logger.error(f"❌ Erro ao carregar dados de entregas_clusterizadas: {e}")
-            return []
+            return self._retorno_vazio()
 
         if df.empty:
             self.logger.warning("⚠️ Nenhum dado encontrado para clusterização de transferências.")
-            return []
+            return self._retorno_vazio()
 
         df["cte_peso"] = df["cte_peso"].astype(float)
         df["cte_volumes"] = df["cte_volumes"].astype(int)
@@ -74,10 +79,9 @@ class TransferRoutingService:
         self.logger.info(f"🔍 Total de entregas únicas (CTEs): {df['cte_numero'].nunique()}")
 
 
-        hubs = carregar_hubs(self.simulation_db, self.tenant_id)
-        if not hubs:
-            raise ValueError("❌ Nenhum hub cadastrado encontrado.")
-        hub = hubs[0]
+        hub = carregar_hub_por_id(self.simulation_db, self.tenant_id, self.hub_id)
+        if not hub:
+            raise ValueError(f"❌ Hub central com hub_id={self.hub_id} não encontrado para este tenant.")
         origem = (hub["latitude"], hub["longitude"])
 
         agrupado = df.groupby(["cluster", "centro_lat", "centro_lon"]).agg({
@@ -101,7 +105,12 @@ class TransferRoutingService:
             }
             for _, row in agrupado.iterrows()
         ]
-        pontos = expandir_pontos_por_capacidade_veiculo(pontos, self.simulation_db, self.logger)
+        pontos = expandir_pontos_por_capacidade_veiculo(
+            pontos,
+            self.simulation_db,
+            self.tenant_id,
+            self.logger,
+        )
 
         obter_rota = partial(
             obter_rota_real,
@@ -124,7 +133,7 @@ class TransferRoutingService:
 
         if not rotas:
             self.logger.warning("⚠️ Nenhuma rota gerada com Savings Algorithm.")
-            return []
+            return self._retorno_vazio()
 
         rotas_resumo = []
         detalhes_transferencias = []

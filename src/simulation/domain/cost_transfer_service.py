@@ -4,9 +4,10 @@ from simulation.domain.entities import TransferenciaResumo
 from simulation.infrastructure.simulation_database_reader import obter_tarifa_km_veiculo_transferencia
 
 class CostTransferService:
-    def __init__(self, db_conn, logger):
+    def __init__(self, db_conn, logger, tenant_id: str):
         self.db_conn = db_conn
         self.logger = logger
+        self.tenant_id = tenant_id
 
     def calcular_custo(self, lista_resumo: list[TransferenciaResumo]) -> float:
         self.logger.info("💰 Calculando custo de transferência...")
@@ -17,7 +18,11 @@ class CostTransferService:
             tipo_veiculo = resumo.tipo_veiculo
             distancia_km = resumo.distancia_total_km
 
-            custo_por_km = obter_tarifa_km_veiculo_transferencia(tipo_veiculo, self.db_conn)
+            custo_por_km = obter_tarifa_km_veiculo_transferencia(
+                tipo_veiculo,
+                self.db_conn,
+                self.tenant_id,
+            )
             custo = distancia_km * custo_por_km
             custo_total += custo
 

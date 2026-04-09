@@ -1,6 +1,5 @@
 #hub_router_1.0.1/src/simulation/jobs.py
 
-import os
 import uuid
 import traceback
 import json
@@ -14,8 +13,6 @@ from simulation.infrastructure.simulation_database_connection import (
     conectar_simulation_db
 )
 from simulation.logs.simulation_logger import configurar_logger
-from simulation.visualization.gerar_graficos_custos_simulacao import gerar_graficos_custos_por_envio
-from simulation.visualization.gerador_relatorio_final import executar_geracao_relatorio_final
 
 
 def _processar_data_envio(envio_data, tenant_id, hub_id, parametros, modo_forcar):
@@ -70,25 +67,29 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, parametros, modo_forcar
 
         ponto = use_case.executar_simulacao_completa()
 
-        if ponto:
-            gerar_graficos_custos_por_envio(
-                simulation_db=simulation_db,
-                tenant_id=tenant_id,
-                datas_filtradas=[envio_data],
-                modo_forcar=modo_forcar
-            )
-            executar_geracao_relatorio_final(
-                tenant_id=tenant_id,
-                envio_data=str(envio_data),
-                simulation_id=simulation_id,
-                simulation_db=simulation_db,
-                modo_forcar=modo_forcar
-            )
+        cenarios_invalidados = []
+        if isinstance(ponto, dict):
+            cenarios_invalidados = ponto.get("cenarios_invalidados", [])
+
+        if ponto and ponto.get("k_clusters") is not None:
             logger.info(f"✅ Simulação concluída para {envio_data}")
-            return ("ok", envio_data, None)
+            return (
+                "ok",
+                envio_data,
+                {
+                    "ponto_otimo": ponto,
+                    "cenarios_invalidados": cenarios_invalidados,
+                },
+            )
         else:
             logger.warning(f"⚠️ Simulação ignorada para {envio_data}")
-            return ("ignorada", envio_data, None)
+            return (
+                "ignorada",
+                envio_data,
+                {
+                    "cenarios_invalidados": cenarios_invalidados,
+                },
+            )
 
     except Exception as e:
         logger.error(f"❌ Erro inesperado na simulação {envio_data}: {e}")
@@ -143,6 +144,14 @@ def processar_simulacao(
 
         erros = [resultado for resultado in results if resultado[0] == "erro"]
         ignoradas = [resultado for resultado in results if resultado[0] == "ignorada"]
+        invalidacoes = [
+            {
+                "envio_data": str(resultado[1]),
+                "cenarios": (resultado[2] or {}).get("cenarios_invalidados", []),
+            }
+            for resultado in results
+            if isinstance(resultado[2], dict) and (resultado[2] or {}).get("cenarios_invalidados")
+        ]
 
         conn = conectar_simulation_db()
         try:
@@ -174,6 +183,21 @@ def processar_simulacao(
 
                 status_final = "error"
             else:
+                mensagem_invalidacoes = ""
+                if invalidacoes:
+                    partes_invalidacoes = []
+                    for item in invalidacoes:
+                        cenarios = ", ".join(
+                            f"k={cenario['k_clusters']} ({cenario['motivo']})"
+                            for cenario in item["cenarios"]
+                        )
+                        partes_invalidacoes.append(
+                            f"{item['envio_data']}: {cenarios}"
+                        )
+                    mensagem_invalidacoes = (
+                        " Cenários invalidados: " + " | ".join(partes_invalidacoes)
+                    )
+
                 if ignoradas:
                     datas_ignoradas = ", ".join(str(resultado[1]) for resultado in ignoradas)
                     mensagem = (
@@ -182,6 +206,8 @@ def processar_simulacao(
                     )
                 else:
                     mensagem = f"Simulação de {data_inicial} a {data_final} concluída com sucesso."
+
+                mensagem += mensagem_invalidacoes
 
                 cur.execute("""
                     UPDATE historico_simulation
@@ -212,6 +238,7 @@ def processar_simulacao(
             "tenant_id": tenant_id,
             "datas": [str(d) for d in lista_datas],
             "resultados": results,
+            "cenarios_invalidados": invalidacoes,
         }
 
     except Exception as e:

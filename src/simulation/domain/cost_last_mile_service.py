@@ -1,11 +1,12 @@
 # domain/cost_last_mile_service.py
 import pandas as pd
-from simulation.infrastructure.simulation_database_reader import carregar_tarifas_last_mile, definir_tipo_veiculo_last_mile
+
 
 class CostLastMileService:
-    def __init__(self, db_conn, logger):
+    def __init__(self, db_conn, logger, tenant_id: str):
         self.db_conn = db_conn
         self.logger = logger
+        self.tenant_id = tenant_id
 
     def calcular_custo(self, df_rotas_last_mile: pd.DataFrame) -> float:
         self.logger.info("💰 Calculando custo de last-mile...")
@@ -42,8 +43,12 @@ class CostLastMileService:
 
     def _obter_custo_por_km(self, tipo_veiculo: str) -> float:
         cursor = self.db_conn.cursor()
-        query = "SELECT tarifa_km FROM veiculos_last_mile WHERE tipo_veiculo = %s"
-        cursor.execute(query, (tipo_veiculo,))
+        query = """
+            SELECT tarifa_km
+            FROM veiculos_last_mile
+            WHERE tenant_id = %s AND tipo_veiculo = %s
+        """
+        cursor.execute(query, (self.tenant_id, tipo_veiculo))
         result = cursor.fetchone()
         cursor.close()
 
@@ -55,8 +60,12 @@ class CostLastMileService:
 
     def _obter_custo_por_entrega(self, tipo_veiculo: str) -> float:
         cursor = self.db_conn.cursor()
-        query = "SELECT tarifa_entrega FROM veiculos_last_mile WHERE tipo_veiculo = %s"
-        cursor.execute(query, (tipo_veiculo,))
+        query = """
+            SELECT tarifa_entrega
+            FROM veiculos_last_mile
+            WHERE tenant_id = %s AND tipo_veiculo = %s
+        """
+        cursor.execute(query, (self.tenant_id, tipo_veiculo))
         result = cursor.fetchone()
         cursor.close()
 

@@ -3,13 +3,12 @@
 import uuid
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from simulation.utils.rate_limiter import RateLimiter
 
 from simulation.visualization.plot_simulation_cluster import plotar_mapa_clusterizacao_simulation
 from simulation.visualization.plot_simulation_transfer import plotar_mapa_transferencias
 from simulation.visualization.plot_simulation_last_mile import plotar_mapa_last_mile
 
-from simulation.infrastructure.simulation_database_reader import carregar_cluster_costs
+from simulation.infrastructure.simulation_database_reader import carregar_cluster_costs, carregar_hub_por_id
 from simulation.domain.cost_cluster_service import calcular_cluster_cost
 from simulation.domain.cost_cluster_service import calcular_custo_clusters_por_scenario
 from simulation.domain.simulation_service import SimulationService
@@ -23,6 +22,10 @@ from simulation.utils.validations import validar_integridade_entregas_clusteriza
 from simulation.infrastructure.simulation_database_writer import (
     persistir_resumo_transferencias,
     salvar_detalhes_transferencias
+)
+from simulation.infrastructure.simulation_database_connection import (
+    conectar_clusterization_db,
+    conectar_simulation_db,
 )
 from simulation.domain.data_cleaner_service import DataCleanerService
 from simulation.visualization.gerar_graficos_custos_simulacao import gerar_graficos_custos_por_envio
@@ -65,38 +68,94 @@ class SimulationUseCase:
         )
 
         self.transfer_service = TransferRoutingService(
-            clusterization_db, simulation_db, logger, tenant_id, parametros
+            clusterization_db, simulation_db, logger, tenant_id, parametros, hub_id
         )
-        self.cost_last_mile_service = CostLastMileService(simulation_db, logger)
-        self.cost_transfer_service = CostTransferService(simulation_db, logger)
+        self.cost_last_mile_service = CostLastMileService(
+            simulation_db,
+            logger,
+            tenant_id,
+        )
+        self.cost_transfer_service = CostTransferService(
+            simulation_db,
+            logger,
+            tenant_id,
+        )
         self.result_service = SimulationResultService(simulation_db, logger)
+        self.cenarios_invalidados = []
 
-        motor_rotas = parametros.get("motor_rotas", "osrm")
-        if motor_rotas == "google":
-            # Exemplo: 10 requests/s
-            self.google_limiter = RateLimiter(max_calls_per_sec=10)
-        else:
-            self.google_limiter = None
+    def _registrar_cenario_invalidado(self, k, motivo, detalhes=None):
+        registro = {
+            "k_clusters": k,
+            "motivo": motivo,
+        }
+        if detalhes is not None:
+            registro["detalhes"] = detalhes
+        self.cenarios_invalidados.append(registro)
+        self.logger.warning(
+            f"🚫 Cenário k={k} invalidado: {motivo}"
+        )
 
     # 🔹 Função auxiliar para processar clusters em paralelo
     def _processar_cluster_lastmile(self, cluster_id, df_cluster, k):
         """Processa roteirização e custo last-mile de 1 cluster (thread-safe)."""
+        simulation_db = None
+        clusterization_db = None
         try:
-            # 🚦 Aplica rate limit apenas se for Google
-            if self.google_limiter:
-                self.google_limiter.wait()
+            simulation_db = conectar_simulation_db()
+            clusterization_db = conectar_clusterization_db()
 
-            rotas = self.last_mile_service.rotear_last_mile(df_cluster, k_clusters=k)
+            last_mile_service = LastMileRoutingService(
+                simulation_db=simulation_db,
+                clusterization_db=clusterization_db,
+                tenant_id=self.tenant_id,
+                logger=self.logger,
+                parametros=self.parametros,
+                envio_data=self.envio_data,
+                permitir_rotas_excedentes=self.permitir_rotas_excedentes,
+            )
+            cost_last_mile_service = CostLastMileService(
+                simulation_db,
+                self.logger,
+                self.tenant_id,
+            )
+
+            rotas = last_mile_service.rotear_last_mile(df_cluster, k_clusters=k)
             if rotas is None or rotas.empty:
                 self.logger.warning(f"⚠️ Nenhuma rota gerada para cluster {cluster_id} (k={k})")
-                return {"cluster_id": cluster_id, "rotas": None, "custo_last_mile": 0.0}
+                return {
+                    "cluster_id": cluster_id,
+                    "rotas": None,
+                    "custo_last_mile": 0.0,
+                    "erro": f"Nenhuma rota gerada para cluster {cluster_id} (k={k})",
+                }
 
-            custo_lm = self.cost_last_mile_service.calcular_custo(rotas)
-            return {"cluster_id": cluster_id, "rotas": rotas, "custo_last_mile": custo_lm}
+            custo_lm = cost_last_mile_service.calcular_custo(rotas)
+            return {
+                "cluster_id": cluster_id,
+                "rotas": rotas,
+                "custo_last_mile": custo_lm,
+                "erro": None,
+            }
 
         except Exception as e:
             self.logger.error(f"❌ Erro no cluster {cluster_id} (k={k}): {e}")
-            return {"cluster_id": cluster_id, "rotas": None, "custo_last_mile": 0.0}
+            return {
+                "cluster_id": cluster_id,
+                "rotas": None,
+                "custo_last_mile": 0.0,
+                "erro": str(e),
+            }
+        finally:
+            try:
+                if clusterization_db is not None:
+                    clusterization_db.close()
+            except Exception:
+                pass
+            try:
+                if simulation_db is not None:
+                    simulation_db.close()
+            except Exception:
+                pass
 
 
     def _buscar_resultado_k0(self):
@@ -155,14 +214,31 @@ class SimulationUseCase:
             self.logger.warning(f"⚠️ Nenhuma entrega encontrada para {self.envio_data}. Simulação será ignorada.")
             return None
 
-        from simulation.infrastructure.simulation_database_reader import carregar_hubs
-        hubs = carregar_hubs(self.simulation_db, self.tenant_id)
+        if {"latitude", "longitude"}.issubset(df_entregas_original.columns):
+            indices_coordenadas_validas = df_entregas_original[["latitude", "longitude"]].dropna().index
+            mascara_coordenadas_validas = df_entregas_original.index.isin(indices_coordenadas_validas)
+            qtd_invalidas = int((~mascara_coordenadas_validas).sum())
+            if qtd_invalidas:
+                self.logger.warning(
+                    f"⚠️ {qtd_invalidas} entregas sem coordenadas válidas serão removidas da simulação."
+                )
+            df_entregas_original = df_entregas_original.loc[mascara_coordenadas_validas].copy()
+
+        if df_entregas_original.empty:
+            self.logger.warning(
+                f"⚠️ Nenhuma entrega com coordenadas válidas encontrada para {self.envio_data}. Simulação será ignorada."
+            )
+            return None
+
+        hub_central = carregar_hub_por_id(self.simulation_db, self.tenant_id, self.hub_id)
+        if not hub_central:
+            raise ValueError(f"❌ Hub central com hub_id={self.hub_id} não encontrado para este tenant.")
 
         if not self.parametros.get("desativar_cluster_hub", False):
             self.logger.info(f"🧲 Atribuindo entregas próximas ao hub central como cluster especial")
             df_hub, df_entregas = ClusterizationService.atribuir_entregas_proximas_ao_hub_central(
                 df_entregas=df_entregas_original,
-                hubs=hubs,
+                hubs=[hub_central],
                 raio_km=self.parametros.get("raio_hub_km", 80.0)
             )
         else:
@@ -267,7 +343,35 @@ class SimulationUseCase:
                 modo_forcar=self.modo_forcar
             )
 
-            return {"k_clusters": melhor_k, "custo_total": menor_custo}
+            if self.cenarios_invalidados:
+                resumo = "; ".join(
+                    f"k={item['k_clusters']}: {item['motivo']}"
+                    for item in self.cenarios_invalidados
+                )
+                self.logger.warning(
+                    f"⚠️ Cenários invalidados durante a execução: {resumo}"
+                )
+
+            return {
+                "k_clusters": melhor_k,
+                "custo_total": menor_custo,
+                "cenarios_invalidados": list(self.cenarios_invalidados),
+            }
+
+        if self.cenarios_invalidados:
+            resumo = "; ".join(
+                f"k={item['k_clusters']}: {item['motivo']}"
+                for item in self.cenarios_invalidados
+            )
+            self.logger.warning(
+                f"⚠️ Nenhum cenário válido encontrado. Cenários invalidados: {resumo}"
+            )
+
+        return {
+            "k_clusters": None,
+            "custo_total": None,
+            "cenarios_invalidados": list(self.cenarios_invalidados),
+        }
 
     def _executar_simulacao_para_k(self, k, df_entregas, df_hub):
         self.logger.info(f"⚙️ Processando simulação para k={k}")
@@ -316,6 +420,10 @@ class SimulationUseCase:
             is_ponto_otimo=is_ponto_otimo
         )
         if not detalhes_transferencia_gerados:
+            self._registrar_cenario_invalidado(
+                k,
+                "roteirização de transferência não gerou detalhes",
+            )
             return None
 
         salvar_detalhes_transferencias(detalhes_transferencia_gerados, self.simulation_db)
@@ -335,10 +443,42 @@ class SimulationUseCase:
                 resultados_clusters.append(future.result())
 
         if not resultados_clusters:
+            self._registrar_cenario_invalidado(
+                k,
+                "nenhum cluster retornou resultado no last-mile",
+            )
+            return None
+
+        clusters_com_erro = [
+            resultado for resultado in resultados_clusters if resultado.get("erro")
+        ]
+        if clusters_com_erro:
+            ids_com_erro = ", ".join(str(resultado["cluster_id"]) for resultado in clusters_com_erro)
+            detalhes = [
+                {
+                    "cluster_id": resultado["cluster_id"],
+                    "erro": resultado.get("erro"),
+                }
+                for resultado in clusters_com_erro
+            ]
+            self._registrar_cenario_invalidado(
+                k,
+                f"falha de roteirização last-mile nos clusters {ids_com_erro}",
+                detalhes=detalhes,
+            )
+            return None
+
+        rotas_validas = [r["rotas"] for r in resultados_clusters if r["rotas"] is not None and not r["rotas"].empty]
+        if not rotas_validas:
+            self.logger.warning(f"⚠️ Nenhuma rota last-mile válida foi gerada para k={k}.")
+            self._registrar_cenario_invalidado(
+                k,
+                "last-mile não gerou rotas válidas",
+            )
             return None
 
         df_rotas_last_mile = pd.concat(
-            [r["rotas"] for r in resultados_clusters if r["rotas"] is not None],
+            rotas_validas,
             ignore_index=True
         )
         custo_last_mile = sum(r["custo_last_mile"] for r in resultados_clusters)

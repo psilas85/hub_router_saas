@@ -25,7 +25,7 @@ class ClusterizationService:
     def carregar_entregas(self, tenant_id, envio_data):
         self.logger.info("📥 Carregando entregas do clusterization_db...")
 
-        query = f"""
+        query = """
         SELECT
             cte_numero, remetente_cnpj, cte_rua, cte_bairro, cte_complemento,
             cte_cidade, cte_uf, cte_cep, cte_nf, cte_volumes, cte_peso,
@@ -34,9 +34,9 @@ class ClusterizationService:
             destino_latitude AS latitude, destino_longitude AS longitude,
             remetente_cidade, remetente_uf, doc_min, data_processamento, tenant_id
         FROM entregas
-        WHERE tenant_id = '{tenant_id}' AND envio_data = '{envio_data}'
+        WHERE tenant_id = %s AND envio_data = %s
         """
-        df = pd.read_sql(query, self.clusterization_db)
+        df = pd.read_sql(query, self.clusterization_db, params=(tenant_id, envio_data))
 
         self.logger.info(f"📋 Colunas do DataFrame carregado: {df.columns.tolist()}")
         self.logger.info(f"🔢 Total de entregas carregadas: {len(df)}")
@@ -53,12 +53,25 @@ class ClusterizationService:
     def clusterizar(self, df_entregas, k, tenant_id, envio_data, simulation_id):
         self.logger.info(f"📊 Realizando clusterização com KMeans (k={k})...")
 
-        coordenadas_validas = df_entregas[['latitude', 'longitude']].dropna().values
+        df_entregas = df_entregas.copy()
+        indices_coordenadas_validas = df_entregas[["latitude", "longitude"]].dropna().index
+        mascara_coordenadas_validas = df_entregas.index.isin(indices_coordenadas_validas)
+        df_validas = df_entregas.loc[mascara_coordenadas_validas].copy()
+
+        if df_validas.empty:
+            raise ValueError("❌ Nenhuma entrega com coordenadas válidas disponível para clusterização.")
+
+        if len(df_validas) < k:
+            raise ValueError(
+                f"❌ Quantidade insuficiente de entregas válidas para k={k}: {len(df_validas)}"
+            )
+
+        coordenadas_validas = df_validas[["latitude", "longitude"]].values
         modelo = KMeans(n_clusters=k, n_init='auto', random_state=42)
-        df_entregas['cluster'] = modelo.fit_predict(coordenadas_validas)
+        df_validas['cluster'] = modelo.fit_predict(coordenadas_validas)
 
         for cluster_id in range(k):
-            df_cluster = df_entregas[df_entregas['cluster'] == cluster_id]
+            df_cluster = df_validas[df_validas['cluster'] == cluster_id]
             if df_cluster.empty:
                 continue
 
@@ -78,13 +91,13 @@ class ClusterizationService:
 
             log_coordenadas(self.logger, cluster_id, lat, lon)
 
-            df_entregas.loc[df_entregas['cluster'] == cluster_id, 'centro_lat'] = lat
-            df_entregas.loc[df_entregas['cluster'] == cluster_id, 'centro_lon'] = lon
-            df_entregas.loc[df_entregas['cluster'] == cluster_id, 'cluster_endereco'] = endereco
-            df_entregas.loc[df_entregas['cluster'] == cluster_id, 'cluster_cidade'] = cidade
+            df_validas.loc[df_validas['cluster'] == cluster_id, 'centro_lat'] = lat
+            df_validas.loc[df_validas['cluster'] == cluster_id, 'centro_lon'] = lon
+            df_validas.loc[df_validas['cluster'] == cluster_id, 'cluster_endereco'] = endereco
+            df_validas.loc[df_validas['cluster'] == cluster_id, 'cluster_cidade'] = cidade
 
         self.logger.info(f"✅ Clusterização finalizada para k={k} com {k} clusters.")
-        return df_entregas
+        return df_validas
 
     def ajustar_centros_dos_clusters(self, df_clusterizado):
         self.logger.info("📍 Ajustando centros dos clusters (fixo = média ponderada por entregas)...")

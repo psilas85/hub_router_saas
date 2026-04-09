@@ -4,10 +4,12 @@ import json
 from geopy.distance import geodesic
 from simulation.utils.google_api import buscar_rota_google
 from simulation.utils.osrm_api import buscar_rota_osrm  # 🔹 Import OSRM
+from simulation.utils.rate_limiter import RateLimiter
 
 # 🚦 Valores mínimos para evitar rotas "zeradas"
 MIN_DIST_KM = 0.03   # 30 metros
 MIN_TIME_MIN = 0.2   # 12 segundos
+GOOGLE_RATE_LIMITER = RateLimiter(max_calls_per_sec=10)
 
 
 def _formatar_coord(coord: tuple) -> str:
@@ -98,6 +100,13 @@ def _salvar_cache(db_conn, origem_str, destino_str, tenant_id,
         logger.info(f"✅ Cache salvo para {origem_str} -> {destino_str}")
 
 
+def _buscar_rota_google_rate_limited(origem, destino, logger=None):
+    if logger:
+        logger.info("🚦 Aplicando rate limit antes da chamada ao Google.")
+    GOOGLE_RATE_LIMITER.wait()
+    return buscar_rota_google(origem, destino)
+
+
 def obter_rota_real(origem: tuple, destino: tuple, tenant_id: str, db_conn, logger=None):
     origem_str = _formatar_coord(origem)
     destino_str = _formatar_coord(destino)
@@ -138,7 +147,11 @@ def obter_rota_real(origem: tuple, destino: tuple, tenant_id: str, db_conn, logg
     if not distancia_km or not tempo_min or not rota_raw:
         if logger:
             logger.warning(f"⚠️ OSRM falhou para {origem_str} → {destino_str}, tentando Google...")
-        distancia_km, tempo_min, rota_raw = buscar_rota_google(origem, destino)
+        distancia_km, tempo_min, rota_raw = _buscar_rota_google_rate_limited(
+            origem,
+            destino,
+            logger,
+        )
 
     # 3️⃣ Se ainda falhar → fallback mínimo
     if not distancia_km or not tempo_min or not rota_raw:
@@ -198,7 +211,11 @@ def obter_rota_last_mile(origem, destino, tenant_id, simulation_db, db_conn, log
     if not distancia_km or not tempo_min or not rota_raw:
         if logger:
             logger.warning(f"⚠️ OSRM falhou para {origem_str} → {destino_str}, tentando Google...")
-        distancia_km, tempo_min, rota_raw = buscar_rota_google(origem, destino)
+        distancia_km, tempo_min, rota_raw = _buscar_rota_google_rate_limited(
+            origem,
+            destino,
+            logger,
+        )
 
     # 3️⃣ Se ainda falhar → fallback mínimo
     if not distancia_km or not tempo_min or not rota_raw:
