@@ -31,6 +31,8 @@ api.interceptors.response.use(
     (res) => res,
     (err) => {
         const status = err.response?.status;
+        const requestUrl = err.config?.url ?? "";
+        const isSimulationStatusPolling = requestUrl.includes("/simulation/status/");
 
         if (status === 401) {
             console.warn("⚠️ 401 recebido:", err.config?.url);
@@ -43,7 +45,9 @@ api.interceptors.response.use(
         } else if (status === 403) {
             alert("🚫 Você não tem permissão para acessar este recurso.");
         } else if (status === 404) {
-            alert("❌ Recurso não encontrado.");
+            if (!isSimulationStatusPolling) {
+                alert("❌ Recurso não encontrado.");
+            }
         } else if (status >= 500) {
             alert("💥 Erro interno no servidor. Tente novamente mais tarde.");
         } else if (err.code === "ECONNABORTED") {

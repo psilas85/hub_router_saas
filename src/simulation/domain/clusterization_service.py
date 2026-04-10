@@ -22,6 +22,14 @@ class ClusterizationService:
         self.logger = logger
         self.tenant_id = tenant_id
 
+    def _normalizar_coluna_cluster(self, df):
+        if "cluster" not in df.columns:
+            return df
+
+        df_normalizado = df.copy()
+        df_normalizado["cluster"] = df_normalizado["cluster"].astype(str)
+        return df_normalizado
+
     def carregar_entregas(self, tenant_id, envio_data):
         self.logger.info("📥 Carregando entregas do clusterization_db...")
 
@@ -29,6 +37,7 @@ class ClusterizationService:
         SELECT
             cte_numero, remetente_cnpj, cte_rua, cte_bairro, cte_complemento,
             cte_cidade, cte_uf, cte_cep, cte_nf, cte_volumes, cte_peso,
+            cte_tempo_atendimento_min, cte_prazo_min,
             cte_valor_nf, cte_valor_frete, envio_data, endereco_completo,
             transportadora, remetente_nome, destinatario_nome, destinatario_cnpj,
             destino_latitude AS latitude, destino_longitude AS longitude,
@@ -41,7 +50,14 @@ class ClusterizationService:
         self.logger.info(f"📋 Colunas do DataFrame carregado: {df.columns.tolist()}")
         self.logger.info(f"🔢 Total de entregas carregadas: {len(df)}")
 
-        colunas_esperadas = ['cte_peso', 'cte_volumes', 'cte_valor_nf', 'cte_valor_frete']
+        colunas_esperadas = [
+            'cte_peso',
+            'cte_volumes',
+            'cte_tempo_atendimento_min',
+            'cte_prazo_min',
+            'cte_valor_nf',
+            'cte_valor_frete',
+        ]
         faltando = [col for col in colunas_esperadas if col not in df.columns]
         if faltando:
             self.logger.warning(f"⚠️ Colunas esperadas ausentes: {faltando}")
@@ -50,16 +66,73 @@ class ClusterizationService:
 
         return df
 
-    def clusterizar(self, df_entregas, k, tenant_id, envio_data, simulation_id):
-        self.logger.info(f"📊 Realizando clusterização com KMeans (k={k})...")
-
+    def _preparar_dataframe_clusterizacao(self, df_entregas):
         df_entregas = df_entregas.copy()
         indices_coordenadas_validas = df_entregas[["latitude", "longitude"]].dropna().index
         mascara_coordenadas_validas = df_entregas.index.isin(indices_coordenadas_validas)
         df_validas = df_entregas.loc[mascara_coordenadas_validas].copy()
 
         if df_validas.empty:
-            raise ValueError("❌ Nenhuma entrega com coordenadas válidas disponível para clusterização.")
+            raise ValueError(
+                "❌ Nenhuma entrega com coordenadas válidas disponível para clusterização."
+            )
+
+        df_validas["centro_lat"] = pd.Series(np.nan, index=df_validas.index, dtype="float64")
+        df_validas["centro_lon"] = pd.Series(np.nan, index=df_validas.index, dtype="float64")
+        df_validas["cluster_endereco"] = pd.Series(None, index=df_validas.index, dtype="object")
+        df_validas["cluster_cidade"] = pd.Series(None, index=df_validas.index, dtype="object")
+        return df_validas
+
+    def _atribuir_centros_a_clusters(self, df_clusterizado):
+        for cluster_id in sorted(df_clusterizado["cluster"].astype(str).unique()):
+            df_cluster = df_clusterizado[df_clusterizado["cluster"].astype(str) == str(cluster_id)]
+            if df_cluster.empty:
+                continue
+
+            centro_lat, centro_lon = encontrar_centro_mais_denso(df_cluster)
+            endereco, cidade = ajustar_para_centro_urbano(
+                centro_lat,
+                centro_lon,
+                self.simulation_db,
+                self.tenant_id,
+            )
+
+            if cidade == "Fora da UF":
+                self.logger.warning(
+                    f"⚠️ Cluster {cluster_id}: coordenada fora da UF → ({centro_lat:.5f}, {centro_lon:.5f})"
+                )
+
+            self.logger.info(f"📍 Buscando coordenadas para Cluster {cluster_id}: {endereco}")
+            lat, lon = buscar_coordenadas(
+                endereco,
+                self.tenant_id,
+                self.simulation_db,
+                self.logger,
+            )
+
+            if not coordenadas_sao_validas(lat, lon):
+                self.logger.warning(
+                    f"⚠️ Coordenadas inválidas. Usando ponto denso para Cluster {cluster_id}."
+                )
+                lat, lon = centro_lat, centro_lon
+
+            lat = float(lat)
+            lon = float(lon)
+
+            log_coordenadas(self.logger, cluster_id, lat, lon)
+
+            mascara_cluster = df_clusterizado["cluster"].astype(str) == str(cluster_id)
+            df_clusterizado.loc[mascara_cluster, "centro_lat"] = lat
+            df_clusterizado.loc[mascara_cluster, "centro_lon"] = lon
+            df_clusterizado.loc[mascara_cluster, "cluster_endereco"] = endereco
+            df_clusterizado.loc[mascara_cluster, "cluster_cidade"] = cidade
+
+        return df_clusterizado
+
+    def clusterizar(self, df_entregas, k, tenant_id, envio_data, simulation_id):
+        self.logger.info(f"📊 Realizando clusterização com KMeans (k={k})...")
+
+        df_validas = self._preparar_dataframe_clusterizacao(df_entregas)
 
         if len(df_validas) < k:
             raise ValueError(
@@ -69,38 +142,15 @@ class ClusterizationService:
         coordenadas_validas = df_validas[["latitude", "longitude"]].values
         modelo = KMeans(n_clusters=k, n_init='auto', random_state=42)
         df_validas['cluster'] = modelo.fit_predict(coordenadas_validas)
-
-        for cluster_id in range(k):
-            df_cluster = df_validas[df_validas['cluster'] == cluster_id]
-            if df_cluster.empty:
-                continue
-
-            centro_lat, centro_lon = encontrar_centro_mais_denso(df_cluster)
-            endereco, cidade = ajustar_para_centro_urbano(centro_lat, centro_lon, self.simulation_db, self.tenant_id)
-
-
-            if cidade == "Fora da UF":
-                self.logger.warning(f"⚠️ Cluster {cluster_id}: coordenada fora da UF → ({centro_lat:.5f}, {centro_lon:.5f})")
-
-            self.logger.info(f"📍 Buscando coordenadas para Cluster {cluster_id}: {endereco}")
-            lat, lon = buscar_coordenadas(endereco, self.tenant_id, self.simulation_db, self.logger)
-
-            if not coordenadas_sao_validas(lat, lon):
-                self.logger.warning(f"⚠️ Coordenadas inválidas. Usando ponto denso para Cluster {cluster_id}.")
-                lat, lon = centro_lat, centro_lon
-
-            log_coordenadas(self.logger, cluster_id, lat, lon)
-
-            df_validas.loc[df_validas['cluster'] == cluster_id, 'centro_lat'] = lat
-            df_validas.loc[df_validas['cluster'] == cluster_id, 'centro_lon'] = lon
-            df_validas.loc[df_validas['cluster'] == cluster_id, 'cluster_endereco'] = endereco
-            df_validas.loc[df_validas['cluster'] == cluster_id, 'cluster_cidade'] = cidade
+        df_validas = self._atribuir_centros_a_clusters(df_validas)
 
         self.logger.info(f"✅ Clusterização finalizada para k={k} com {k} clusters.")
         return df_validas
 
     def ajustar_centros_dos_clusters(self, df_clusterizado):
         self.logger.info("📍 Ajustando centros dos clusters (fixo = média ponderada por entregas)...")
+
+        df_clusterizado = self._normalizar_coluna_cluster(df_clusterizado)
 
         novos_centros = []
         for cluster_id in sorted(df_clusterizado['cluster'].unique()):
@@ -130,6 +180,9 @@ class ClusterizationService:
                 self.logger.warning(f"⚠️ Coordenadas inválidas. Usando centro calculado.")
                 lat, lon = centro_lat, centro_lon
 
+            lat = float(lat)
+            lon = float(lon)
+
             log_coordenadas(self.logger, cluster_id, lat, lon, prefixo="Cluster ajustado")
             novos_centros.append({
                 'cluster': cluster_id,
@@ -150,6 +203,8 @@ class ClusterizationService:
 
     def fundir_clusters_pequenos(self, df_clusterizado, min_entregas: int = 10):
         self.logger.info(f"🔁 Fundindo clusters com menos de {min_entregas} entregas...")
+
+        df_clusterizado = self._normalizar_coluna_cluster(df_clusterizado)
 
         if 'k_clusters' not in df_clusterizado.columns:
             k_inferido = df_clusterizado['cluster'].nunique()
@@ -185,7 +240,91 @@ class ClusterizationService:
         df_clusterizado['cluster'] = df_clusterizado['cluster'].apply(lambda x: substituicoes.get(x, x))
         return self.ajustar_centros_dos_clusters(df_clusterizado)
 
-    def salvar_clusterizacao_em_db(self, df_clusterizado, simulation_id, envio_data, k_clusters):
+    def rebalancear_clusters_inviaveis(
+        self,
+        df_clusterizado,
+        clusters_invalidos,
+        max_entregas_por_cluster=None,
+        min_entregas_por_cluster=None,
+        max_novos_subclusters: int = 6,
+    ):
+        if df_clusterizado.empty or not clusters_invalidos:
+            return df_clusterizado, False
+
+        df_rebalanceado = self._normalizar_coluna_cluster(df_clusterizado)
+        houve_ajuste = False
+        ids_invalidos = {
+            str(item.get("cluster_id"))
+            for item in clusters_invalidos
+            if item.get("cluster_id") is not None
+        }
+
+        for cluster_id in sorted(ids_invalidos):
+            if cluster_id.startswith("OUTLIER_"):
+                continue
+
+            mascara_cluster = df_rebalanceado["cluster"].astype(str).eq(cluster_id)
+            if not mascara_cluster.any():
+                continue
+
+            df_cluster = df_rebalanceado.loc[mascara_cluster].copy()
+            coordenadas_validas = df_cluster[["latitude", "longitude"]].dropna().astype(float)
+            if len(coordenadas_validas) < 2:
+                continue
+
+            alvo_split = 2
+            if max_entregas_por_cluster:
+                alvo_split = max(
+                    alvo_split,
+                    int(np.ceil(len(df_cluster) / max(1, int(max_entregas_por_cluster)))),
+                )
+
+            alvo_split = min(alvo_split, len(coordenadas_validas), max(2, int(max_novos_subclusters)))
+            if alvo_split <= 1:
+                continue
+
+            try:
+                labels = KMeans(
+                    n_clusters=alvo_split,
+                    random_state=42,
+                    n_init="auto",
+                ).fit_predict(coordenadas_validas[["latitude", "longitude"]].values)
+            except Exception as exc:
+                self.logger.warning(
+                    f"⚠️ Falha ao rebalancear cluster {cluster_id}: {exc}"
+                )
+                continue
+
+            novos_ids = {
+                indice: f"{cluster_id}_R{int(label) + 1}"
+                for indice, label in zip(coordenadas_validas.index, labels)
+            }
+            fallback_id = f"{cluster_id}_R1"
+            indices_cluster = df_rebalanceado.loc[mascara_cluster].index.tolist()
+            df_rebalanceado.loc[indices_cluster, "cluster"] = [
+                novos_ids.get(indice, fallback_id)
+                for indice in indices_cluster
+            ]
+            houve_ajuste = True
+
+            self.logger.info(
+                "🧩 Cluster rebalanceado por inviabilidade operacional "
+                f"cluster={cluster_id} subclusters={alvo_split} entregas={len(df_cluster)}"
+            )
+
+        if not houve_ajuste:
+            return df_clusterizado, False
+
+        df_rebalanceado = self.ajustar_centros_dos_clusters(df_rebalanceado)
+        if min_entregas_por_cluster and int(min_entregas_por_cluster) > 1:
+            df_rebalanceado = self.fundir_clusters_pequenos(
+                df_rebalanceado,
+                min_entregas=int(min_entregas_por_cluster),
+            )
+
+        return df_rebalanceado, True
+
+    def salvar_clusterizacao_em_db(self, df_clusterizado, simulation_id, envio_data, k_clusters, auto_commit=True):
         colunas_obrigatorias = [
             "tenant_id", "envio_data", "cte_numero", "cluster",
             "cluster_cidade", "centro_lat", "centro_lon",
@@ -210,7 +349,8 @@ class ClusterizationService:
                 WHERE tenant_id = %s AND envio_data = %s AND simulation_id = %s AND k_clusters = %s
             """, (self.tenant_id, envio_data, simulation_id, k_clusters))
             self.logger.info(f"🗑️ Registros apagados de {tabela}")
-        self.simulation_db.commit()
+        if auto_commit:
+            self.simulation_db.commit()
 
         self.logger.info("💾 Salvando clusterização no banco...")
         df_clusterizado["k_clusters"] = pd.to_numeric(
@@ -270,7 +410,8 @@ class ClusterizationService:
                 raise
 
 
-        self.simulation_db.commit()
+        if auto_commit:
+            self.simulation_db.commit()
         self.logger.info("✅ Clusterização salva com sucesso.")
 
         # 🧾 Construção do resumo de clusters
@@ -296,7 +437,12 @@ class ClusterizationService:
         df_resumo_clusters["created_at"] = pd.Timestamp.now()
 
         try:
-            salvar_resumo_clusters_em_db(self.simulation_db, df_resumo_clusters, self.logger)
+            salvar_resumo_clusters_em_db(
+                self.simulation_db,
+                df_resumo_clusters,
+                self.logger,
+                auto_commit=auto_commit,
+            )
         except Exception as e:
             self.logger.error(
                 "❌ Falha ao salvar resumo_clusters | "

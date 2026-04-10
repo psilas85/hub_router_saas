@@ -18,6 +18,8 @@ class Entrega:
     cte_nf: Optional[str] = None
     cte_volumes: Optional[float] = None
     cte_peso: Optional[float] = None
+    cte_tempo_atendimento_min: Optional[int] = None
+    cte_prazo_min: Optional[int] = None
     cte_valor_nf: Optional[float] = None
     cte_valor_frete: Optional[float] = None
     envio_data: Optional[date] = None

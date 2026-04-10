@@ -54,27 +54,39 @@ def parse_args():
     parser.add_argument("--data-inicial", required=True)
     parser.add_argument("--data-final", required=True)
     parser.add_argument("--hub-id", type=int, required=True)
-    parser.add_argument("--k-min", type=int, default=2)
-    parser.add_argument("--k-max", type=int, default=50)
-    parser.add_argument("--k-inicial-transferencia", type=int, default=1)
-    parser.add_argument("--fundir-clusters-pequenos", action="store_true")
-    parser.add_argument("--min-entregas-cluster", type=int, default=25)
     parser.add_argument("--parada-leve", type=int, default=10)
     parser.add_argument("--parada-pesada", type=int, default=20)
     parser.add_argument("--tempo-volume", type=float, default=0.40)
     parser.add_argument("--velocidade", type=float, default=60)
     parser.add_argument("--limite-peso", type=float, default=50)
-    parser.add_argument("--tempo-max-transferencia", type=int, default=1200)
-    parser.add_argument("--peso-max-transferencia", type=float, default=15000)
+    parser.add_argument("--tempo-max-transferencia", type=int, default=600)
+    parser.add_argument("--peso-max-transferencia", type=float, default=18000)
     parser.add_argument("--entregas-por-subcluster", type=int, default=25)
-    parser.add_argument("--tempo-max-roteirizacao", type=int, default=1200)
-    parser.add_argument("--tempo-max-k0", type=int, default=2400)
+    parser.add_argument("--tempo-max-roteirizacao", type=int, default=600)
+    parser.add_argument("--tempo-max-k0", type=int, default=1200)
     parser.add_argument("--permitir-rotas-excedentes", dest="permitir_rotas_excedentes", action="store_true")
-    parser.add_argument("--restricao-veiculo-leve-municipio", action="store_true")
+    parser.add_argument("--nao-permitir-rotas-excedentes", dest="permitir_rotas_excedentes", action="store_false")
+    parser.add_argument("--restricao-veiculo-leve-municipio", dest="restricao_veiculo_leve_municipio", action="store_true")
+    parser.add_argument("--sem-restricao-veiculo-leve-municipio", dest="restricao_veiculo_leve_municipio", action="store_false")
     parser.add_argument("--peso-leve-max", type=float, default=50.0)
     parser.add_argument("--desativar_cluster_hub", action="store_true")
     parser.add_argument("--raio_hub_km", type=float, default=80.0)
+    parser.add_argument("--usar-outlier", dest="usar_outlier", action="store_true")
+    parser.add_argument("--desativar-outlier", dest="usar_outlier", action="store_false")
+    parser.add_argument("--distancia-outlier-km", type=float, default=None)
+    parser.add_argument("--min-entregas-por-cluster-alvo", type=int, default=10)
+    parser.add_argument("--max-entregas-por-cluster-alvo", type=int, default=100)
+    parser.add_argument(
+        "--algoritmo-clusterizacao-principal",
+        choices=["kmeans", "balanced_kmeans"],
+        default="kmeans",
+    )
     parser.add_argument("--modo-forcar", action="store_true")
+    parser.set_defaults(
+        usar_outlier=False,
+        restricao_veiculo_leve_municipio=True,
+        permitir_rotas_excedentes=True,
+    )
     return parser.parse_args()
 
 
@@ -100,7 +112,6 @@ def processar_data(data_atual, tenant_id, args, parametros):
             logger=logger,
             modo_forcar=args.modo_forcar,
             simulation_id=simulation_id,
-            fundir_clusters_pequenos=args.fundir_clusters_pequenos,
             permitir_rotas_excedentes=args.permitir_rotas_excedentes
         )
 
@@ -145,15 +156,19 @@ if __name__ == "__main__":
         "entregas_por_subcluster": args.entregas_por_subcluster,
         "tempo_maximo_roteirizacao": args.tempo_max_roteirizacao,
         "tempo_maximo_k0": args.tempo_max_k0,
-        "k_inicial_transferencia": args.k_inicial_transferencia,
-        "k_min": args.k_min,
-        "k_max": args.k_max,
-        "min_entregas_cluster": args.min_entregas_cluster,
+        "k_min": 1,
+        "k_max": 50,
+        "min_entregas_cluster": 25,
         "permitir_rotas_excedentes": args.permitir_rotas_excedentes,
         "restricao_veiculo_leve_municipio": args.restricao_veiculo_leve_municipio,
         "peso_leve_max": args.peso_leve_max,
         "desativar_cluster_hub": args.desativar_cluster_hub,
         "raio_hub_km": args.raio_hub_km,
+        "usar_outlier": args.usar_outlier,
+        "distancia_outlier_km": args.distancia_outlier_km,
+        "min_entregas_por_cluster_alvo": args.min_entregas_por_cluster_alvo,
+        "max_entregas_por_cluster_alvo": args.max_entregas_por_cluster_alvo,
+        "algoritmo_clusterizacao_principal": args.algoritmo_clusterizacao_principal,
     }
 
     lista_datas = [data_inicial + timedelta(days=i) for i in range((data_final - data_inicial).days + 1)]

@@ -7,6 +7,10 @@ import matplotlib.pyplot as plt
 from simulation.visualization.gerar_relatorio_simulacao import gerar_relatorio_simulacao
 
 
+def _formatar_rotulo_cenario(k: int) -> str:
+    return "Hub unico" if int(k) == 0 else str(int(k))
+
+
 def executar_geracao_relatorio_final(
     tenant_id: str,
     envio_data: str,
@@ -70,7 +74,9 @@ def executar_geracao_relatorio_final(
 
                 ax.plot(df["k_clusters"], df["custo_total"], color="black", marker="o", label="Custo Total")
                 ax.set_title(f"Custo Total por cenário de clusters — {envio_data}")
-                ax.set_xlabel("Número de clusters (0 = baseline hub central)")
+                ax.set_xticks(df["k_clusters"])
+                ax.set_xticklabels([_formatar_rotulo_cenario(k) for k in df["k_clusters"]])
+                ax.set_xlabel("Cenários (Hub unico = hub central sem transferência)")
                 ax.set_ylabel("Custo (R$)")
                 ax.legend()
                 ax.grid(True)

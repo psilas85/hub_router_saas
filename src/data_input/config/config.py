@@ -49,11 +49,6 @@ CLUSTERING_CONFIG = {
         "bin_seeding": True,      # Habilitar otimização para Mean-Shift
         "bandwidth": None         # Largura de banda. Se None, será calculada automaticamente
     },
-    # Configurações para DBSCAN
-    "dbscan": {
-        "eps": 0.3,              # Distância máxima entre pontos para formar um cluster
-        "min_samples": 5          # Número mínimo de pontos em um cluster
-    },
     # Configurações para Agglomerative Clustering
     "agglomerative": {
         "n_clusters": 7,          # Número final de clusters

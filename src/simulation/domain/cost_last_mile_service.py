@@ -11,12 +11,29 @@ class CostLastMileService:
     def calcular_custo(self, df_rotas_last_mile: pd.DataFrame) -> float:
         self.logger.info("💰 Calculando custo de last-mile...")
 
-        # Corrige possíveis valores nulos e tipagem
-        df_rotas_last_mile['distancia_total_km'] = pd.to_numeric(df_rotas_last_mile['distancia_total_km'], errors='coerce').fillna(0.0)
-        df_rotas_last_mile['qtde_entregas'] = pd.to_numeric(df_rotas_last_mile['qtde_entregas'], errors='coerce').fillna(0).astype(int)
+        df_rotas = df_rotas_last_mile.copy()
 
-        # Agrupa por rota única (importante para evitar duplicações por CTE)
-        df_rotas_agrupado = df_rotas_last_mile.drop_duplicates(subset=["rota_id"])
+        # Corrige possíveis valores nulos e tipagem
+        df_rotas['distancia_total_km'] = pd.to_numeric(
+            df_rotas['distancia_total_km'], errors='coerce'
+        )
+        df_rotas['qtde_entregas'] = pd.to_numeric(
+            df_rotas['qtde_entregas'], errors='coerce'
+        ).fillna(0).astype(int)
+        df_rotas['ordem_entrega'] = pd.to_numeric(
+            df_rotas.get('ordem_entrega'), errors='coerce'
+        ).fillna(0).astype(int)
+
+        # Usa a linha-resumo da rota, onde distancia_total_km foi populada explicitamente.
+        df_rotas_agrupado = (
+            df_rotas[df_rotas['distancia_total_km'].notnull()]
+            .sort_values(["rota_id", "ordem_entrega"])
+            .drop_duplicates(subset=["rota_id"], keep="first")
+        )
+
+        self.logger.info(
+            f"📊 Base de custo last-mile: rotas_unicas={df_rotas['rota_id'].nunique()} | rotas_com_resumo={len(df_rotas_agrupado)}"
+        )
 
         custo_total = 0.0
 

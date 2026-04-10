@@ -81,7 +81,7 @@ def remover_tarifa_transferencia(db, tipo_veiculo):
     return removidos > 0
 
 
-def persistir_resumo_transferencias(lista_resumo: list, db_conn, logger=None, tenant_id=None):
+def persistir_resumo_transferencias(lista_resumo: list, db_conn, logger=None, tenant_id=None, auto_commit=True):
     """
     Persiste os dados de resumo das transferências.
     Cada linha representa uma rota consolidada (rota_id única).
@@ -148,7 +148,8 @@ def persistir_resumo_transferencias(lista_resumo: list, db_conn, logger=None, te
     for resumo in lista_resumo:
         cursor.execute(insert_query, vars(resumo))
 
-    db_conn.commit()
+    if auto_commit:
+        db_conn.commit()
     cursor.close()
 
     if logger:
@@ -157,7 +158,7 @@ def persistir_resumo_transferencias(lista_resumo: list, db_conn, logger=None, te
 def persistir_resultado_simulacao(db, simulation_id, tenant_id, envio_data,
                                    k_clusters, custo_total, quantidade_entregas,
                                    custo_transferencia, custo_last_mile,
-                                   custo_cluster, is_ponto_otimo):
+                                   custo_cluster, is_ponto_otimo, auto_commit=True):
     try:
         cursor = db.cursor()
         cursor.execute("""
@@ -171,7 +172,8 @@ def persistir_resultado_simulacao(db, simulation_id, tenant_id, envio_data,
             custo_total, quantidade_entregas, custo_transferencia,
             custo_last_mile, custo_cluster, is_ponto_otimo
         ))
-        db.commit()
+        if auto_commit:
+            db.commit()
     except Exception as e:
         db.rollback()
         raise RuntimeError(f"Erro ao persistir resultado da simulação (k={k_clusters}): {e}")
@@ -180,7 +182,7 @@ def persistir_resultado_simulacao(db, simulation_id, tenant_id, envio_data,
 
 
 
-def salvar_resumo_clusters_em_db(db_conn, df_resumo: pd.DataFrame, logger):
+def salvar_resumo_clusters_em_db(db_conn, df_resumo: pd.DataFrame, logger, auto_commit=True):
     cursor = db_conn.cursor()
     # 🔧 Remove registros anteriores do mesmo simulation_id e tenant_id
     simulation_ids = df_resumo["simulation_id"].unique()
@@ -247,13 +249,14 @@ def salvar_resumo_clusters_em_db(db_conn, df_resumo: pd.DataFrame, logger):
 
         total += 1
 
-    db_conn.commit()
+    if auto_commit:
+        db_conn.commit()
     cursor.close()
     logger.info(f"✅ {total} clusters salvos na tabela resumo_clusters (com sobrescrita preventiva).")
 
 
 
-def salvar_detalhes_transferencias(detalhes: list[dict], db_conn):
+def salvar_detalhes_transferencias(detalhes: list[dict], db_conn, auto_commit=True):
     """
     Persiste os dados de detalhes das transferências.
     Cada linha representa um CTE alocado a uma rota de transferência.
@@ -310,12 +313,13 @@ def salvar_detalhes_transferencias(detalhes: list[dict], db_conn):
     """
     cursor = db_conn.cursor()
     cursor.executemany(query, detalhes_filtrados)
-    db_conn.commit()
+    if auto_commit:
+        db_conn.commit()
     cursor.close()
 
 
 
-def salvar_rotas_transferencias(rotas: list[dict], db_conn):
+def salvar_rotas_transferencias(rotas: list[dict], db_conn, auto_commit=True):
     """
     Persiste as rotas de transferência com sequência de coordenadas e tempos/dimensões totais.
     Cada linha representa uma rota_id única.
@@ -367,6 +371,7 @@ def salvar_rotas_transferencias(rotas: list[dict], db_conn):
 
     cursor = db_conn.cursor()
     cursor.executemany(query, rotas)
-    db_conn.commit()
+    if auto_commit:
+        db_conn.commit()
     cursor.close()
 

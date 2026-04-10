@@ -109,7 +109,7 @@ Custo fixo diário + variável por entrega.
 
 5. Definição do Ponto Ótimo
 
-Sempre executa baseline k=1 (centralizado no hub).
+Sempre executa o cenário Hub único (k=0, centralizado no hub).
 
 Testa variações de k até k_max.
 

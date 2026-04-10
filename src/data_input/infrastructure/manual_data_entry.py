@@ -93,6 +93,8 @@ def montar_entregas(df: pd.DataFrame, tenant_id: str):
                 cte_nf=row.get("cte_nf"),
                 cte_volumes=row.get("cte_volumes"),
                 cte_peso=row.get("cte_peso"),
+                cte_tempo_atendimento_min=row.get("cte_tempo_atendimento_min"),
+                cte_prazo_min=row.get("cte_prazo_min"),
                 cte_valor_nf=row.get("cte_valor_nf"),
                 cte_valor_frete=row.get("cte_valor_frete"),
                 envio_data=row.get("envio_data"),

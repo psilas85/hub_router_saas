@@ -33,8 +33,8 @@ class DataFrameBuilder:
         "Valor Frete": "cte_valor_frete",
         "Doc/Min": "doc_min",
         "Data Frete": "envio_data",
-        "Prazo Entrega": "cte_prazo",
-        "Tempo Atendimento": "cte_tempo_atendimento",
+        "Prazo Entrega": "cte_prazo_min",
+        "Tempo Atendimento": "cte_tempo_atendimento_min",
     }
 
     # ---------------------------------------------------------
@@ -119,7 +119,7 @@ class DataFrameBuilder:
             return pd.to_numeric(valor, errors="coerce")
 
 
-        for col in ["cte_peso", "cte_volumes", "cte_valor_nf", "cte_valor_frete", "cte_prazo"]:
+        for col in ["cte_peso", "cte_volumes", "cte_valor_nf", "cte_valor_frete", "cte_prazo_min"]:
             if col in df.columns:
                 df[col] = df[col].apply(parse_numero)
 
@@ -141,8 +141,8 @@ class DataFrameBuilder:
             except Exception:
                 return None
 
-        if "cte_tempo_atendimento" in df.columns:
-            df["cte_tempo_atendimento"] = df["cte_tempo_atendimento"].apply(parse_tempo_minutos)
+        if "cte_tempo_atendimento_min" in df.columns:
+            df["cte_tempo_atendimento_min"] = df["cte_tempo_atendimento_min"].apply(parse_tempo_minutos)
 
         # ---------------------------------------------
         # DATA

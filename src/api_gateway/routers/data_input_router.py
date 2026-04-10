@@ -9,6 +9,7 @@ from fastapi import (
     Depends,
     HTTPException
 )
+from fastapi.responses import Response
 from typing import Optional
 import logging
 import httpx
@@ -37,19 +38,19 @@ def copiar_headers(request: Request):
 @router.get("/health", summary="Healthcheck Data Input")
 async def healthcheck(request: Request):
     headers = copiar_headers(request)
-    return await forward_request("GET", f"{DATA_INPUT_URL}/data_input/health", headers=headers)
+    return await forward_request("GET", f"{DATA_INPUT_URL}/health", headers=headers)
 
 
 # 🔹 Executa pipeline (proxy)
 @router.post("/processar", summary="Executar pipeline de Data Input")
 async def processar_data_input(request: Request):
-    body = await request.body()
-    headers = copiar_headers(request)
-    return await forward_request(
-        "POST",
-        f"{DATA_INPUT_URL}/data_input/processar",
-        headers=headers,
-        data=body
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Endpoint legado sem suporte no backend atual. "
+            "Use /data_input/upload para o fluxo padrão ou "
+            "/data_input/upload/manual para o fluxo manual."
+        ),
     )
 
 
@@ -67,7 +68,7 @@ async def upload_data_input(
         logger.info(f"🔑 Tenant: {tenant_id}, Arquivo: {file.filename}")
 
         # monta a URL de destino
-        url = f"{DATA_INPUT_URL}/data_input/upload?modo_forcar={str(modo_forcar).lower()}"
+        url = f"{DATA_INPUT_URL}/upload?modo_forcar={str(modo_forcar).lower()}"
         if limite_peso_kg is not None:
             url += f"&limite_peso_kg={limite_peso_kg}"
 
@@ -111,13 +112,48 @@ async def upload_data_input(
         raise HTTPException(status_code=500, detail=f"Erro ao encaminhar upload: {str(e)}")
 
 
+@router.post("/upload/manual", summary="Upload manual de CSV para Data Input")
+async def upload_data_input_manual(
+    request: Request,
+    file: UploadFile = File(...),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    try:
+        logger.info("📩 [UPLOAD_MANUAL] Proxy recebido no API Gateway")
+        logger.info(f"🔑 Tenant: {tenant_id}, Arquivo: {file.filename}")
+
+        files = {
+            "file": (
+                file.filename,
+                await file.read(),
+                file.content_type
+            )
+        }
+
+        async with httpx.AsyncClient(timeout=36000.0) as client:
+            response = await client.post(
+                f"{DATA_INPUT_URL}/upload/manual",
+                headers={
+                    "Authorization": request.headers.get("authorization")
+                },
+                files=files,
+            )
+
+        response.raise_for_status()
+        return response.json()
+
+    except Exception as e:
+        logger.error("❌ Erro ao encaminhar upload manual para data_input", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erro ao encaminhar upload manual: {str(e)}")
+
+
 # 🔹 Status do job (proxy)
 @router.get("/status/{job_id}", summary="Consultar status de processamento de Data Input")
 async def job_status(job_id: str, request: Request):
     try:
         async with httpx.AsyncClient(timeout=36000.0) as client:
             resp = await client.get(
-                f"{DATA_INPUT_URL}/data_input/status/{job_id}",
+                f"{DATA_INPUT_URL}/status/{job_id}",
                 headers=copiar_headers(request),
             )
         resp.raise_for_status()
@@ -194,7 +230,7 @@ async def historico(request: Request, limit: int = Query(5, ge=1, le=50)):
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.get(
-                f"{DATA_INPUT_URL}/data_input/historico?limit={limit}",
+                f"{DATA_INPUT_URL}/historico?limit={limit}",
                 headers=copiar_headers(request),
             )
 
@@ -216,3 +252,72 @@ async def historico(request: Request, limit: int = Query(5, ge=1, le=50)):
         logger.error(f"❌ Erro no proxy historico: {e}", exc_info=True)
         # 🔹 devolve lista vazia ao frontend em vez de quebrar a UI
         return []
+
+
+@router.get("/download/{job_id}", summary="Baixar resultado processado")
+async def download_resultado(job_id: str, request: Request):
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.get(
+                f"{DATA_INPUT_URL}/download/{job_id}",
+                headers=copiar_headers(request),
+            )
+        resp.raise_for_status()
+        return Response(
+            content=resp.content,
+            media_type=resp.headers.get(
+                "content-type",
+                "application/octet-stream",
+            ),
+            headers={
+                "content-disposition": resp.headers.get(
+                    "content-disposition",
+                    f'attachment; filename="resultado_{job_id}.xlsx"',
+                )
+            },
+        )
+    except Exception as e:
+        logger.error(
+            f"❌ Erro no proxy download para job {job_id}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro no proxy download: {str(e)}",
+        )
+
+
+@router.get(
+    "/download_invalidos/{job_id}",
+    summary="Baixar resultado com inválidos",
+)
+async def download_invalidos(job_id: str, request: Request):
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.get(
+                f"{DATA_INPUT_URL}/download_invalidos/{job_id}",
+                headers=copiar_headers(request),
+            )
+        resp.raise_for_status()
+        return Response(
+            content=resp.content,
+            media_type=resp.headers.get(
+                "content-type",
+                "application/octet-stream",
+            ),
+            headers={
+                "content-disposition": resp.headers.get(
+                    "content-disposition",
+                    f'attachment; filename="invalidos_{job_id}.xlsx"',
+                )
+            },
+        )
+    except Exception as e:
+        logger.error(
+            f"❌ Erro no proxy download_invalidos para job {job_id}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro no proxy download_invalidos: {str(e)}",
+        )

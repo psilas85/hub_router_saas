@@ -13,12 +13,12 @@ def gerar_grafico_frequencia_cidades(
     output_dir="exports/simulation/graphs"
 ):
     """
-    Gera gráfico de barras com a frequência das cidades centro (cluster_cidade)
-    que aparecem em simulações ponto ótimo no período informado.
-    - Contagem é feita por DIA (DISTINCT envio_data), evitando inflar
-      cidades quando k=1 centraliza todas as entregas no hub.
-    - Hub Fortaleza = cenário vencedor k=1 (hub único).
-    - HUB CENTRAL = hub central em cenários k>1 (compartilhado).
+        Gera gráfico de barras com a frequência das cidades centro (cluster_cidade)
+        que aparecem em simulações ponto ótimo no período informado.
+        - Contagem é feita por DIA (DISTINCT envio_data), evitando inflar
+            cidades quando o cenário Hub único centraliza todas as entregas no hub.
+        - Hub Fortaleza = cenário vencedor Hub único.
+        - HUB CENTRAL = hub central em cenários k>1 (compartilhado).
     """
     conn = conectar_simulation_db()
 
@@ -70,7 +70,7 @@ def gerar_grafico_frequencia_cidades(
     plt.ylabel("Cidade")
     plt.title(
         f"Frequência de Cidades em Pontos Ótimos ({data_inicial} → {data_final})\n"
-        "Legenda: Hub Fortaleza = cenário k=1 único | HUB CENTRAL = hub central em cenários k>1"
+        "Legenda: Hub Fortaleza = cenário Hub único | HUB CENTRAL = hub central em cenários k>1"
     )
     plt.gca().invert_yaxis()
     plt.grid(axis="x", linestyle="--", alpha=0.7)

@@ -74,7 +74,8 @@ class Database:
         # 🔹 Convertendo DataFrame para lista de tuplas, garantindo que os valores estejam na ordem correta
         colunas_ordem = [
             "cte_numero", "remetente_cnpj", "cte_rua", "cte_bairro", "cte_complemento", "cte_cidade",
-            "cte_uf", "cte_cep", "cte_nf", "cte_volumes", "cte_peso", "cte_valor_nf", "cte_valor_frete",
+            "cte_uf", "cte_cep", "cte_nf", "cte_volumes", "cte_peso", "cte_tempo_atendimento_min",
+            "cte_prazo_min", "cte_valor_nf", "cte_valor_frete",
             "envio_data", "endereco_completo", "transportadora", "remetente_nome", "destinatario_nome",
             "destinatario_cnpj", "destino_latitude", "destino_longitude", "remetente_cidade", "remetente_uf",
             "doc_min"
@@ -87,10 +88,11 @@ class Database:
         query = """
         INSERT INTO entregas (
             cte_numero, remetente_cnpj, cte_rua, cte_bairro, cte_complemento, cte_cidade, cte_uf,
-            cte_cep, cte_nf, cte_volumes, cte_peso, cte_valor_nf, cte_valor_frete, envio_data,
+            cte_cep, cte_nf, cte_volumes, cte_peso, cte_tempo_atendimento_min, cte_prazo_min,
+            cte_valor_nf, cte_valor_frete, envio_data,
             endereco_completo, transportadora, remetente_nome, destinatario_nome, destinatario_cnpj,
             destino_latitude, destino_longitude, remetente_cidade, remetente_uf, doc_min
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (cte_numero, transportadora)
         DO UPDATE SET
             remetente_cnpj = EXCLUDED.remetente_cnpj,
@@ -103,6 +105,8 @@ class Database:
             cte_nf = EXCLUDED.cte_nf,
             cte_volumes = EXCLUDED.cte_volumes,
             cte_peso = EXCLUDED.cte_peso,
+            cte_tempo_atendimento_min = EXCLUDED.cte_tempo_atendimento_min,
+            cte_prazo_min = EXCLUDED.cte_prazo_min,
             cte_valor_nf = EXCLUDED.cte_valor_nf,
             cte_valor_frete = EXCLUDED.cte_valor_frete,
             envio_data = COALESCE(EXCLUDED.envio_data, entregas.envio_data), -- Evita sobrescrever com NULL

@@ -149,6 +149,13 @@ services:
       - hub_router_network
     restart: always
 
+    # 🔥 ADICIONA ISSO
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 
   authentication_service:
     build:

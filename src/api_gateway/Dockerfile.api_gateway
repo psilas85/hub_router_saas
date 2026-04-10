@@ -10,8 +10,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir python-multipart
 
-# Copia pasta api_gateway como pacote
-COPY . /app/api_gateway
+# Copia o pacote para o mesmo layout usado em runtime pelos demais serviços
+COPY . /app/src/api_gateway
+
+ENV PYTHONPATH=/app/src
 
 EXPOSE 8000
 

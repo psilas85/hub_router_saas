@@ -13,6 +13,10 @@ from simulation.infrastructure.simulation_database_connection import conectar_si
 from simulation.utils.artefatos_cleaner_k import limpar_artefatos_k
 
 
+def _formatar_rotulo_cenario(k: int) -> str:
+    return "Hub unico" if int(k) == 0 else str(int(k))
+
+
 def gerar_grafico_k_fixo(
     tenant_id: str,
     data_inicial: str,
@@ -171,7 +175,8 @@ def gerar_grafico_k_fixo(
         plt.bar(x, df["custo_alvo"], label="Custo total (real + projetado)", color="steelblue")
 
         plt.ylabel("Custo consolidado (R$)", fontsize=12)
-        plt.xlabel("Clusters (k)", fontsize=12)
+        plt.xlabel("Cenários", fontsize=12)
+        plt.xticks(x, [_formatar_rotulo_cenario(k) for k in x])
 
         best_row = df.iloc[df["custo_alvo"].argmin()]
         best_k = int(best_row["k_clusters"])
@@ -179,7 +184,7 @@ def gerar_grafico_k_fixo(
 
         plt.title(
             f"Custo consolidado por k fixo (≥{int(min_cobertura_parcial*100)}% cobertura)\n"
-            f"{data_inicial} → {data_final} • melhor k={best_k} • regret={rr_txt}",
+            f"{data_inicial} → {data_final} • melhor cenário={_formatar_rotulo_cenario(best_k)} • regret={rr_txt}",
             fontsize=14, pad=20
         )
         plt.gca().yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f"{int(x/1000)} mil"))

@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
 from simulation.utils.artefatos_cleaner_distribuicao import limpar_artefatos_distribuicao
 
+
+def _formatar_rotulo_cenario(k: int) -> str:
+    return "Hub unico" if int(k) == 0 else str(int(k))
+
 def gerar_grafico_distribuicao_k(
     tenant_id: str, data_inicial: str, data_final: str, output_dir="exports/simulation/graphs"
 ):
@@ -62,10 +66,11 @@ def gerar_grafico_distribuicao_k(
             fontsize=10, fontweight='bold'
         )
 
-    plt.xlabel("Número de Clusters (k)", fontsize=12, fontweight="bold")
+    plt.xticks(df["k_clusters"], [_formatar_rotulo_cenario(k) for k in df["k_clusters"]])
+    plt.xlabel("Cenários", fontsize=12, fontweight="bold")
     plt.ylabel("Frequência como Ponto Ótimo", fontsize=12, fontweight="bold")
     plt.title(
-        f"Distribuição de k_clusters ({data_inicial} → {data_final})",
+        f"Distribuição de cenários vencedores ({data_inicial} → {data_final})",
         fontsize=14, fontweight="bold", color="#333333"
     )
 

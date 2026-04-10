@@ -26,7 +26,8 @@ class TransferenciaResumo:
         hub_nome: Optional[str] = None,
         hub_latitude: Optional[float] = None,
         hub_longitude: Optional[float] = None,
-        tempo_parcial_min: Optional[float] = None  # 🔧 novo campo
+        tempo_parcial_min: Optional[float] = None,
+        fonte_metricas: Optional[str] = None
     ):
         self.rota_id = rota_id
         self.tenant_id = tenant_id
@@ -49,7 +50,8 @@ class TransferenciaResumo:
         self.hub_nome = hub_nome
         self.hub_latitude = hub_latitude
         self.hub_longitude = hub_longitude
-        self.tempo_parcial_min = tempo_parcial_min  # ✅ atribuição nova
+        self.tempo_parcial_min = tempo_parcial_min
+        self.fonte_metricas = fonte_metricas
 
 
 # domain/entities.py

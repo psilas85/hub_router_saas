@@ -17,6 +17,7 @@ import {
     type FrequenciaCidadesResponse,
     type KFixoResponse,
     type FrotaKFixoResponse,
+    type RunSimulationParams,
 } from "@/services/simulationApi";
 import toast from "react-hot-toast";
 import {
@@ -28,6 +29,10 @@ import {
     ChevronDown,
     BarChart2,
     Building2,
+    Settings2,
+    History,
+    TimerReset,
+    Gauge,
 } from "lucide-react";
 import {
     BarChart as RBarChart,
@@ -43,6 +48,17 @@ import {
 
 import { getColorForString } from "@/utils/colors";
 
+function formatKLabel(k: string | number) {
+    return String(k) === "0" ? "Hub único" : String(k);
+}
+
+function formatScenarioLabel(k: string | number) {
+    if (String(k) === "0") {
+        return "Cenário Hub único";
+    }
+    return `Cenário k=${k}`;
+}
+
 function todayISO() {
     const d = new Date();
     return d.toISOString().slice(0, 10);
@@ -54,24 +70,98 @@ const resolveUrl = (path: string) => {
     return `${import.meta.env.VITE_API_URL}${path.startsWith("/") ? path : `/${path}`}`;
 };
 
+type ParamState = Omit<RunSimulationParams, "data_inicial" | "data_final" | "hub_id">;
+
 // 🔧 Accordion wrapper
-function Accordion({ title, children }: { title: string; children: React.ReactNode }) {
-    const [open, setOpen] = useState(false);
+function Accordion({ title, subtitle, defaultOpen = false, children }: { title: string; subtitle?: string; defaultOpen?: boolean; children: React.ReactNode }) {
+    const [open, setOpen] = useState(defaultOpen);
     return (
-        <div className="border rounded-lg mb-4">
+        <div className="mb-3 overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_10px_35px_rgba(15,23,42,0.05)]">
             <button
                 onClick={() => setOpen(!open)}
-                className="w-full flex justify-between items-center p-3 bg-gray-100 rounded-lg"
+                className="flex w-full items-center justify-between bg-gradient-to-r from-white via-white to-emerald-50/50 px-4 py-3"
             >
-                <span className="font-semibold">{title}</span>
+                <div className="text-left">
+                    <div className="font-semibold text-slate-900">{title}</div>
+                    {subtitle ? <div className="mt-0.5 text-sm text-slate-500">{subtitle}</div> : null}
+                </div>
                 <ChevronDown className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`} />
             </button>
-            {open && <div className="p-4 grid md:grid-cols-3 gap-4">{children}</div>}
+            {open && <div className="grid gap-3 border-t border-slate-100 p-4 md:grid-cols-2 xl:grid-cols-3">{children}</div>}
         </div>
     );
 }
 
+function FieldLabel({ title, hint }: { title: string; hint?: string }) {
+    return (
+        <div className="mb-2 flex items-center gap-2">
+            <div className="text-sm font-medium text-slate-700">{title}</div>
+            {hint ? <HelpHint text={hint} /> : null}
+        </div>
+    );
+}
+
+function HelpHint({ text }: { text: string }) {
+    return (
+        <span className="group relative inline-flex">
+            <span className="inline-flex h-5 w-5 cursor-help items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-semibold text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700">
+                ?
+            </span>
+            <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-56 -translate-x-1/2 rounded-2xl border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-medium leading-5 text-white shadow-xl group-hover:block">
+                {text}
+            </span>
+        </span>
+    );
+}
+
+function ToggleField({
+    title,
+    hint,
+    checked,
+    onChange,
+}: {
+    title: string;
+    hint: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+}) {
+    return (
+        <label className="flex cursor-pointer items-start gap-3 rounded-3xl border border-slate-200 bg-slate-50/70 p-4 transition hover:border-emerald-200 hover:bg-emerald-50/60">
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => onChange(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+            />
+            <div>
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                    <span>{title}</span>
+                    <HelpHint text={hint} />
+                </div>
+            </div>
+        </label>
+    );
+}
+
 type TabKey = "simulacao" | "cenarioVencedor" | "centroVencedor" | "custos" | "frota";
+type BannerTone = "info" | "success" | "error";
+
+type BannerState = {
+    text: string;
+    tone: BannerTone;
+};
+
+function getJobStatusMessage(status: SimulationJobStatus) {
+    return status.mensagem || status.result?.mensagem || status.error || null;
+}
+
+function isJobSuccess(status: string) {
+    return status === "done" || status === "finished";
+}
+
+function isJobFailure(status: string) {
+    return status === "error" || status === "failed";
+}
 
 function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
     const chartData = useMemo(() => {
@@ -127,7 +217,7 @@ function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
                     <tbody>
                         {chartData.map((r, i) => (
                             <tr key={i} className="border-b">
-                                <td className="py-2 pr-4">{r.k_clusters}</td>
+                                <td className="py-2 pr-4">{formatKLabel(r.k_clusters)}</td>
                                 <td className="py-2 pr-4">{r.tipo}</td>
                                 <td className="py-2 pr-4">{r.frota}</td>
                                 <td className="py-2 pr-4">{(r.cobertura_pct * 100).toFixed(1)}%</td>
@@ -147,7 +237,8 @@ export default function SimulationPage() {
     const [dataFinal, setDataFinal] = useState("");
     const [dataVisualizar, setDataVisualizar] = useState("");
     const [loading, setLoading] = useState(false);
-    const [msg, setMsg] = useState<string | null>(null);
+    const [banner, setBanner] = useState<BannerState | null>(null);
+    const [pendingJobId, setPendingJobId] = useState<string | null>(null);
     const [artefatos, setArtefatos] = useState<VisualizeSimulationResponse | null>(null);
     const [minCobertura, setMinCobertura] = useState(70);
     const [historico, setHistorico] = useState<HistoricoSimulation[]>([]);
@@ -156,27 +247,27 @@ export default function SimulationPage() {
 
 
     // 🔧 Estado centralizado
-    const [params, setParams] = useState({
-        k_min: 2,
-        k_max: 50,
-        k_inicial_transferencia: 1,
-        min_entregas_cluster: 25,
-        fundir_clusters_pequenos: false,
+    const [params, setParams] = useState<ParamState>({
+        algoritmo_clusterizacao_principal: "kmeans",
+        min_entregas_por_cluster_alvo: 10,
+        max_entregas_por_cluster_alvo: 100,
         desativar_cluster_hub: false,
         raio_hub_km: 80.0,
+        usar_outlier: false,
+        distancia_outlier_km: undefined,
         parada_leve: 10,
         parada_pesada: 20,
         tempo_volume: 0.4,
         velocidade: 60.0,
         limite_peso: 50.0,
-        restricao_veiculo_leve_municipio: false,
+        restricao_veiculo_leve_municipio: true,
         peso_leve_max: 50.0,
-        tempo_max_transferencia: 1200,
-        peso_max_transferencia: 15000.0,
+        tempo_max_transferencia: 600,
+        peso_max_transferencia: 18000.0,
         entregas_por_subcluster: 25,
-        tempo_max_roteirizacao: 1200,
-        tempo_max_k1: 2400,
-        permitir_rotas_excedentes: false,
+        tempo_max_roteirizacao: 600,
+        tempo_max_k0: 1200,
+        permitir_rotas_excedentes: true,
         modo_forcar: false,
     });
 
@@ -202,13 +293,25 @@ export default function SimulationPage() {
     }, []);
 
     const datasValidas = () => Boolean(dataInicial && (!dataFinal || dataFinal >= dataInicial));
+    const simulationInProgress = loading || pendingJobId !== null;
 
+    const updateParam = <K extends keyof ParamState>(key: K, value: ParamState[K]) => {
+        setParams((prev) => ({ ...prev, [key]: value }));
+    };
+
+    const updateNumericParam = (key: keyof ParamState, rawValue: string) => {
+        const trimmed = rawValue.trim();
+        setParams((prev) => ({
+            ...prev,
+            [key]: trimmed === "" ? undefined : Number(trimmed),
+        }));
+    };
 
     // =========================
     // Ações: Processar simulação
     // =========================
     const processar = async () => {
-        setMsg(null);
+        setBanner(null);
         setArtefatos(null);
 
         if (!datasValidas()) {
@@ -223,34 +326,59 @@ export default function SimulationPage() {
         setLoading(true);
         try {
             // 🔹 Monta os parâmetros dinamicamente
-            const simParams: any = {
+            const simParams: RunSimulationParams = {
                 data_inicial: dataInicial,
                 hub_id: hubId,
                 ...params,
             };
 
             if (dataFinal && dataFinal.trim() !== "") {
-                simParams.data_final = dataFinal;  // só adiciona se o usuário preencheu
+                simParams.data_final = dataFinal;
             }
 
-            await runSimulation(simParams);
-            await carregarHistorico(); // 👈 recarrega histórico depois de enviar simulação
-
-            setMsg("⏳ Simulação enviada para processamento.");
+            const response = await runSimulation(simParams);
+            const novoPendingJobId = response.job_id ?? null;
+            setPendingJobId(novoPendingJobId);
+            setBanner({ text: "⏳ Simulação enviada para processamento.", tone: "info" });
+            await carregarHistorico(novoPendingJobId);
         } catch (e: any) {
             const errMsg = e?.response?.data?.detail || "Erro ao executar simulação.";
-            setMsg(errMsg);
+            setBanner({ text: errMsg, tone: "error" });
             toast.error(errMsg);
         } finally {
             setLoading(false);
         }
     };
 
-    async function carregarHistorico() {
+    async function carregarHistorico(jobIdEmAcompanhamento: string | null = pendingJobId) {
         try {
             setLoadingHistorico(true);
-            const dados = await getHistorico(3);
-            setHistorico(dados.historico || []);
+            const dados = await getHistorico(10);
+            const historicoAtualizado = dados.historico || [];
+            setHistorico(historicoAtualizado);
+
+            if (jobIdEmAcompanhamento) {
+                const jobAtual = historicoAtualizado.find((item) => item.job_id === jobIdEmAcompanhamento);
+
+                if (jobAtual?.status && isJobSuccess(jobAtual.status)) {
+                    setBanner({
+                        text: jobAtual.mensagem || "✅ Simulação concluída com sucesso.",
+                        tone: "success",
+                    });
+                    setPendingJobId(null);
+                } else if (jobAtual?.status && isJobFailure(jobAtual.status)) {
+                    setBanner({
+                        text: jobAtual.mensagem || "❌ A simulação falhou.",
+                        tone: "error",
+                    });
+                    setPendingJobId(null);
+                } else if (jobAtual?.status === "processing") {
+                    setBanner({
+                        text: jobAtual.mensagem || "⏳ Simulação em processamento.",
+                        tone: "info",
+                    });
+                }
+            }
         } catch (err: any) {
             toast.error("Erro ao carregar histórico de simulações");
         } finally {
@@ -258,10 +386,51 @@ export default function SimulationPage() {
         }
     }
 
+    async function sincronizarJobPendente(jobId: string) {
+        try {
+            const status = await getSimulationStatus(jobId);
+            const mensagem = getJobStatusMessage(status);
+
+            if (isJobSuccess(status.status)) {
+                setBanner({
+                    text: mensagem || "✅ Simulação concluída com sucesso.",
+                    tone: "success",
+                });
+                setPendingJobId(null);
+            } else if (isJobFailure(status.status)) {
+                setBanner({
+                    text: mensagem || "❌ A simulação falhou.",
+                    tone: "error",
+                });
+                setPendingJobId(null);
+            } else {
+                setBanner({
+                    text: mensagem || "⏳ Simulação em processamento.",
+                    tone: "info",
+                });
+            }
+        } catch {
+            await carregarHistorico(jobId);
+        }
+    }
+
     async function atualizarStatus(jobId: string) {
         try {
             const status: SimulationJobStatus = await getSimulationStatus(jobId);
             toast(`Job ${jobId} → ${status.status}`);
+            if (pendingJobId === jobId) {
+                const mensagem = getJobStatusMessage(status);
+
+                if (isJobSuccess(status.status)) {
+                    setBanner({ text: mensagem || "✅ Simulação concluída com sucesso.", tone: "success" });
+                    setPendingJobId(null);
+                } else if (isJobFailure(status.status)) {
+                    setBanner({ text: mensagem || "❌ A simulação falhou.", tone: "error" });
+                    setPendingJobId(null);
+                } else {
+                    setBanner({ text: mensagem || "⏳ Simulação em processamento.", tone: "info" });
+                }
+            }
             await carregarHistorico();
         } catch (err: any) {
             toast.error("Erro ao atualizar status");
@@ -278,6 +447,20 @@ export default function SimulationPage() {
         return () => clearInterval(interval);
     }, []);
 
+    useEffect(() => {
+        if (!pendingJobId) {
+            return;
+        }
+
+        sincronizarJobPendente(pendingJobId);
+
+        const interval = setInterval(() => {
+            sincronizarJobPendente(pendingJobId);
+        }, 10000);
+
+        return () => clearInterval(interval);
+    }, [pendingJobId]);
+
     // =========================
     // Ações: Visualizar artefatos (por dataVisualizar)
     // =========================
@@ -289,11 +472,11 @@ export default function SimulationPage() {
         try {
             const data = await visualizeSimulation(dataVisualizar);
             setArtefatos(data);
-            setMsg("✅ Artefatos carregados.");
+            setBanner({ text: "✅ Artefatos carregados.", tone: "success" });
             toast.success("Artefatos carregados!");
         } catch (e: any) {
             const errMsg = e?.response?.data?.detail || "Erro ao carregar artefatos.";
-            setMsg(errMsg);
+            setBanner({ text: errMsg, tone: "error" });
             toast.error(errMsg);
         }
     };
@@ -527,41 +710,41 @@ export default function SimulationPage() {
 
 
     return (
-        <div className="max-w-6xl mx-auto p-6">
-            <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
+        <div className="mx-auto max-w-7xl p-6">
+            <h1 className="mb-5 flex items-center gap-2 text-2xl font-bold text-slate-900">
                 <BarChart3 className="w-6 h-6 text-emerald-600" />
                 Simulação
             </h1>
 
             {/* Tabs */}
-            <div className="mb-6">
-                <div className="inline-flex rounded-xl border bg-white shadow overflow-hidden">
+            <div className="mb-6 overflow-x-auto pb-1">
+                <div className="inline-flex min-w-max rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
                     <button
-                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "simulacao" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
+                        className={`flex items-center gap-2 rounded-xl px-4 py-2.5 ${activeTab === "simulacao" ? "bg-emerald-600 text-white shadow-sm" : "text-gray-700 hover:bg-gray-50"}`}
                         onClick={() => setActiveTab("simulacao")}
                     >
                         <Play className="w-4 h-4" /> Simulação
                     </button>
                     <button
-                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "cenarioVencedor" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
+                        className={`flex items-center gap-2 rounded-xl px-4 py-2.5 ${activeTab === "cenarioVencedor" ? "bg-emerald-600 text-white shadow-sm" : "text-gray-700 hover:bg-gray-50"}`}
                         onClick={() => setActiveTab("cenarioVencedor")}
                     >
                         <BarChart2 className="w-4 h-4" /> Cenário Vencedor
                     </button>
                     <button
-                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "centroVencedor" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
+                        className={`flex items-center gap-2 rounded-xl px-4 py-2.5 ${activeTab === "centroVencedor" ? "bg-emerald-600 text-white shadow-sm" : "text-gray-700 hover:bg-gray-50"}`}
                         onClick={() => setActiveTab("centroVencedor")}
                     >
                         <Building2 className="w-4 h-4" /> Centro Vencedor
                     </button>
                     <button
-                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "custos" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
+                        className={`flex items-center gap-2 rounded-xl px-4 py-2.5 ${activeTab === "custos" ? "bg-emerald-600 text-white shadow-sm" : "text-gray-700 hover:bg-gray-50"}`}
                         onClick={() => setActiveTab("custos")}
                     >
                         <BarChart3 className="w-4 h-4" /> Custos
                     </button>
                     <button
-                        className={`px-4 py-2 flex items-center gap-2 ${activeTab === "frota" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"}`}
+                        className={`flex items-center gap-2 rounded-xl px-4 py-2.5 ${activeTab === "frota" ? "bg-emerald-600 text-white shadow-sm" : "text-gray-700 hover:bg-gray-50"}`}
                         onClick={() => setActiveTab("frota")}
                     >
                         <Map className="w-4 h-4" /> Frota
@@ -572,628 +755,299 @@ export default function SimulationPage() {
             {/* ===================== ABA: Simulação ===================== */}
             {activeTab === "simulacao" && (
                 <>
-                    {/* Formulário principal */}
-                    <div className="bg-white rounded-2xl shadow p-4 mb-6">
-                        {/* Linha 1 */}
-                        <div className="grid md:grid-cols-4 gap-4 mb-4">
-                            <div>
-                                <label className="block text-sm text-gray-700">Data inicial</label>
-                                <input
-                                    type="date"
-                                    value={dataInicial}
-                                    max={todayISO()}
-                                    onChange={(e) => setDataInicial(e.target.value)}
-                                    className="input"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm text-gray-700">Data final (opcional)</label>
-                                <input
-                                    type="date"
-                                    value={dataFinal}
-                                    max={todayISO()}
-                                    onChange={(e) => setDataFinal(e.target.value)}
-                                    className="input"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm text-gray-700">Hub Central</label>
-                                <select
-                                    value={hubId ?? ""}
-                                    onChange={(e) => setHubId(Number(e.target.value))}
-                                    className="input"
-                                    disabled={!hubs.length}
-                                >
-                                    <option value="" disabled>
-                                        {hubs.length ? "Selecione um hub" : "Carregando hubs..."}
-                                    </option>
-                                    {hubs.map((h) => (
-                                        <option key={h.hub_id} value={h.hub_id}>
-                                            {h.nome} ({h.cidade})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            {/* Botão Processar */}
-                            <div className="flex items-end">
-                                <button
-                                    disabled={loading || !datasValidas()}
-                                    onClick={processar}
-                                    className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-medium shadow transition-all duration-200
-                                        ${loading || !datasValidas()
-                                            ? "bg-emerald-300 text-white cursor-not-allowed"
-                                            : "bg-emerald-600 hover:bg-emerald-700 text-white hover:shadow-md"}`}
-                                >
-                                    {loading ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 animate-spin" /> Processando...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Play className="w-4 h-4" /> Processar
-                                        </>
-                                    )}
-                                </button>
-                            </div>
+                    {banner ? (
+                        <div className={`mb-4 rounded-[24px] px-4 py-3 text-sm shadow-sm ${banner.tone === "success" ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : banner.tone === "error" ? "border border-rose-200 bg-rose-50 text-rose-700" : "border border-amber-200 bg-amber-50 text-amber-700"}`}>
+                            {banner.text}
                         </div>
+                    ) : null}
 
-                        {/* ===================== Histórico ===================== */}
-                        <div className="bg-white rounded-2xl shadow p-4 mt-6">
-                            <div className="flex justify-between items-center mb-2">
-                                <h2 className="text-lg font-semibold">📜 Histórico de Simulações</h2>
-                                <button
-                                    onClick={carregarHistorico}
-                                    disabled={loadingHistorico}
-                                    className="px-3 py-1 bg-emerald-500 text-white rounded-md hover:bg-emerald-600 disabled:opacity-50"
-                                >
-                                    {loadingHistorico ? "Atualizando..." : "Atualizar"}
-                                </button>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full text-sm border">
-                                    <thead className="bg-gray-100">
-                                        <tr>
-                                            <th className="px-3 py-2 text-left">Data</th>
-                                            <th className="px-3 py-2 text-left">Status</th>
-                                            <th className="px-3 py-2 text-left">Mensagem</th>
-                                            <th className="px-3 py-2 text-left">Job</th>
-                                            <th className="px-3 py-2 text-left"></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {historico.length > 0 ? (
-                                            historico.map((h) => (
-                                                <tr key={h.id} className="border-t">
-                                                    <td className="px-3 py-2">
-                                                        {new Date(h.criado_em).toLocaleString("pt-BR", {
-                                                            dateStyle: "short",
-                                                            timeStyle: "short",
-                                                        })}
-                                                    </td>
-
-                                                    <td className="px-3 py-2">
-                                                        <span
-                                                            className={`px-2 py-1 rounded ${h.status === "finished"
-                                                                ? "bg-green-100 text-green-700"
-                                                                : h.status === "failed"
-                                                                    ? "bg-red-100 text-red-700"
-                                                                    : "bg-yellow-100 text-yellow-700"
-                                                                }`}
-                                                        >
-                                                            {h.status}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-3 py-2">{h.mensagem}</td>
-                                                    <td className="px-3 py-2 font-mono text-xs">{h.job_id}</td>
-                                                    <td className="px-3 py-2">
-                                                        <button
-                                                            onClick={() => atualizarStatus(h.job_id)}
-                                                            className="px-2 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300"
-                                                        >
-                                                            🔄
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))
-                                        ) : (
-                                            <tr>
-                                                <td colSpan={5} className="text-center py-4 text-gray-500">
-                                                    Nenhum histórico encontrado
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-
-                        {/* Linha 2 */}
-                        <div className="grid md:grid-cols-4 gap-4">
-                            <div className="md:col-span-3">
-                                <label className="block text-sm text-gray-700">Data para visualizar</label>
-                                <input
-                                    type="date"
-                                    value={dataVisualizar}
-                                    max={todayISO()}
-                                    onChange={(e) => setDataVisualizar(e.target.value)}
-                                    className="input w-full"
-                                />
+                    <div className="mb-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">
+                                <Settings2 className="h-4 w-4 text-emerald-600" />
+                                Parâmetros da simulação
                             </div>
 
-                            <div className="flex items-end">
-                                <button
-                                    disabled={!dataVisualizar}
-                                    onClick={gerarRelatorios}
-                                    className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-medium border transition-all duration-200
-                                        ${!dataVisualizar
-                                            ? "border-gray-300 text-gray-400 cursor-not-allowed"
-                                            : "border-emerald-600 text-emerald-600 hover:bg-emerald-50 hover:shadow-sm"}`}
-                                >
-                                    <FileText className="w-4 h-4" /> Gerar Relatórios & Gráficos
-                                </button>
-                            </div>
-                        </div>
-
-                    </div>
-
-
-                    {/* Accordions com parâmetros */}
-                    <div className="bg-white rounded-2xl shadow p-4 mb-6">
-                        <h2 className="font-semibold mb-4">⚙️ Parâmetros da Simulação</h2>
-
-                        <Accordion title="Clusterização">
-                            <label>
-                                k_min
-                                <input
-                                    type="number"
-                                    value={params.k_min}
-                                    onChange={(e) => setParams({ ...params, k_min: +e.target.value })}
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                k_max
-                                <input
-                                    type="number"
-                                    value={params.k_max}
-                                    onChange={(e) => setParams({ ...params, k_max: +e.target.value })}
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                k_inicial_transferencia
-                                <input
-                                    type="number"
-                                    value={params.k_inicial_transferencia}
-                                    onChange={(e) =>
-                                        setParams({ ...params, k_inicial_transferencia: +e.target.value })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                Min. entregas cluster
-                                <input
-                                    type="number"
-                                    value={params.min_entregas_cluster}
-                                    onChange={(e) =>
-                                        setParams({ ...params, min_entregas_cluster: +e.target.value })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label className="flex gap-2 items-center">
-                                <input
-                                    type="checkbox"
-                                    checked={params.fundir_clusters_pequenos}
-                                    onChange={(e) =>
-                                        setParams({ ...params, fundir_clusters_pequenos: e.target.checked })
-                                    }
-                                />
-                                Fundir clusters pequenos
-                            </label>
-                        </Accordion>
-
-                        <Accordion title="Tempos Operacionais">
-                            <label>
-                                Parada leve (min)
-                                <input
-                                    type="number"
-                                    value={params.parada_leve}
-                                    onChange={(e) =>
-                                        setParams({ ...params, parada_leve: +e.target.value })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                Parada pesada (min)
-                                <input
-                                    type="number"
-                                    value={params.parada_pesada}
-                                    onChange={(e) =>
-                                        setParams({ ...params, parada_pesada: +e.target.value })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                Tempo por volume (min)
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={params.tempo_volume}
-                                    onChange={(e) =>
-                                        setParams({ ...params, tempo_volume: +e.target.value })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                        </Accordion>
-
-                        <Accordion title="Transferências">
-                            <label>
-                                Tempo máx. transferência (min)
-                                <input
-                                    type="number"
-                                    value={params.tempo_max_transferencia}
-                                    onChange={(e) =>
-                                        setParams({
-                                            ...params,
-                                            tempo_max_transferencia: +e.target.value,
-                                        })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                Peso máx. transferência (kg)
-                                <input
-                                    type="number"
-                                    value={params.peso_max_transferencia}
-                                    onChange={(e) =>
-                                        setParams({
-                                            ...params,
-                                            peso_max_transferencia: +e.target.value,
-                                        })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                        </Accordion>
-
-                        <Accordion title="Last-mile">
-                            <label>
-                                Entregas por subcluster
-                                <input
-                                    type="number"
-                                    value={params.entregas_por_subcluster}
-                                    onChange={(e) =>
-                                        setParams({
-                                            ...params,
-                                            entregas_por_subcluster: +e.target.value,
-                                        })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                Tempo máx. roteirização (min)
-                                <input
-                                    type="number"
-                                    value={params.tempo_max_roteirizacao}
-                                    onChange={(e) =>
-                                        setParams({
-                                            ...params,
-                                            tempo_max_roteirizacao: +e.target.value,
-                                        })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                Tempo máx. k=1 (min)
-                                <input
-                                    type="number"
-                                    value={params.tempo_max_k1}
-                                    onChange={(e) =>
-                                        setParams({ ...params, tempo_max_k1: +e.target.value })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                        </Accordion>
-
-                        <Accordion title="Restrições e Operações">
-                            <label>
-                                Velocidade média (km/h)
-                                <input
-                                    type="number"
-                                    value={params.velocidade}
-                                    onChange={(e) =>
-                                        setParams({ ...params, velocidade: +e.target.value })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                Limite peso parada pesada (kg)
-                                <input
-                                    type="number"
-                                    value={params.limite_peso}
-                                    onChange={(e) =>
-                                        setParams({ ...params, limite_peso: +e.target.value })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label>
-                                Peso leve máx. (kg)
-                                <input
-                                    type="number"
-                                    value={params.peso_leve_max}
-                                    onChange={(e) =>
-                                        setParams({ ...params, peso_leve_max: +e.target.value })
-                                    }
-                                    className="input"
-                                />
-                            </label>
-                            <label className="flex gap-2 items-center">
-                                <input
-                                    type="checkbox"
-                                    checked={params.restricao_veiculo_leve_municipio}
-                                    onChange={(e) =>
-                                        setParams({
-                                            ...params,
-                                            restricao_veiculo_leve_municipio: e.target.checked,
-                                        })
-                                    }
-                                />
-                                Restrição veículo leve município
-                            </label>
-                            <label className="flex gap-2 items-center">
-                                <input
-                                    type="checkbox"
-                                    checked={params.permitir_rotas_excedentes}
-                                    onChange={(e) =>
-                                        setParams({
-                                            ...params,
-                                            permitir_rotas_excedentes: e.target.checked,
-                                        })
-                                    }
-                                />
-                                Permitir rotas excedentes
-                            </label>
-                            <label className="flex gap-2 items-center">
-                                <input
-                                    type="checkbox"
-                                    checked={params.modo_forcar}
-                                    onChange={(e) => setParams({ ...params, modo_forcar: e.target.checked })}
-                                />
-                                Forçar sobrescrita (modo_forcar)
-                            </label>
-                        </Accordion>
-                    </div>
-
-
-                    {/* Mensagens */}
-                    {msg && (
-                        <div className="mb-4 text-sm bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg p-3">
-                            {msg}
-                        </div>
-                    )}
-
-                    {/* Artefatos */}
-                    {artefatos && (
-                        <div className="border rounded-xl p-4 bg-gray-50">
-                            <h2 className="font-semibold mb-4">
-                                Artefatos {artefatos.data}
-                            </h2>
-
-                            {/* PDF */}
-                            {artefatos.relatorio_pdf && (
-                                <div className="mb-4">
-                                    <a
-                                        href={resolveUrl(artefatos.relatorio_pdf)}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="btn flex items-center gap-2"
+                            <Accordion title="Estratégia" subtitle="cenários e clusterização" defaultOpen>
+                                <div>
+                                    <FieldLabel title="Mín. entregas por cluster alvo" hint="define o maior k aceitável para os cenários" />
+                                    <input type="number" value={params.min_entregas_por_cluster_alvo ?? ""} onChange={(e) => updateNumericParam("min_entregas_por_cluster_alvo", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Máx. entregas por cluster alvo" hint="define o menor k aceitável para os cenários" />
+                                    <input type="number" value={params.max_entregas_por_cluster_alvo ?? ""} onChange={(e) => updateNumericParam("max_entregas_por_cluster_alvo", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Algoritmo principal" hint="usado nos cenários k numéricos" />
+                                    <select
+                                        value={params.algoritmo_clusterizacao_principal ?? "kmeans"}
+                                        onChange={(e) => updateParam("algoritmo_clusterizacao_principal", e.target.value as ParamState["algoritmo_clusterizacao_principal"])}
+                                        className="input"
                                     >
-                                        <FileText className="w-4 h-4" /> Baixar Relatório PDF
-                                    </a>
+                                        <option value="kmeans">KMeans</option>
+                                        <option value="balanced_kmeans">Balanced KMeans</option>
+                                    </select>
                                 </div>
-                            )}
+                            </Accordion>
 
-                            {/* Gráfico */}
-                            {artefatos.graficos && artefatos.graficos.length > 0 && (
-                                <div className="mb-6">
-                                    <h3 className="font-medium mb-2">
-                                        📊 Gráfico Comparativo de Custos
-                                    </h3>
-                                    <img
-                                        src={resolveUrl(
-                                            artefatos.graficos.find((g) =>
-                                                g.includes(`grafico_simulacao_${artefatos.data}`)
-                                            ) || artefatos.graficos[0]
-                                        )}
-                                        alt={`Gráfico comparativo de custos ${artefatos.data}`}
-                                        className="w-full border rounded bg-white"
-                                    />
+                            <Accordion title="Hub e outliers" subtitle="regras espaciais">
+                                <div>
+                                    <FieldLabel title="Raio do hub (km)" hint="entregas dentro do raio podem ser reservadas ao hub" />
+                                    <input type="number" step="0.1" value={params.raio_hub_km ?? ""} onChange={(e) => updateNumericParam("raio_hub_km", e.target.value)} className="input" />
                                 </div>
-                            )}
+                                <div>
+                                    <FieldLabel title="Distância fixa de outlier (km)" hint="deixe vazio para corte automático" />
+                                    <input type="number" step="0.1" value={params.distancia_outlier_km ?? ""} onChange={(e) => updateNumericParam("distancia_outlier_km", e.target.value)} className="input" />
+                                </div>
+                                <ToggleField title="Desativar cluster reservado do hub" hint="manda toda a base para clusterização geral" checked={params.desativar_cluster_hub ?? false} onChange={(checked) => updateParam("desativar_cluster_hub", checked)} />
+                                <ToggleField title="Separar outliers geográficos" hint="materializa outliers antes da clusterização principal" checked={params.usar_outlier ?? false} onChange={(checked) => updateParam("usar_outlier", checked)} />
+                            </Accordion>
 
-                            {/* Cenários */}
-                            {Object.entries(artefatos.cenarios).map(([k, itens]: any) => (
-                                <div key={k} className="mb-6 bg-white rounded-lg shadow p-4">
-                                    <h3 className="text-lg font-bold mb-4">
-                                        Cenário k={k}{" "}
-                                        {itens.otimo && (
-                                            <span className="text-emerald-600">🌟 (Ótimo)</span>
+                            <Accordion title="Tempos" subtitle="transferência e last-mile">
+                                <div>
+                                    <FieldLabel title="Parada leve (min)" hint="tempo base de atendimento para entregas leves" />
+                                    <input type="number" value={params.parada_leve ?? ""} onChange={(e) => updateNumericParam("parada_leve", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Parada pesada (min)" hint="tempo base de atendimento para entregas acima do limite de peso" />
+                                    <input type="number" value={params.parada_pesada ?? ""} onChange={(e) => updateNumericParam("parada_pesada", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Tempo por volume (min)" hint="acréscimo de atendimento por volume entregue" />
+                                    <input type="number" step="0.1" value={params.tempo_volume ?? ""} onChange={(e) => updateNumericParam("tempo_volume", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Tempo máx. transferência (min)" hint="limite por rota de transferência entre hub e clusters" />
+                                    <input type="number" value={params.tempo_max_transferencia ?? ""} onChange={(e) => updateNumericParam("tempo_max_transferencia", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Tempo máx. roteirização (min)" hint="limite por rota last-mile" />
+                                    <input type="number" value={params.tempo_max_roteirizacao ?? ""} onChange={(e) => updateNumericParam("tempo_max_roteirizacao", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Tempo máx. Hub único (min)" hint="limite do cenário hub-central sem transferência" />
+                                    <input type="number" value={params.tempo_max_k0 ?? ""} onChange={(e) => updateNumericParam("tempo_max_k0", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Entregas por subcluster" hint="heurística inicial do last-mile" />
+                                    <input type="number" value={params.entregas_por_subcluster ?? ""} onChange={(e) => updateNumericParam("entregas_por_subcluster", e.target.value)} className="input" />
+                                </div>
+                            </Accordion>
+
+                            <Accordion title="Capacidade" subtitle="veículos e restrições">
+                                <div>
+                                    <FieldLabel title="Velocidade média (km/h)" hint="usada para estimar tempos de deslocamento" />
+                                    <input type="number" value={params.velocidade ?? ""} onChange={(e) => updateNumericParam("velocidade", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Limite peso parada pesada (kg)" hint="acima deste peso a entrega usa tempo de parada pesada" />
+                                    <input type="number" value={params.limite_peso ?? ""} onChange={(e) => updateNumericParam("limite_peso", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Peso leve máximo (kg)" hint="peso total máximo para rota continuar elegível a veículo leve" />
+                                    <input type="number" value={params.peso_leve_max ?? ""} onChange={(e) => updateNumericParam("peso_leve_max", e.target.value)} className="input" />
+                                </div>
+                                <div>
+                                    <FieldLabel title="Peso máx. transferência (kg)" />
+                                    <input type="number" value={params.peso_max_transferencia ?? ""} onChange={(e) => updateNumericParam("peso_max_transferencia", e.target.value)} className="input" />
+                                </div>
+                                <ToggleField title="Restringir veículo leve em rota intermunicipal" hint="evita frota leve em rotas entre cidades quando a regra estiver ativa" checked={params.restricao_veiculo_leve_municipio ?? true} onChange={(checked) => updateParam("restricao_veiculo_leve_municipio", checked)} />
+                                <ToggleField title="Permitir rotas excedentes" hint="mantém cenários mesmo quando alguma rota ultrapassa o limite" checked={params.permitir_rotas_excedentes ?? true} onChange={(checked) => updateParam("permitir_rotas_excedentes", checked)} />
+                            </Accordion>
+                        </div>
+
+                        <div className="space-y-5 xl:sticky xl:top-6 self-start">
+                            <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.06)] lg:p-5">
+                                <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">
+                                    <Play className="h-4 w-4 text-emerald-600" />
+                                    Execução
+                                </div>
+
+                                <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                                    <div>
+                                        <FieldLabel title="Data inicial" hint="primeiro dia do lote" />
+                                        <input type="date" value={dataInicial} max={todayISO()} onChange={(e) => setDataInicial(e.target.value)} className="input" />
+                                    </div>
+                                    <div>
+                                        <FieldLabel title="Data final" hint="opcional para processamento em faixa" />
+                                        <input type="date" value={dataFinal} max={todayISO()} onChange={(e) => setDataFinal(e.target.value)} className="input" />
+                                    </div>
+                                </div>
+
+                                <div className="mt-4">
+                                    <FieldLabel title="Hub central" hint="origem do cenário Hub único e das transferências" />
+                                    <select value={hubId ?? ""} onChange={(e) => setHubId(Number(e.target.value))} className="input" disabled={!hubs.length}>
+                                        <option value="" disabled>
+                                            {hubs.length ? "Selecione um hub" : "Carregando hubs..."}
+                                        </option>
+                                        {hubs.map((h) => (
+                                            <option key={h.hub_id} value={h.hub_id}>
+                                                {h.nome} ({h.cidade})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className="mt-4 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                                    <label className="flex items-start gap-3 text-sm text-slate-700">
+                                        <input
+                                            type="checkbox"
+                                            checked={params.modo_forcar ?? false}
+                                            onChange={(e) => updateParam("modo_forcar", e.target.checked)}
+                                            className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                        />
+                                        <span>
+                                            <span className="flex items-center gap-2 font-medium text-slate-900">
+                                                <span>Forçar sobrescrita</span>
+                                                <HelpHint text="Remove resultados anteriores do mesmo período antes de rodar novamente." />
+                                            </span>
+                                        </span>
+                                    </label>
+
+                                    <button
+                                        disabled={simulationInProgress || !datasValidas()}
+                                        onClick={processar}
+                                        className="btn mt-4 w-full gap-2 rounded-2xl px-5 py-3"
+                                    >
+                                        {simulationInProgress ? (
+                                            <>
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                Processando
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Play className="h-4 w-4" />
+                                                Executar simulação
+                                            </>
                                         )}
-                                    </h3>
+                                    </button>
+                                </div>
 
-                                    {/* Mapas */}
-                                    {itens.mapas && itens.mapas.length > 0 && (
-                                        <div className="mb-3">
-                                            <h4 className="font-medium mb-1 flex items-center gap-2">
-                                                <Map className="w-4 h-4" /> Mapas
-                                            </h4>
-                                            <ul className="list-disc ml-6">
-                                                {["clusterizacao", "transferencias", "lastmile"].map((tipo) => {
-                                                    const arquivo = itens.mapas.find((m: string) => {
-                                                        if (tipo === "transferencias") {
-                                                            return (m.includes("transferencias") || m.includes("middlemile")) && m.endsWith(".html");
-                                                        }
-                                                        return m.includes(tipo) && m.endsWith(".html");
-                                                    });
+                                <div className="mt-4 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                                        <FileText className="h-4 w-4 text-emerald-600" />
+                                        Visualização
+                                    </div>
 
-                                                    if (!arquivo) return null;
+                                    <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
+                                        <FieldLabel title="Data para visualizar" hint="abre relatório, gráficos e mapas já gerados" />
+                                        <input type="date" value={dataVisualizar} max={todayISO()} onChange={(e) => setDataVisualizar(e.target.value)} className="input" />
+                                    </div>
 
-                                                    let label = "";
-                                                    if (tipo === "clusterizacao") label = "Clusterização";
-                                                    if (tipo === "transferencias") label = "Middle-mile";
-                                                    if (tipo === "lastmile") label = "Last-mile";
+                                    <button
+                                        disabled={!dataVisualizar}
+                                        onClick={gerarRelatorios}
+                                        className="btn-secondary mt-3 w-full gap-2 rounded-2xl px-5 py-3"
+                                    >
+                                        <FileText className="h-4 w-4" />
+                                        Abrir artefatos
+                                    </button>
+                                </div>
+                            </div>
 
-                                                    return (
-                                                        <li key={tipo}>
-                                                            <a
-                                                                href={resolveUrl(arquivo)}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="text-emerald-600 hover:underline"
-                                                            >
-                                                                {label}
-                                                            </a>
-                                                        </li>
-                                                    );
-                                                })}
+                            {artefatos ? (
+                                <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
+                                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                                        <Gauge className="h-4 w-4 text-emerald-600" />
+                                        Artefatos {artefatos.data}
+                                    </div>
 
-                                            </ul>
-                                        </div>
-                                    )}
+                                    {artefatos.relatorio_pdf ? (
+                                        <a href={resolveUrl(artefatos.relatorio_pdf)} target="_blank" rel="noopener noreferrer" className="btn mt-4 gap-2 rounded-xl">
+                                            <FileText className="h-4 w-4" />
+                                            Baixar relatório PDF
+                                        </a>
+                                    ) : null}
 
-
-
-                                    {/* Tabelas Last-mile */}
-                                    {itens.tabelas_lastmile && itens.tabelas_lastmile.length > 0 && (
-                                        <div className="mb-3">
-                                            <h4 className="font-medium mb-1">Tabelas Last-mile</h4>
-                                            <ul className="list-disc ml-6">
-                                                {itens.tabelas_lastmile.map(
-                                                    (f: string, idx: number) => (
-                                                        <li key={idx}>
-                                                            <a
-                                                                href={resolveUrl(f)}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="text-emerald-600 hover:underline"
-                                                            >
-                                                                Abrir tabela {idx + 1}
-                                                            </a>
-                                                        </li>
-                                                    )
-                                                )}
-                                            </ul>
-                                        </div>
-                                    )}
-
-                                    {/* Tabelas Transferências */}
-                                    {itens.tabelas_transferencias &&
-                                        itens.tabelas_transferencias.length > 0 && (
-                                            <div className="mb-3">
-                                                <h4 className="font-medium mb-1">
-                                                    Tabelas Transferências
-                                                </h4>
-                                                <ul className="list-disc ml-6">
-                                                    {itens.tabelas_transferencias.map(
-                                                        (f: string, idx: number) => (
-                                                            <li key={idx}>
-                                                                <a
-                                                                    href={resolveUrl(f)}
-                                                                    target="_blank"
-                                                                    rel="noopener noreferrer"
-                                                                    className="text-emerald-600 hover:underline"
-                                                                >
-                                                                    Abrir tabela {idx + 1}
-                                                                </a>
-                                                            </li>
-                                                        )
-                                                    )}
-                                                </ul>
-                                            </div>
-                                        )}
-
-                                    {/* CSVs Resumo */}
-                                    {itens.tabelas_resumo && itens.tabelas_resumo.length > 0 && (
-                                        <div className="mb-3">
-                                            <h4 className="font-medium mb-1">CSVs Resumo</h4>
-                                            <ul className="list-disc ml-6">
-                                                {itens.tabelas_resumo.map(
-                                                    (f: string, idx: number) => (
-                                                        <li key={idx}>
-                                                            <a
-                                                                href={resolveUrl(f)}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="text-emerald-600 hover:underline"
-                                                            >
-                                                                Baixar resumo {idx + 1}
-                                                            </a>
-                                                        </li>
-                                                    )
-                                                )}
-                                            </ul>
-                                        </div>
-                                    )}
-
-                                    {/* CSVs Detalhes */}
-                                    {itens.tabelas_detalhes &&
-                                        itens.tabelas_detalhes.length > 0 && (
-                                            <div className="mb-3">
-                                                <h4 className="font-medium mb-1">CSVs Detalhes</h4>
-                                                <ul className="list-disc ml-6">
-                                                    {itens.tabelas_detalhes.map(
-                                                        (f: string, idx: number) => (
-                                                            <li key={idx}>
-                                                                <a
-                                                                    href={resolveUrl(f)}
-                                                                    target="_blank"
-                                                                    rel="noopener noreferrer"
-                                                                    className="text-emerald-600 hover:underline"
-                                                                >
-                                                                    Baixar detalhes {idx + 1}
-                                                                </a>
-                                                            </li>
-                                                        )
-                                                    )}
-                                                </ul>
-                                            </div>
-                                        )}
-
-                                    {/* Embed do cenário Ótimo */}
-                                    {itens.otimo && (
-                                        <div className="mt-4">
-                                            <h4 className="font-medium">📍 Cenário Ótimo</h4>
-                                            <iframe
-                                                src={resolveUrl(
-                                                    itens.mapas.find((m: string) => m.includes("clusterizacao") && m.endsWith(".html"))
-                                                )}
-                                                title="Cenário Ótimo"
-                                                className="w-full h-[500px] border rounded-lg"
+                                    {artefatos.graficos && artefatos.graficos.length > 0 ? (
+                                        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                            <img
+                                                src={resolveUrl(artefatos.graficos.find((g) => g.includes(`grafico_simulacao_${artefatos.data}`)) || artefatos.graficos[0])}
+                                                alt={`Gráfico comparativo de custos ${artefatos.data}`}
+                                                className="w-full rounded-xl border border-slate-200 bg-white"
                                             />
                                         </div>
-                                    )}
+                                    ) : null}
 
+                                    <div className="mt-5 space-y-4">
+                                        {Object.entries(artefatos.cenarios).map(([k, itens]: any) => {
+                                            const mapaOtimo = itens.mapas?.find((m: string) => m.includes("clusterizacao") && m.endsWith(".html"));
 
+                                            return (
+                                                <div key={k} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <div className="text-base font-semibold text-slate-900">{formatScenarioLabel(k)}</div>
+                                                        {itens.otimo ? <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">ótimo</span> : null}
+                                                    </div>
 
+                                                    <div className="mt-3 grid gap-2 text-sm text-slate-600">
+                                                        {itens.mapas?.length ? <a href={resolveUrl(itens.mapas[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir mapas do cenário</a> : null}
+                                                        {itens.tabelas_lastmile?.length ? <a href={resolveUrl(itens.tabelas_lastmile[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir tabela last-mile</a> : null}
+                                                        {itens.tabelas_transferencias?.length ? <a href={resolveUrl(itens.tabelas_transferencias[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir tabela de transferências</a> : null}
+                                                        {itens.tabelas_resumo?.length ? <a href={resolveUrl(itens.tabelas_resumo[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Baixar CSV resumo</a> : null}
+                                                        {itens.tabelas_detalhes?.length ? <a href={resolveUrl(itens.tabelas_detalhes[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Baixar CSV detalhes</a> : null}
+                                                    </div>
+
+                                                    {itens.otimo && mapaOtimo ? (
+                                                        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                                                            <iframe src={resolveUrl(mapaOtimo)} title={`Cenário ótimo ${k}`} className="h-[420px] w-full" />
+                                                        </div>
+                                                    ) : null}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                            ))}
+                            ) : null}
+
+                            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                                            <History className="h-4 w-4 text-emerald-600" />
+                                            Histórico recente
+                                        </div>
+                                        <p className="mt-1 text-sm text-slate-500">Acompanhe os últimos jobs.</p>
+                                    </div>
+                                    <button onClick={() => carregarHistorico()} disabled={loadingHistorico} className="btn-secondary gap-2 rounded-xl px-3 py-2 text-sm">
+                                        {loadingHistorico ? <Loader2 className="h-4 w-4 animate-spin" /> : <TimerReset className="h-4 w-4" />}
+                                        Atualizar
+                                    </button>
+                                </div>
+
+                                <div className="mt-4 space-y-3">
+                                    {historico.length > 0 ? (
+                                        historico.map((h) => (
+                                            <div key={h.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                                    <div>
+                                                        <div className="text-sm font-medium text-slate-900">
+                                                            {new Date(h.criado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                                                        </div>
+                                                        <div className="mt-1 text-xs font-mono text-slate-500" title={h.job_id}>{h.job_id}</div>
+                                                    </div>
+                                                    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${h.status === "finished" ? "bg-emerald-100 text-emerald-700" : h.status === "failed" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>
+                                                        {h.status}
+                                                    </span>
+                                                </div>
+                                                <p className="mt-3 line-clamp-2 text-sm text-slate-600" title={h.mensagem}>{h.mensagem}</p>
+                                                <div className="mt-3 flex justify-end">
+                                                    <button onClick={() => atualizarStatus(h.job_id)} className="btn-secondary gap-2 rounded-xl px-3 py-2 text-sm">
+                                                        <TimerReset className="h-4 w-4" />
+                                                        Ver status
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">
+                                            Nenhum histórico encontrado.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
-                    )}
+                    </div>
                 </>
             )}
 
@@ -1208,7 +1062,7 @@ export default function SimulationPage() {
                     {/* Filtros */}
                     <div className="grid md:grid-cols-3 gap-4 mb-4">
                         <div>
-                            <label className="block text-sm text-gray-700">Data inicial</label>
+                            <FieldLabel title="Data inicial" hint="início do período analisado" />
                             <input
                                 type="date"
                                 value={periodoDistribuicaoDefault.data_inicial}
@@ -1218,7 +1072,7 @@ export default function SimulationPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-gray-700">Data final</label>
+                            <FieldLabel title="Data final" hint="fim do período analisado" />
                             <input
                                 type="date"
                                 value={periodoDistribuicaoDefault.data_final}
@@ -1246,10 +1100,7 @@ export default function SimulationPage() {
 
                     {/* Resultado */}
                     {distKData.length === 0 && !loadingDistK && (
-                        <div className="text-sm text-gray-500">
-                            Defina o período e clique em{" "}
-                            <strong>Gerar gráfico de distribuição</strong>.
-                        </div>
+                        <div className="text-sm text-gray-500">Defina o período para carregar a distribuição.</div>
                     )}
 
                     {distKData.length > 0 && (
@@ -1258,9 +1109,9 @@ export default function SimulationPage() {
                                 <ResponsiveContainer width="100%" height="100%">
                                     <RBarChart data={distKData}>
                                         <CartesianGrid strokeDasharray="3 3" />
-                                        <XAxis dataKey="k_clusters" tickMargin={8}>
+                                        <XAxis dataKey="k_clusters" tickMargin={8} tickFormatter={formatKLabel}>
                                             <Label
-                                                value="Clusters (k)"
+                                                value="Cenários"
                                                 offset={-5}
                                                 position="insideBottom"
                                             />
@@ -1316,7 +1167,7 @@ export default function SimulationPage() {
                     {/* Filtros */}
                     <div className="grid md:grid-cols-3 gap-4 mb-4">
                         <div>
-                            <label className="block text-sm text-gray-700">Data inicial</label>
+                            <FieldLabel title="Data inicial" hint="início do período analisado" />
                             <input
                                 type="date"
                                 value={periodoCidadesDefault.data_inicial}
@@ -1326,7 +1177,7 @@ export default function SimulationPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-gray-700">Data final</label>
+                            <FieldLabel title="Data final" hint="fim do período analisado" />
                             <input
                                 type="date"
                                 value={periodoCidadesDefault.data_final}
@@ -1354,10 +1205,7 @@ export default function SimulationPage() {
 
                     {/* Resultado */}
                     {freqCidadesData.length === 0 && !loadingFreqCidades && (
-                        <div className="text-sm text-gray-500">
-                            Defina o período e clique em{" "}
-                            <strong>Gerar gráfico de cidades</strong>.
-                        </div>
+                        <div className="text-sm text-gray-500">Defina o período para carregar as cidades.</div>
                     )}
 
                     {freqCidadesData.length > 0 && (
@@ -1453,7 +1301,7 @@ export default function SimulationPage() {
 
                     <div className="grid md:grid-cols-4 gap-4 mb-4">
                         <div>
-                            <label className="block text-sm text-gray-700">Data inicial</label>
+                            <FieldLabel title="Data inicial" hint="início do período consolidado" />
                             <input
                                 type="date"
                                 value={periodoKFixoDefault.data_inicial}
@@ -1463,7 +1311,7 @@ export default function SimulationPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-gray-700">Data final</label>
+                            <FieldLabel title="Data final" hint="fim do período consolidado" />
                             <input
                                 type="date"
                                 value={periodoKFixoDefault.data_final}
@@ -1474,12 +1322,7 @@ export default function SimulationPage() {
                         </div>
                         {/* 👇 Novo campo cobertura mínima */}
                         <div>
-                            <label
-                                className="block text-sm text-gray-700"
-                                title="Mínimo de cobertura exigida em % dos dias válidos"
-                            >
-                                Cobertura mínima (%)
-                            </label>
+                            <FieldLabel title="Cobertura mínima (%)" hint="percentual mínimo de dias válidos exigido para considerar um k" />
                             <input
                                 type="number"
                                 value={minCobertura}
@@ -1509,9 +1352,7 @@ export default function SimulationPage() {
                     </div>
 
                     {kFixoData.length === 0 && !loadingKFixo && (
-                        <div className="text-sm text-gray-500">
-                            Defina o período e clique em <strong>Gerar custos por k</strong>.
-                        </div>
+                        <div className="text-sm text-gray-500">Defina o período para carregar os custos.</div>
                     )}
 
                     {kFixoData.length > 0 && (
@@ -1520,8 +1361,8 @@ export default function SimulationPage() {
                                 <ResponsiveContainer width="100%" height="100%">
                                     <RBarChart data={kFixoData}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                        <XAxis dataKey="k_clusters" tickMargin={8}>
-                                            <Label value="Clusters (k)" offset={-5} position="insideBottom" />
+                                        <XAxis dataKey="k_clusters" tickMargin={8} tickFormatter={formatKLabel}>
+                                            <Label value="Cenários" offset={-5} position="insideBottom" />
                                         </XAxis>
                                         <YAxis
                                             tickFormatter={(v) =>
@@ -1544,7 +1385,7 @@ export default function SimulationPage() {
                                                     currency: "BRL",
                                                 }).format(v)
                                             }
-                                            labelFormatter={(k) => `k = ${k}`}
+                                            labelFormatter={(k) => `Cenário ${formatKLabel(String(k))}`}
                                         />
                                         <Bar dataKey="custo_alvo" fill="#2563eb" radius={[6, 6, 0, 0]} />
                                     </RBarChart>
@@ -1584,7 +1425,7 @@ export default function SimulationPage() {
                                             )
                                             .map((r: KFixoResponse["cenarios"][0]) => (
                                                 <tr key={r.k_clusters} className="border-b">
-                                                    <td className="py-2 pr-4">{r.k_clusters}</td>
+                                                    <td className="py-2 pr-4">{formatKLabel(r.k_clusters)}</td>
                                                     <td className="py-2 pr-4">
                                                         {r.dias_presentes}/{r.total_dias}
                                                     </td>
@@ -1620,7 +1461,7 @@ export default function SimulationPage() {
                     {/* Filtros */}
                     <div className="grid md:grid-cols-4 gap-4 mb-4">
                         <div>
-                            <label className="block text-sm text-gray-700">Data inicial</label>
+                            <FieldLabel title="Data inicial" hint="início do período da frota" />
                             <input
                                 type="date"
                                 value={periodoFrotaDefault.data_inicial}
@@ -1632,7 +1473,7 @@ export default function SimulationPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-gray-700">Data final</label>
+                            <FieldLabel title="Data final" hint="fim do período da frota" />
                             <input
                                 type="date"
                                 value={periodoFrotaDefault.data_final}
@@ -1644,15 +1485,13 @@ export default function SimulationPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-gray-700">
-                                Valor de k (0 = todos, ex.: 8)
-                            </label>
+                            <FieldLabel title="Valor de k" hint="use 0 para considerar todos os cenários; informe um número para filtrar" />
                             <input
                                 type="number"
                                 value={frotaK ?? ""}
                                 onChange={(e) => setFrotaK(Number(e.target.value))}
                                 className="input"
-                                placeholder="Informe um k (0 = todos)"
+                                placeholder="Ex.: 8 ou 0"
                             />
                         </div>
 
@@ -1675,10 +1514,7 @@ export default function SimulationPage() {
 
                     {/* Sem dados */}
                     {!loadingFrota && !frotaLastmile.length && !frotaTransfer.length && (
-                        <div className="text-sm text-gray-500">
-                            Informe o período e o valor de <strong>k</strong>, depois clique em{" "}
-                            <strong>Gerar frota</strong>.
-                        </div>
+                        <div className="text-sm text-gray-500">Defina período e k para carregar a frota.</div>
                     )}
 
                     {/* Bloco Last-mile */}

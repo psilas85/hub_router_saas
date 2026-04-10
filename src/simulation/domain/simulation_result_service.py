@@ -3,12 +3,12 @@
 from simulation.infrastructure.simulation_database_writer import persistir_resultado_simulacao
 
 class SimulationResultService:
-    
+
     def __init__(self, db, logger):
         self.db = db
         self.logger = logger
 
-    def salvar_resultado(self, dados: dict, modo_forcar: bool = False):
+    def salvar_resultado(self, dados: dict, modo_forcar: bool = False, auto_commit: bool = True):
         self.logger.info("💾 Salvando resultado da simulação...")
 
         if modo_forcar:
@@ -19,7 +19,8 @@ class SimulationResultService:
                     DELETE FROM resultados_simulacao
                     WHERE tenant_id = %s AND envio_data = %s AND k_clusters = %s
                 """, (dados["tenant_id"], dados["envio_data"], dados["k_clusters"]))
-                self.db.commit()
+                if auto_commit:
+                    self.db.commit()
                 cursor.close()
             except Exception as e:
                 self.logger.warning(f"⚠️ Falha ao limpar resultados existentes: {e}")
@@ -36,7 +37,8 @@ class SimulationResultService:
             custo_transferencia=dados["custo_transferencia"],
             custo_last_mile=dados["custo_last_mile"],
             custo_cluster=dados.get("custo_cluster", 0.0),
-            is_ponto_otimo=dados.get("is_ponto_otimo", False)
+            is_ponto_otimo=dados.get("is_ponto_otimo", False),
+            auto_commit=auto_commit,
         )
 
         self.logger.info("✅ Resultado da simulação salvo com sucesso.")

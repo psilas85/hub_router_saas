@@ -40,6 +40,25 @@ q = Queue("simulation", connection=redis_conn)
 logger = logging.getLogger("simulation_service")
 logger.setLevel(logging.INFO)
 
+
+def _serializar_log(payload: dict) -> str:
+    import json
+
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _parse_optional_float(value: str | float | None, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if value == "":
+            return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"{field_name} deve ser numérico.") from exc
+
 # ================================
 # MODELOS Pydantic
 # ================================
@@ -83,33 +102,67 @@ def executar_simulacao(
     data_final: date = Query(..., description="Data final no formato YYYY-MM-DD"),
     modo_forcar: bool = Query(False, description="Sobrescreve simulações existentes"),
     hub_id: int = Query(..., description="ID do hub central"),
-    k_min: int = Query(2, description="Valor mínimo de k_clusters"),
-    k_max: int = Query(50, description="Valor máximo de k_clusters"),
-    k_inicial_transferencia: int = Query(1, description="K inicial para clusterização de transferências"),
-    min_entregas_cluster: int = Query(25, description="Qtd mínima de entregas por cluster"),
-    fundir_clusters_pequenos: bool = Query(False, description="Funde clusters pequenos"),
     desativar_cluster_hub: bool = Query(False, description="Desativa cluster automático próximo ao hub central"),
     raio_hub_km: float = Query(80.0, description="Raio em km para considerar entregas no cluster do hub"),
+    usar_outlier: bool = Query(False, description="Ativa separação de outliers antes da clusterização"),
+    distancia_outlier_km: str | float | None = Query(None, description="Distância fixa em km para corte de outliers"),
+    min_entregas_por_cluster_alvo: int | None = Query(10, description="Mínimo alvo de entregas por cluster para definir faixa operacional de k"),
+    max_entregas_por_cluster_alvo: int | None = Query(100, description="Máximo alvo de entregas por cluster para definir faixa operacional de k"),
+    algoritmo_clusterizacao_principal: str = Query("kmeans", description="Algoritmo principal de clusterização"),
     parada_leve: int = Query(10, description="Tempo de parada leve (min)"),
     parada_pesada: int = Query(20, description="Tempo de parada pesada (min)"),
     tempo_volume: float = Query(0.4, description="Tempo por volume (min)"),
     velocidade: float = Query(60.0, description="Velocidade média (km/h)"),
     limite_peso: float = Query(50.0, description="Limite de peso para considerar parada pesada (kg)"),
     peso_leve_max: float = Query(50.0, description="Peso máximo para veículo leve"),
-    tempo_max_transferencia: int = Query(1200, description="Tempo máximo por rota de transferência (min)"),
-    peso_max_transferencia: float = Query(15000.0, description="Peso máximo por rota de transferência (kg)"),
+    tempo_max_transferencia: int = Query(600, description="Tempo máximo por rota de transferência (min)"),
+    peso_max_transferencia: float = Query(18000.0, description="Peso máximo por rota de transferência (kg)"),
     entregas_por_subcluster: int = Query(25, description="Qtd alvo de entregas por subcluster"),
-    tempo_max_roteirizacao: int = Query(1200, description="Tempo máximo total por rota last-mile (min)"),
-    tempo_max_k0: int = Query(2400, description="Tempo máximo para rotas partindo do hub central (k=0)"),
-    tempo_max_k1: int = Query(2400, description="Tempo máximo para k=1"),
-    permitir_rotas_excedentes: bool = Query(False, description="Permitir rotas que ultrapassem limite"),
-    restricao_veiculo_leve_municipio: bool = Query(False, description="Restringe veículos leves em rotas intermunicipais"),
+    tempo_max_roteirizacao: int = Query(600, description="Tempo máximo total por rota last-mile (min)"),
+    tempo_max_k0: int = Query(1200, description="Tempo máximo para o cenário Hub único"),
+    permitir_rotas_excedentes: bool = Query(True, description="Permitir rotas que ultrapassem limite"),
+    restricao_veiculo_leve_municipio: bool = Query(True, description="Restringe veículos leves em rotas intermunicipais"),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
+    distancia_outlier_km = _parse_optional_float(distancia_outlier_km, "distancia_outlier_km")
+
     if data_final < data_inicial:
         raise HTTPException(status_code=400, detail="Data final não pode ser anterior à data inicial.")
 
     job_id = str(uuid.uuid4())
+    parametros_recebidos = {
+        "data_inicial": data_inicial,
+        "data_final": data_final,
+        "modo_forcar": modo_forcar,
+        "hub_id": hub_id,
+        "desativar_cluster_hub": desativar_cluster_hub,
+        "raio_hub_km": raio_hub_km,
+        "usar_outlier": usar_outlier,
+        "distancia_outlier_km": distancia_outlier_km,
+        "min_entregas_por_cluster_alvo": min_entregas_por_cluster_alvo,
+        "max_entregas_por_cluster_alvo": max_entregas_por_cluster_alvo,
+        "algoritmo_clusterizacao_principal": algoritmo_clusterizacao_principal,
+        "parada_leve": parada_leve,
+        "parada_pesada": parada_pesada,
+        "tempo_volume": tempo_volume,
+        "velocidade": velocidade,
+        "limite_peso": limite_peso,
+        "peso_leve_max": peso_leve_max,
+        "tempo_max_transferencia": tempo_max_transferencia,
+        "peso_max_transferencia": peso_max_transferencia,
+        "entregas_por_subcluster": entregas_por_subcluster,
+        "tempo_max_roteirizacao": tempo_max_roteirizacao,
+        "tempo_max_k0": tempo_max_k0,
+        "permitir_rotas_excedentes": permitir_rotas_excedentes,
+        "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
+    }
+
+    logger.info(
+        "[simulation.executar] job_id=%s tenant_id=%s parametros_frontend=%s",
+        job_id,
+        tenant_id,
+        _serializar_log(parametros_recebidos),
+    )
 
     # 🔹 Define timeout dinâmico
     timeout = 7200 if modo_forcar else 3600  # 2h se modo_forcar, senão 1h
@@ -123,13 +176,13 @@ def executar_simulacao(
         str(data_final),
         hub_id,
         {
-            "k_min": k_min,
-            "k_max": k_max,
-            "k_inicial_transferencia": k_inicial_transferencia,
-            "min_entregas_cluster": min_entregas_cluster,
-            "fundir_clusters_pequenos": fundir_clusters_pequenos,
             "desativar_cluster_hub": desativar_cluster_hub,
             "raio_hub_km": raio_hub_km,
+            "usar_outlier": usar_outlier,
+            "distancia_outlier_km": distancia_outlier_km,
+            "min_entregas_por_cluster_alvo": min_entregas_por_cluster_alvo,
+            "max_entregas_por_cluster_alvo": max_entregas_por_cluster_alvo,
+            "algoritmo_clusterizacao_principal": algoritmo_clusterizacao_principal,
             "parada_leve": parada_leve,
             "parada_pesada": parada_pesada,
             "tempo_volume": tempo_volume,
@@ -141,11 +194,11 @@ def executar_simulacao(
             "entregas_por_subcluster": entregas_por_subcluster,
             "tempo_max_roteirizacao": tempo_max_roteirizacao,
             "tempo_max_k0": tempo_max_k0,
-            "tempo_max_k1": tempo_max_k1,
             "permitir_rotas_excedentes": permitir_rotas_excedentes,
             "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
         },
         modo_forcar,
+        job_id=job_id,
         job_timeout=timeout
     )
 
@@ -166,10 +219,7 @@ def executar_simulacao(
             json.dumps({"data_inicial": str(data_inicial), "data_final": str(data_final)}),
             json.dumps({
                 "hub_id": hub_id,
-                "k_min": k_min,
-                "k_max": k_max,
                 "tempo_max_k0": tempo_max_k0,
-                "tempo_max_k1": tempo_max_k1,
             })
         ))
         conn.commit()
@@ -179,7 +229,7 @@ def executar_simulacao(
 
     return {
         "status": "processing",
-        "job_id": job.get_id(),
+        "job_id": job_id,
         "tenant_id": tenant_id,
         "mensagem": f"🔄 Simulação de {data_inicial} a {data_final} enfileirada com sucesso."
     }
@@ -441,8 +491,8 @@ def frota_k_fixo(
         k_fixo=k
     )
 
-    # 🚫 nunca retorna transferências quando k=1
-    if k == 1:
+    # 🚫 nunca retorna transferências quando k=0 (Hub único)
+    if k == 0:
         transfer = []
         csv_transfer = None
 

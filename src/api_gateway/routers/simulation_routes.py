@@ -11,6 +11,19 @@ router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 SIMULATION_URL = settings.SIMULATION_URL
 
+
+def parse_optional_float(value: str | float | None) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if value == "":
+            return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="distancia_outlier_km deve ser numérico.") from exc
+
 @router.get("/health", summary="Healthcheck Simulation")
 async def healthcheck(request: Request):
     headers = {"authorization": request.headers.get("authorization")}
@@ -35,11 +48,11 @@ async def executar_simulacao(
     hub_id: int = Query(..., description="ID do hub central"),  # ✅ adicionado
 
     # 🔢 Clusterização
-    k_min: int = Query(2, description="Valor mínimo de k_clusters"),
-    k_max: int = Query(50, description="Valor máximo de k_clusters"),
-    k_inicial_transferencia: int = Query(1, description="Valor inicial de k para clusterização de transferências"),
-    min_entregas_cluster: int = Query(25, description="Qtd mínima de entregas por cluster"),
-    fundir_clusters_pequenos: bool = Query(False, description="Funde clusters pequenos com menos entregas"),
+    usar_outlier: bool = Query(False, description="Ativa separação de outliers antes da clusterização"),
+    distancia_outlier_km: str | float | None = Query(None, description="Distância fixa em km para corte de outliers"),
+    min_entregas_por_cluster_alvo: int | None = Query(10, description="Mínimo alvo de entregas por cluster para definir faixa operacional de k"),
+    max_entregas_por_cluster_alvo: int | None = Query(100, description="Máximo alvo de entregas por cluster para definir faixa operacional de k"),
+    algoritmo_clusterizacao_principal: str = Query("kmeans", description="Algoritmo principal de clusterização"),
 
     # 🔗 Cluster hub
     desativar_cluster_hub: bool = Query(False, description="Desativa cluster automático do hub central"),
@@ -55,17 +68,17 @@ async def executar_simulacao(
     limite_peso: float = Query(50.0, description="Limite de peso para parada pesada (kg)"),
 
     # ⚙️ Restrições de veículo
-    restricao_veiculo_leve_municipio: bool = Query(False, description="Impede veículos leves fora do município do hub central"),
+    restricao_veiculo_leve_municipio: bool = Query(True, description="Impede veículos leves fora do município do hub central"),
     peso_leve_max: float = Query(50.0, description="Peso máximo para considerar veículo leve"),
 
     # 🔗 Transferências
-    tempo_max_transferencia: int = Query(1200, description="Tempo máximo de rota de transferência (min)"),
-    peso_max_transferencia: float = Query(15000.0, description="Peso máximo por rota de transferência (kg)"),
+    tempo_max_transferencia: int = Query(600, description="Tempo máximo de rota de transferência (min)"),
+    peso_max_transferencia: float = Query(18000.0, description="Peso máximo por rota de transferência (kg)"),
 
     # 📦 Last-mile
     entregas_por_subcluster: int = Query(25, description="Qtd alvo de entregas por subcluster"),
-    tempo_max_roteirizacao: int = Query(1200, description="Tempo máximo total por rota last-mile (min)"),
-    tempo_max_k1: int = Query(2400, description="Tempo máximo quando k=1 (rota única pelo hub central)"),
+    tempo_max_roteirizacao: int = Query(600, description="Tempo máximo total por rota last-mile (min)"),
+    tempo_max_k0: int = Query(1200, description="Tempo máximo para o cenário Hub único"),
 
     # ⚙️ Rotas excedentes
     permitir_rotas_excedentes: bool = Query(False, description="Permite aceitar rotas que ultrapassem o tempo máximo"),
@@ -77,6 +90,8 @@ async def executar_simulacao(
     Todos os parâmetros do main_simulation.py, exceto modo_forcar (fixo = True).
     """
 
+    distancia_outlier_km = parse_optional_float(distancia_outlier_km)
+
     params = {
         # 📅 Datas
         "data_inicial": data_inicial,
@@ -85,11 +100,11 @@ async def executar_simulacao(
         "hub_id": hub_id,
 
         # 🔢 Clusterização
-        "k_min": k_min,
-        "k_max": k_max,
-        "k_inicial_transferencia": k_inicial_transferencia,
-        "min_entregas_cluster": min_entregas_cluster,
-        "fundir_clusters_pequenos": fundir_clusters_pequenos,
+        "usar_outlier": usar_outlier,
+        "distancia_outlier_km": distancia_outlier_km,
+        "min_entregas_por_cluster_alvo": min_entregas_por_cluster_alvo,
+        "max_entregas_por_cluster_alvo": max_entregas_por_cluster_alvo,
+        "algoritmo_clusterizacao_principal": algoritmo_clusterizacao_principal,
 
         # 🔗 Cluster hub
         "desativar_cluster_hub": desativar_cluster_hub,
@@ -115,7 +130,7 @@ async def executar_simulacao(
         # 📦 Last-mile
         "entregas_por_subcluster": entregas_por_subcluster,
         "tempo_max_roteirizacao": tempo_max_roteirizacao,
-        "tempo_max_k1": tempo_max_k1,
+        "tempo_max_k0": tempo_max_k0,
 
         # ⚙️ Rotas excedentes
         "permitir_rotas_excedentes": permitir_rotas_excedentes,

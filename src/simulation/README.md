@@ -42,7 +42,7 @@ tempo_por_volume: tempo de descarga (0,4 min/unidade).
 
 raio_hub_km: raio para cluster especial do hub central (default=80 km).
 
-fundir_clusters_pequenos: habilita fusão de clusters com poucas entregas.
+min_entregas_cluster: também define o piso automático para reagrupamento de clusters abaixo do mínimo.
 
 📂 Outputs
 

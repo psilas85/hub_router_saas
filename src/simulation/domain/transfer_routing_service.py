@@ -8,7 +8,7 @@ import json
 
 from simulation.utils.format_utils import formatar
 from simulation.utils.route_helpers import gerar_rotas_savings_transfer, expandir_pontos_por_capacidade_veiculo
-from simulation.infrastructure.cache_routes import obter_rota_real
+from simulation.infrastructure.cache_routes import obter_rota_real, obter_rota_real_detalhada
 from simulation.infrastructure.simulation_database_reader import (
     carregar_hub_por_id,
     definir_tipo_veiculo_transferencia,
@@ -31,9 +31,70 @@ class TransferRoutingService:
 
     @staticmethod
     def _retorno_vazio():
-        return [], []
+        return [], [], []
 
-    def rotear_transferencias(self, envio_data, simulation_id, k_clusters, is_ponto_otimo):
+    def _normalizar_df_clusterizado(self, df_clusterizado: pd.DataFrame, envio_data, k_clusters):
+        df = df_clusterizado.copy()
+        if df.empty:
+            return df
+
+        colunas_obrigatorias = [
+            "cluster", "centro_lat", "centro_lon", "cte_numero",
+            "cte_peso", "cte_volumes", "cte_valor_nf", "cte_valor_frete",
+        ]
+        for coluna in colunas_obrigatorias:
+            if coluna not in df.columns:
+                raise ValueError(f"❌ Coluna obrigatória ausente para transferências: {coluna}")
+
+        df["cte_peso"] = pd.to_numeric(df["cte_peso"], errors="coerce").fillna(0.0).astype(float)
+        df["cte_volumes"] = pd.to_numeric(df["cte_volumes"], errors="coerce").fillna(0).astype(int)
+        df["cte_valor_nf"] = pd.to_numeric(df["cte_valor_nf"], errors="coerce").fillna(0.0).astype(float)
+        df["cte_valor_frete"] = pd.to_numeric(df["cte_valor_frete"], errors="coerce").fillna(0.0).astype(float)
+        df["cte_numero"] = df["cte_numero"].astype(str)
+
+        if "cte_tempo_atendimento_min" in df.columns:
+            df["cte_tempo_atendimento_min"] = pd.to_numeric(
+                df["cte_tempo_atendimento_min"],
+                errors="coerce",
+            )
+
+        df["tenant_id"] = self.tenant_id
+        df["envio_data"] = envio_data
+        df["k_clusters"] = k_clusters
+        df = df.drop_duplicates(subset=["cte_numero", "tenant_id", "envio_data", "k_clusters"])
+        df["cluster"] = df["cluster"].astype(str)
+        return df
+
+    def _obter_velocidade_media_kmh(self):
+        return float(
+            self.parametros.get(
+                "velocidade_media_kmh",
+                self.parametros.get("velocidade", 60.0),
+            )
+            or 60.0
+        )
+
+    def _calcular_tempo_servico_ponto(self, ponto):
+        tempo_atendimento = ponto.get("tempo_atendimento_min")
+        if tempo_atendimento is not None and pd.notna(tempo_atendimento):
+            return max(float(tempo_atendimento), 0.0)
+
+        peso = float(ponto.get("peso") or 0.0)
+        volumes = float(ponto.get("volumes") or 0.0)
+        limite_peso_parada = float(
+            self.parametros.get("limite_peso_parada", 50.0) or 50.0
+        )
+        tempo_parada = (
+            float(self.parametros.get("tempo_parada_pesada", 20.0) or 20.0)
+            if peso > limite_peso_parada
+            else float(self.parametros.get("tempo_parada_leve", 10.0) or 10.0)
+        )
+        tempo_por_volume = float(
+            self.parametros.get("tempo_descarga_por_volume", 0.4) or 0.4
+        )
+        return tempo_parada + (volumes * tempo_por_volume)
+
+    def rotear_transferencias(self, envio_data, simulation_id, k_clusters, is_ponto_otimo, persistir=True):
         self.logger.info("📦 Iniciando roteirização de transferências com Savings Algorithm...")
 
         query = """
@@ -56,24 +117,35 @@ class TransferRoutingService:
             self.logger.error(f"❌ Erro ao carregar dados de entregas_clusterizadas: {e}")
             return self._retorno_vazio()
 
-        if df.empty:
+        return self.rotear_transferencias_para_dataframe(
+            df_clusterizado=df,
+            envio_data=envio_data,
+            simulation_id=simulation_id,
+            k_clusters=k_clusters,
+            is_ponto_otimo=is_ponto_otimo,
+            persistir=persistir,
+        )
+
+    def rotear_transferencias_para_dataframe(
+        self,
+        df_clusterizado: pd.DataFrame,
+        envio_data,
+        simulation_id,
+        k_clusters,
+        is_ponto_otimo,
+        persistir=False,
+    ):
+        self.logger.info("📦 Iniciando roteirização de transferências com Savings Algorithm...")
+
+        if df_clusterizado is None or df_clusterizado.empty:
             self.logger.warning("⚠️ Nenhum dado encontrado para clusterização de transferências.")
             return self._retorno_vazio()
 
-        df["cte_peso"] = df["cte_peso"].astype(float)
-        df["cte_volumes"] = df["cte_volumes"].astype(int)
-        df["cte_valor_nf"] = df["cte_valor_nf"].astype(float)
-        df["cte_valor_frete"] = df["cte_valor_frete"].astype(float)
-        df["cte_numero"] = df["cte_numero"].astype(str)
-        df["tenant_id"] = self.tenant_id
-        df["envio_data"] = envio_data
-        df["k_clusters"] = k_clusters
-        df = df.drop_duplicates(subset=["cte_numero", "tenant_id", "envio_data", "k_clusters"])
-        df["cluster"] = df["cluster"].astype(str)
+        df = self._normalizar_df_clusterizado(df_clusterizado, envio_data, k_clusters)
 
 
-        # ❌ Ignorar entregas do cluster do hub central (9999)
-        df = df[df["cluster"].astype(str) != "9999"]
+        # ❌ Ignorar entregas do cluster do hub central e seus subgrupos (9999, 9999_1, ...)
+        df = df[~df["cluster"].astype(str).str.startswith("9999")]
 
 
         self.logger.info(f"🔍 Total de entregas únicas (CTEs): {df['cte_numero'].nunique()}")
@@ -84,13 +156,17 @@ class TransferRoutingService:
             raise ValueError(f"❌ Hub central com hub_id={self.hub_id} não encontrado para este tenant.")
         origem = (hub["latitude"], hub["longitude"])
 
-        agrupado = df.groupby(["cluster", "centro_lat", "centro_lon"]).agg({
+        agregacoes = {
             "cte_peso": "sum",
             "cte_volumes": "sum",
             "cte_valor_nf": "sum",
             "cte_valor_frete": "sum",
             "cte_numero": lambda x: list(x)
-        }).reset_index()
+        }
+        if "cte_tempo_atendimento_min" in df.columns:
+            agregacoes["cte_tempo_atendimento_min"] = lambda serie: serie.sum(min_count=1)
+
+        agrupado = df.groupby(["cluster", "centro_lat", "centro_lon"]).agg(agregacoes).reset_index()
 
         pontos = [
             {
@@ -101,10 +177,12 @@ class TransferRoutingService:
                 "peso": row["cte_peso"],
                 "volumes": row["cte_volumes"],
                 "valor_nf": row["cte_valor_nf"],
-                "valor_frete": row["cte_valor_frete"]
+                "valor_frete": row["cte_valor_frete"],
+                "tempo_atendimento_min": row.get("cte_tempo_atendimento_min"),
             }
             for _, row in agrupado.iterrows()
         ]
+        velocidade_media_kmh = self._obter_velocidade_media_kmh()
         pontos = expandir_pontos_por_capacidade_veiculo(
             pontos,
             self.simulation_db,
@@ -116,7 +194,8 @@ class TransferRoutingService:
             obter_rota_real,
             tenant_id=self.tenant_id,
             db_conn=self.simulation_db,
-            logger=self.logger
+            logger=self.logger,
+            velocidade_media_kmh=velocidade_media_kmh,
         )
 
         rotas = gerar_rotas_savings_transfer(
@@ -182,43 +261,46 @@ class TransferRoutingService:
             tempo_real = 0.0
             sequencia_coord = []
             anterior = origem
+            fontes_metricas = set()
 
             for ponto in rota:
                 atual = (ponto["lat"], ponto["lon"])
-                dist, tempo, rota_completa = obter_rota(anterior, atual)
+                dist, tempo, rota_completa, fonte_rota = obter_rota_real_detalhada(
+                    anterior,
+                    atual,
+                    self.tenant_id,
+                    self.simulation_db,
+                    self.logger,
+                    velocidade_media_kmh,
+                )
                 dist_real += dist or 0.0
                 tempo_real += tempo or 0.0
+                fontes_metricas.add(fonte_rota)
                 anterior = atual
                 if rota_completa:
                     sequencia_coord.extend([(p["lat"], p["lon"]) if isinstance(p, dict) else (p[0], p[1]) for p in rota_completa])
                 else:
                     sequencia_coord.append(atual)
 
-            dist_back, tempo_back, rota_back = obter_rota(anterior, origem)
+            dist_back, tempo_back, rota_back, fonte_rota_back = obter_rota_real_detalhada(
+                anterior,
+                origem,
+                self.tenant_id,
+                self.simulation_db,
+                self.logger,
+                velocidade_media_kmh,
+            )
             dist_real += dist_back or 0.0
             tempo_real += tempo_back or 0.0
-
-            tempo_parada_leve = self.parametros.get("tempo_parada_leve", 10.0)
-            tempo_parada_pesada = self.parametros.get("tempo_parada_pesada", 20.0)
-            tempo_por_volume = self.parametros.get("tempo_descarga_por_volume", 0.4)
-            peso_leve_max = self.parametros.get("peso_leve_max", 200.0)
+            fontes_metricas.add(fonte_rota_back)
 
             tempo_paradas = 0.0
-            tempo_descarga = 0.0
 
             for ponto in rota:
                 if ponto.get("cte_numeros"):
-                    peso_cluster = ponto.get("peso", 0)
-                    volumes_cluster = ponto.get("volumes", 0)
+                    tempo_paradas += self._calcular_tempo_servico_ponto(ponto)
 
-                    if peso_cluster > peso_leve_max:
-                        tempo_paradas += tempo_parada_pesada
-                    else:
-                        tempo_paradas += tempo_parada_leve
-
-                    tempo_descarga += volumes_cluster * tempo_por_volume
-
-            tempo_total_completo = tempo_real + tempo_paradas + tempo_descarga
+            tempo_total_completo = tempo_real + tempo_paradas
             tempo_parcial_completo = tempo_total_completo - tempo_back
 
             if rota_back:
@@ -259,7 +341,20 @@ class TransferRoutingService:
                 aproveitamento_percentual=None,
                 qde_entregas=len(cte_ids_rota),
                 qde_clusters_rota=len(clusters_rota),
-                coordenadas_seq=";".join([f"{lat:.6f},{lon:.6f}" for lat, lon in sequencia_coord])
+                coordenadas_seq=";".join([f"{lat:.6f},{lon:.6f}" for lat, lon in sequencia_coord]),
+                fonte_metricas=(
+                    "osrm"
+                    if fontes_metricas.issubset({"osrm", "cache_osrm", "fallback_minimo"})
+                    else "fallback"
+                    if fontes_metricas.issubset({
+                        "osrm",
+                        "cache_osrm",
+                        "fallback_minimo",
+                        "google",
+                        "manual_haversine",
+                    })
+                    else "nao_osrm"
+                ),
             )
 
             rotas_resumo.append(resumo)
@@ -292,9 +387,11 @@ class TransferRoutingService:
                 "tempo_total_min": tempo_total_completo,
                 "tempo_ida_min": tempo_parcial_completo,
                 "rota_completa_json": rota_completa_json,
-                "k_clusters": k_clusters
+                "k_clusters": k_clusters,
+                "fonte_metricas": resumo.fonte_metricas,
             })
 
 
-        salvar_rotas_transferencias(rotas_transferencia, self.simulation_db)
-        return rotas_resumo, detalhes_transferencias
+        if persistir:
+            salvar_rotas_transferencias(rotas_transferencia, self.simulation_db)
+        return rotas_resumo, detalhes_transferencias, rotas_transferencia

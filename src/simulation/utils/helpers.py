@@ -8,6 +8,7 @@ from geopy.distance import geodesic
 
 from simulation.config import UF_BOUNDS
 from simulation.infrastructure.cache_coordinates import salvar_localizacao_cache
+from simulation.utils.google_api import buscar_endereco_google
 
 from datetime import date
 import pandas as pd
@@ -118,8 +119,45 @@ def ajustar_para_centro_urbano(lat, lon, db_conn, tenant_id, logger=None):
         cursor.close()
         return row[0], row[1]
 
+    query_aproximada = """
+        SELECT endereco_completo, cidade, latitude, longitude
+        FROM cache_localizacoes
+        WHERE tenant_id = %s
+          AND endereco_completo IS NOT NULL
+          AND cidade IS NOT NULL
+          AND ABS(latitude - %s) <= %s
+          AND ABS(longitude - %s) <= %s
+        ORDER BY POWER(latitude - %s, 2) + POWER(longitude - %s, 2)
+        LIMIT 1
+    """
+    raio_aproximado_graus = 0.03
+    cursor.execute(
+        query_aproximada,
+        (
+            tenant_id,
+            lat,
+            raio_aproximado_graus,
+            lon,
+            raio_aproximado_graus,
+            lat,
+            lon,
+        ),
+    )
+    row_aproximada = cursor.fetchone()
+
+    if row_aproximada:
+        if logger:
+            logger.info(
+                "📍 Reverse cache HIT aproximado: "
+                f"{row_aproximada[0]} "
+                f"(~{abs(float(row_aproximada[2]) - float(lat)) + abs(float(row_aproximada[3]) - float(lon)):.5f} graus)"
+            )
+        cursor.close()
+        return row_aproximada[0], row_aproximada[1]
+
     cursor.close()
-    if logger: logger.info(f"🔍 Reverse cache MISS: tentando Nominatim...")
+    if logger:
+        logger.info("🔍 Reverse cache MISS: tentando Nominatim...")
 
     # 🔁 Tentar Nominatim reverse geocoding
     try:
@@ -131,19 +169,49 @@ def ajustar_para_centro_urbano(lat, lon, db_conn, tenant_id, logger=None):
                 location.raw["address"].get("city")
                 or location.raw["address"].get("town")
                 or location.raw["address"].get("village")
-                or location.raw["address"].get("municipality")     # 👈 novo
-                or location.raw["address"].get("county")           # 👈 novo
-        or location.raw["address"].get("state_district")   # 👈 novo (útil no interior)
+                or location.raw["address"].get("municipality")
+                or location.raw["address"].get("county")
+                or location.raw["address"].get("state_district")
                 or "Desconhecido"
             )
 
-            salvar_localizacao_cache(db_conn, address, lat, lon, "reverse_nominatim", tenant_id, cidade=cidade)
+            salvar_localizacao_cache(
+                db_conn,
+                address,
+                lat,
+                lon,
+                "reverse_nominatim",
+                tenant_id,
+                cidade=cidade,
+            )
             return address, cidade
     except Exception as e:
-        if logger: logger.warning(f"Nominatim falhou: {e}")
+        if logger:
+            logger.warning(f"Nominatim falhou: {e}")
+
+    if logger:
+        logger.info("⚠️ Reverse Nominatim falhou. Tentando Google Maps...")
+
+    endereco_google, cidade_google = buscar_endereco_google(lat, lon)
+    if endereco_google:
+        salvar_localizacao_cache(
+            db_conn,
+            endereco_google,
+            lat,
+            lon,
+            "reverse_google",
+            tenant_id,
+            cidade=cidade_google,
+        )
+        if logger:
+            logger.info(f"📍 Reverse Google HIT: {endereco_google}")
+        return endereco_google, cidade_google
 
     # Falha total
-    if logger: logger.warning(f"⚠️ Reverse geocoding falhou para ({lat:.5f}, {lon:.5f})")
+    if logger:
+        logger.warning(
+            f"⚠️ Reverse geocoding falhou para ({lat:.5f}, {lon:.5f})"
+        )
     return f"Centro desconhecido ({lat:.5f}, {lon:.5f})", "Desconhecido"
 
 

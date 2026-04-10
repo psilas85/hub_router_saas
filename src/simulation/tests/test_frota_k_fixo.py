@@ -22,5 +22,5 @@ def test_frota_k_fixo_k1_sem_transfer(token_header):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["transfer"] == [], "transfer deveria estar vazio quando k=1"
+    assert data["transfer"] == [], "transfer deveria estar vazio quando k=0 (Hub unico)"
     assert "lastmile" in data
