@@ -21,7 +21,7 @@ def gerar_grafico_k_fixo(
     tenant_id: str,
     data_inicial: str,
     data_final: str,
-    output_dir: str = "exports/simulation/graphs",
+    output_dir: str = None,
     min_cobertura_parcial: float = 0.70
 ):
     """
@@ -38,13 +38,15 @@ def gerar_grafico_k_fixo(
     elif min_cobertura_parcial > 1.0:
         min_cobertura_parcial = 1.0
 
-    os.makedirs(os.path.join(output_dir, tenant_id), exist_ok=True)
+    if output_dir is None:
+        raise ValueError("output_dir deve ser informado no novo padrão!")
+    os.makedirs(output_dir, exist_ok=True)
 
     # 🔄 Limpeza deve ocorrer logo no início
     limpar_artefatos_k(output_dir, tenant_id, data_inicial, data_final)
 
-    png_path = os.path.join(output_dir, tenant_id, f"k_fixo_{data_inicial}_{data_final}.png")
-    csv_path = os.path.join(output_dir, tenant_id, f"k_fixo_{data_inicial}_{data_final}.csv")
+    png_path = os.path.join(output_dir, f"k_fixo_{data_inicial}_{data_final}.png")
+    csv_path = os.path.join(output_dir, f"k_fixo_{data_inicial}_{data_final}.csv")
 
     conn = conectar_simulation_db()
     try:
@@ -214,7 +216,7 @@ if __name__ == "__main__":
     parser.add_argument("--tenant_id", required=True, type=str)
     parser.add_argument("--data_inicial", required=True, type=str)
     parser.add_argument("--data_final", required=True, type=str)
-    parser.add_argument("--output_dir", default="exports/simulation/graphs")
+    parser.add_argument("--output_dir", required=True)
     parser.add_argument("--min_cobertura_parcial", default=0.70, type=float)
 
     args = parser.parse_args()

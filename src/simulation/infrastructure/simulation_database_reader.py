@@ -365,14 +365,34 @@ def carregar_rotas_transferencias(db_conn, tenant_id, envio_data, k_clusters):
     """
     return pd.read_sql(query, db_conn, params=(tenant_id, envio_data, k_clusters))
 
-def carregar_rotas_last_mile(db_conn, tenant_id, envio_data, k_clusters):
+def carregar_rotas_last_mile(db_conn, tenant_id, envio_data, k_clusters, simulation_id=None):
     query = """
-        SELECT rota_id, cluster, ordem_entrega, cte_numero
+        SELECT
+            rota_id,
+            cluster,
+            ordem_entrega,
+            cte_numero,
+            latitude,
+            longitude,
+            coordenadas_seq,
+            peso_total,
+            distancia_total_km,
+            tempo_total_min
         FROM rotas_last_mile
-        WHERE tenant_id = %s AND envio_data = %s AND k_clusters = %s
-        ORDER BY rota_id, ordem_entrega
+        WHERE tenant_id = %s
+          AND envio_data = %s
+          AND k_clusters = %s
     """
-    df = pd.read_sql(query, db_conn, params=(tenant_id, envio_data, k_clusters))
+
+    params = [tenant_id, envio_data, k_clusters]
+
+    if simulation_id:
+        query += " AND simulation_id = %s"
+        params.append(simulation_id)
+
+    query += " ORDER BY rota_id, ordem_entrega"
+
+    df = pd.read_sql(query, db_conn, params=tuple(params))
     return df
 
 def carregar_detalhes_last_mile(simulation_db, clusterization_db, tenant_id, envio_data, k_clusters):

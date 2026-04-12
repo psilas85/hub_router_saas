@@ -21,7 +21,7 @@ def salvar_tabela_lastmile_png(df: pd.DataFrame, tenant_id: str, envio_data: str
     }
     df = pd.concat([df, pd.DataFrame([totais])], ignore_index=True)
 
-    pasta_destino = os.path.join(output_dir, tenant_id, envio_data)
+    pasta_destino = os.path.join("exports/simulation/entregas", tenant_id, envio_data)
     os.makedirs(pasta_destino, exist_ok=True)
     caminho_arquivo = os.path.join(pasta_destino, f"tabela_lastmile_k{k_clusters}.png")
 

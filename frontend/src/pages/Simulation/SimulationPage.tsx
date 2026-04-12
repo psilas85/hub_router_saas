@@ -70,7 +70,15 @@ const resolveUrl = (path: string) => {
     return `${import.meta.env.VITE_API_URL}${path.startsWith("/") ? path : `/${path}`}`;
 };
 
-type ParamState = Omit<RunSimulationParams, "data_inicial" | "data_final" | "hub_id">;
+type ParamState = Omit<
+    RunSimulationParams,
+    "data_inicial" | "data_final" | "hub_id"
+> & {
+    algoritmo_roteirizacao?: "padrao" | "time_windows";
+    tempo_especial_min?: number;
+    tempo_especial_max?: number;
+    max_especiais_por_rota?: number;
+};
 
 // 🔧 Accordion wrapper
 function Accordion({ title, subtitle, defaultOpen = false, children }: { title: string; subtitle?: string; defaultOpen?: boolean; children: React.ReactNode }) {
@@ -269,6 +277,10 @@ export default function SimulationPage() {
         tempo_max_k0: 1200,
         permitir_rotas_excedentes: true,
         modo_forcar: false,
+        algoritmo_roteirizacao: "padrao",
+        tempo_especial_min: 180,
+        tempo_especial_max: 300,
+        max_especiais_por_rota: 1,
     });
 
     // =========================
@@ -331,6 +343,13 @@ export default function SimulationPage() {
                 hub_id: hubId,
                 ...params,
             };
+
+            // 🔥 REMOVE PARAMS DE TIME WINDOWS SE NÃO ESTIVER ATIVO
+            if (params.algoritmo_roteirizacao !== "time_windows") {
+                delete simParams.tempo_especial_min;
+                delete simParams.tempo_especial_max;
+                delete simParams.max_especiais_por_rota;
+            }
 
             if (dataFinal && dataFinal.trim() !== "") {
                 simParams.data_final = dataFinal;
@@ -770,25 +789,91 @@ export default function SimulationPage() {
 
                             <Accordion title="Estratégia" subtitle="cenários e clusterização" defaultOpen>
                                 <div>
+                                    <FieldLabel title="Algoritmo de clusterização principal" hint="define o algoritmo de agrupamento dos clusters principais" />
+                                    <select
+                                        value={params.algoritmo_clusterizacao_principal}
+                                        onChange={e => updateParam("algoritmo_clusterizacao_principal", e.target.value as "kmeans" | "balanced_kmeans")}
+                                        className="input"
+                                    >
+                                        <option value="kmeans">K-Means</option>
+                                        <option value="balanced_kmeans">Balanced K-Means</option>
+                                    </select>
+                                </div>
+
+                                <div>
                                     <FieldLabel title="Mín. entregas por cluster alvo" hint="define o maior k aceitável para os cenários" />
                                     <input type="number" value={params.min_entregas_por_cluster_alvo ?? ""} onChange={(e) => updateNumericParam("min_entregas_por_cluster_alvo", e.target.value)} className="input" />
                                 </div>
+
                                 <div>
                                     <FieldLabel title="Máx. entregas por cluster alvo" hint="define o menor k aceitável para os cenários" />
                                     <input type="number" value={params.max_entregas_por_cluster_alvo ?? ""} onChange={(e) => updateNumericParam("max_entregas_por_cluster_alvo", e.target.value)} className="input" />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Algoritmo principal" hint="usado nos cenários k numéricos" />
+                                    <FieldLabel
+                                        title="Algoritmo de roteirização"
+                                        hint="define como as rotas serão calculadas (OR-Tools, padrão, etc)"
+                                    />
                                     <select
-                                        value={params.algoritmo_clusterizacao_principal ?? "kmeans"}
-                                        onChange={(e) => updateParam("algoritmo_clusterizacao_principal", e.target.value as ParamState["algoritmo_clusterizacao_principal"])}
+                                        value={params.algoritmo_roteirizacao ?? "padrao"}
+                                        onChange={(e) => {
+                                            const value = e.target.value as "padrao" | "time_windows";
+
+                                            updateParam("algoritmo_roteirizacao", value);
+
+                                            if (value === "time_windows") {
+                                                toast.success("Time Windows ativado (roteirização com OR-Tools)");
+                                            } else {
+                                                updateParam("tempo_especial_min", 180);
+                                                updateParam("tempo_especial_max", 300);
+                                                updateParam("max_especiais_por_rota", 1);
+                                            }
+                                        }}
                                         className="input"
                                     >
-                                        <option value="kmeans">KMeans</option>
-                                        <option value="balanced_kmeans">Balanced KMeans</option>
+                                        <option value="padrao">Padrão</option>
+                                        <option value="time_windows">Time Windows</option>
                                     </select>
                                 </div>
                             </Accordion>
+
+                            {/* 🔥 FORA do Accordion */}
+                            {params.algoritmo_roteirizacao === "time_windows" && (
+                                <Accordion title="Time Windows" subtitle="restrições especiais para entregas">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        <div>
+                                            <FieldLabel title="Min. especial (min)" />
+                                            <input
+                                                type="number"
+                                                value={params.tempo_especial_min ?? ""}
+                                                onChange={(e) => updateNumericParam("tempo_especial_min", e.target.value)}
+                                                className="input"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <FieldLabel title="Max. especial (min)" />
+                                            <input
+                                                type="number"
+                                                value={params.tempo_especial_max ?? ""}
+                                                onChange={(e) => updateNumericParam("tempo_especial_max", e.target.value)}
+                                                className="input"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <FieldLabel title="Máx. especiais/rota" />
+                                            <input
+                                                type="number"
+                                                value={params.max_especiais_por_rota ?? ""}
+                                                onChange={(e) => updateNumericParam("max_especiais_por_rota", e.target.value)}
+                                                className="input"
+                                            />
+                                        </div>
+                                    </div>
+                                </Accordion>
+                            )}
 
                             <Accordion title="Hub e outliers" subtitle="regras espaciais">
                                 <div>
@@ -952,50 +1037,103 @@ export default function SimulationPage() {
                                         Artefatos {artefatos.data}
                                     </div>
 
-                                    {artefatos.relatorio_pdf ? (
-                                        <a href={resolveUrl(artefatos.relatorio_pdf)} target="_blank" rel="noopener noreferrer" className="btn mt-4 gap-2 rounded-xl">
-                                            <FileText className="h-4 w-4" />
-                                            Baixar relatório PDF
-                                        </a>
-                                    ) : null}
-
-                                    {artefatos.graficos && artefatos.graficos.length > 0 ? (
-                                        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                                            <img
-                                                src={resolveUrl(artefatos.graficos.find((g) => g.includes(`grafico_simulacao_${artefatos.data}`)) || artefatos.graficos[0])}
-                                                alt={`Gráfico comparativo de custos ${artefatos.data}`}
-                                                className="w-full rounded-xl border border-slate-200 bg-white"
-                                            />
-                                        </div>
-                                    ) : null}
-
-                                    <div className="mt-5 space-y-4">
-                                        {Object.entries(artefatos.cenarios).map(([k, itens]: any) => {
-                                            const mapaOtimo = itens.mapas?.find((m: string) => m.includes("clusterizacao") && m.endsWith(".html"));
-
-                                            return (
-                                                <div key={k} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <div className="text-base font-semibold text-slate-900">{formatScenarioLabel(k)}</div>
-                                                        {itens.otimo ? <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">ótimo</span> : null}
-                                                    </div>
-
-                                                    <div className="mt-3 grid gap-2 text-sm text-slate-600">
-                                                        {itens.mapas?.length ? <a href={resolveUrl(itens.mapas[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir mapas do cenário</a> : null}
-                                                        {itens.tabelas_lastmile?.length ? <a href={resolveUrl(itens.tabelas_lastmile[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir tabela last-mile</a> : null}
-                                                        {itens.tabelas_transferencias?.length ? <a href={resolveUrl(itens.tabelas_transferencias[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir tabela de transferências</a> : null}
-                                                        {itens.tabelas_resumo?.length ? <a href={resolveUrl(itens.tabelas_resumo[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Baixar CSV resumo</a> : null}
-                                                        {itens.tabelas_detalhes?.length ? <a href={resolveUrl(itens.tabelas_detalhes[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Baixar CSV detalhes</a> : null}
-                                                    </div>
-
-                                                    {itens.otimo && mapaOtimo ? (
-                                                        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                                                            <iframe src={resolveUrl(mapaOtimo)} title={`Cenário ótimo ${k}`} className="h-[420px] w-full" />
-                                                        </div>
-                                                    ) : null}
+                                    {/* Prioriza cenário vencedor (ótimo) */}
+                                    {(() => {
+                                        const entries = Object.entries(artefatos.cenarios || {});
+                                        const otimoEntry = entries.find(([_, v]: any) => v.otimo);
+                                        if (!otimoEntry) return null;
+                                        const [k, itens]: any = otimoEntry;
+                                        // Exibe todos os mapas HTML do cenário ótimo, identificando o tipo
+                                        const mapasHtml = (itens.mapas || []).filter((m: string) => m.endsWith('.html'));
+                                        const mapaLabels = (m: string) => {
+                                            if (m.includes('clusterizacao')) return 'Mapa de Clusterização';
+                                            if (m.includes('transfer')) return 'Mapa de Transferências';
+                                            if (m.includes('lastmile')) return 'Mapa de Roteirização';
+                                            return 'Mapa';
+                                        };
+                                        return (
+                                            <div className="rounded-2xl border-2 border-emerald-400 bg-emerald-50/40 p-4 mt-5 mb-8">
+                                                <div className="flex items-center gap-3 mb-2">
+                                                    <div className="text-base font-bold text-emerald-900">Cenário vencedor: {formatScenarioLabel(k)}</div>
+                                                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">ótimo</span>
                                                 </div>
-                                            );
-                                        })}
+                                                <div className="flex flex-wrap gap-3 mb-3">
+                                                    {artefatos.relatorio_pdf && (
+                                                        <a href={resolveUrl(artefatos.relatorio_pdf)} target="_blank" rel="noopener noreferrer" className="btn gap-2 rounded-xl">
+                                                            <FileText className="h-4 w-4" /> Baixar relatório PDF
+                                                        </a>
+                                                    )}
+                                                    {artefatos.graficos && artefatos.graficos.length > 0 && (
+                                                        <a href={resolveUrl(artefatos.graficos.find((g) => g.includes(`grafico_simulacao_${artefatos.data}`)) || artefatos.graficos[0])} target="_blank" rel="noopener noreferrer" className="btn gap-2 rounded-xl">
+                                                            <BarChart3 className="h-4 w-4" /> Baixar gráfico de custo
+                                                        </a>
+                                                    )}
+                                                    {/* Botão para baixar Excel de entregas e rotas (agora como arquivo estático) */}
+                                                    {artefatos.excel_entregas_rotas && (
+                                                        <a
+                                                            href={resolveUrl(artefatos.excel_entregas_rotas)}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="btn gap-2 rounded-xl"
+                                                        >
+                                                            <FileText className="h-4 w-4" /> Baixar Excel entregas+rotas
+                                                        </a>
+                                                    )}
+                                                    {mapasHtml.map((m: string) => (
+                                                        <a key={m} href={resolveUrl(m)} target="_blank" rel="noopener noreferrer" className="btn gap-2 rounded-xl">
+                                                            <Map className="h-4 w-4" /> {mapaLabels(m)}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                                <div className="grid gap-2 text-sm text-slate-700">
+                                                    {itens.tabelas_lastmile?.length ? <a href={resolveUrl(itens.tabelas_lastmile[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir tabela last-mile</a> : null}
+                                                    {itens.tabelas_transferencias?.length ? <a href={resolveUrl(itens.tabelas_transferencias[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir tabela de transferências</a> : null}
+                                                    {itens.tabelas_resumo?.length ? <a href={resolveUrl(itens.tabelas_resumo[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Baixar CSV resumo</a> : null}
+                                                    {itens.tabelas_detalhes?.length ? <a href={resolveUrl(itens.tabelas_detalhes[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Baixar CSV detalhes</a> : null}
+                                                </div>
+                                                {mapasHtml.length > 0 && (
+                                                    <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                                                        <iframe src={resolveUrl(mapasHtml[0])} title={`Cenário ótimo ${k}`} className="h-[420px] w-full" />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {/* Demais cenários */}
+                                    <div className="mt-2 space-y-4">
+                                        {Object.entries(artefatos.cenarios)
+                                            .filter(([_, v]: any) => !v.otimo)
+                                            .map(([k, itens]: any) => {
+                                                // Exibe todos os mapas HTML do cenário, identificando o tipo
+                                                const mapasHtml = (itens.mapas || []).filter((m: string) => m.endsWith('.html'));
+                                                const mapaLabels = (m: string) => {
+                                                    if (m.includes('clusterizacao')) return 'Mapa de Clusterização';
+                                                    if (m.includes('transfer')) return 'Mapa de Transferências';
+                                                    if (m.includes('lastmile')) return 'Mapa de Roteirização';
+                                                    return 'Mapa';
+                                                };
+                                                return (
+                                                    <div key={k} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                                                        <div className="flex items-center gap-3 mb-2">
+                                                            <div className="text-base font-semibold text-slate-900">{formatScenarioLabel(k)}</div>
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-3 mb-3">
+                                                            {mapasHtml.map((m: string) => (
+                                                                <a key={m} href={resolveUrl(m)} target="_blank" rel="noopener noreferrer" className="btn gap-2 rounded-xl">
+                                                                    <Map className="h-4 w-4" /> {mapaLabels(m)}
+                                                                </a>
+                                                            ))}
+                                                        </div>
+                                                        <div className="grid gap-2 text-sm text-slate-700">
+                                                            {itens.tabelas_lastmile?.length ? <a href={resolveUrl(itens.tabelas_lastmile[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir tabela last-mile</a> : null}
+                                                            {itens.tabelas_transferencias?.length ? <a href={resolveUrl(itens.tabelas_transferencias[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Abrir tabela de transferências</a> : null}
+                                                            {itens.tabelas_resumo?.length ? <a href={resolveUrl(itens.tabelas_resumo[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Baixar CSV resumo</a> : null}
+                                                            {itens.tabelas_detalhes?.length ? <a href={resolveUrl(itens.tabelas_detalhes[0])} target="_blank" rel="noopener noreferrer" className="text-emerald-700 hover:underline">Baixar CSV detalhes</a> : null}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
                                     </div>
                                 </div>
                             ) : null}
@@ -1049,515 +1187,524 @@ export default function SimulationPage() {
                         </div>
                     </div>
                 </>
-            )}
+            )
+            }
 
             {/* ===================== ABA: Distribuição de k ===================== */}
-            {activeTab === "cenarioVencedor" && (
-                <div className="bg-white rounded-2xl shadow p-4">
-                    <h2 className="font-semibold mb-4 flex items-center gap-2">
-                        <BarChart2 className="w-5 h-5 text-emerald-600" />
-                        Distribuição de k (ponto ótimo) em um período
-                    </h2>
+            {
+                activeTab === "cenarioVencedor" && (
+                    <div className="bg-white rounded-2xl shadow p-4">
+                        <h2 className="font-semibold mb-4 flex items-center gap-2">
+                            <BarChart2 className="w-5 h-5 text-emerald-600" />
+                            Distribuição de k (ponto ótimo) em um período
+                        </h2>
 
-                    {/* Filtros */}
-                    <div className="grid md:grid-cols-3 gap-4 mb-4">
-                        <div>
-                            <FieldLabel title="Data inicial" hint="início do período analisado" />
-                            <input
-                                type="date"
-                                value={periodoDistribuicaoDefault.data_inicial}
-                                max={todayISO()}
-                                onChange={(e) => setDataInicial(e.target.value)}
-                                className="input"
-                            />
-                        </div>
-                        <div>
-                            <FieldLabel title="Data final" hint="fim do período analisado" />
-                            <input
-                                type="date"
-                                value={periodoDistribuicaoDefault.data_final}
-                                max={todayISO()}
-                                onChange={(e) => setDataFinal(e.target.value)}
-                                className="input"
-                            />
-                        </div>
-                        <div className="flex items-end">
-                            <button
-                                onClick={carregarDistribuicaoK}
-                                disabled={loadingDistK}
-                                className="btn w-full flex items-center gap-2"
-                            >
-                                {loadingDistK ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
-                                    </>
-                                ) : (
-                                    "Gerar gráfico de distribuição"
-                                )}
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Resultado */}
-                    {distKData.length === 0 && !loadingDistK && (
-                        <div className="text-sm text-gray-500">Defina o período para carregar a distribuição.</div>
-                    )}
-
-                    {distKData.length > 0 && (
-                        <>
-                            <div className="w-full h-[420px] border rounded-lg p-2">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <RBarChart data={distKData}>
-                                        <CartesianGrid strokeDasharray="3 3" />
-                                        <XAxis dataKey="k_clusters" tickMargin={8} tickFormatter={formatKLabel}>
-                                            <Label
-                                                value="Cenários"
-                                                offset={-5}
-                                                position="insideBottom"
-                                            />
-                                        </XAxis>
-                                        <YAxis
-                                            label={{
-                                                value: "Frequência",
-                                                angle: -90,
-                                                position: "insideLeft",
-                                            }}
-                                            allowDecimals={false}
-                                            tickMargin={6}
-                                        />
-                                        <Tooltip />
-                                        <Bar dataKey="qtd" fill="#4682B4" radius={[4, 4, 0, 0]}>
-                                            {distKData.map((_, index) => (
-                                                <Cell
-                                                    key={`cell-${index}`}
-                                                    fill="#4682B4"
-                                                />
-                                            ))}
-                                        </Bar>
-                                    </RBarChart>
-                                </ResponsiveContainer>
+                        {/* Filtros */}
+                        <div className="grid md:grid-cols-3 gap-4 mb-4">
+                            <div>
+                                <FieldLabel title="Data inicial" hint="início do período analisado" />
+                                <input
+                                    type="date"
+                                    value={periodoDistribuicaoDefault.data_inicial}
+                                    max={todayISO()}
+                                    onChange={(e) => setDataInicial(e.target.value)}
+                                    className="input"
+                                />
                             </div>
+                            <div>
+                                <FieldLabel title="Data final" hint="fim do período analisado" />
+                                <input
+                                    type="date"
+                                    value={periodoDistribuicaoDefault.data_final}
+                                    max={todayISO()}
+                                    onChange={(e) => setDataFinal(e.target.value)}
+                                    className="input"
+                                />
+                            </div>
+                            <div className="flex items-end">
+                                <button
+                                    onClick={carregarDistribuicaoK}
+                                    disabled={loadingDistK}
+                                    className="btn w-full flex items-center gap-2"
+                                >
+                                    {loadingDistK ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                                        </>
+                                    ) : (
+                                        "Gerar gráfico de distribuição"
+                                    )}
+                                </button>
+                            </div>
+                        </div>
 
-                            {distKGraficoUrl && (
-                                <div className="mt-4 text-right">
-                                    <a
-                                        href={distKGraficoUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-emerald-600 hover:underline"
-                                    >
-                                        📥 Baixar gráfico oficial (PNG)
-                                    </a>
+                        {/* Resultado */}
+                        {distKData.length === 0 && !loadingDistK && (
+                            <div className="text-sm text-gray-500">Defina o período para carregar a distribuição.</div>
+                        )}
+
+                        {distKData.length > 0 && (
+                            <>
+                                <div className="w-full h-[420px] border rounded-lg p-2">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <RBarChart data={distKData}>
+                                            <CartesianGrid strokeDasharray="3 3" />
+                                            <XAxis dataKey="k_clusters" tickMargin={8} tickFormatter={formatKLabel}>
+                                                <Label
+                                                    value="Cenários"
+                                                    offset={-5}
+                                                    position="insideBottom"
+                                                />
+                                            </XAxis>
+                                            <YAxis
+                                                label={{
+                                                    value: "Frequência",
+                                                    angle: -90,
+                                                    position: "insideLeft",
+                                                }}
+                                                allowDecimals={false}
+                                                tickMargin={6}
+                                            />
+                                            <Tooltip />
+                                            <Bar dataKey="qtd" fill="#4682B4" radius={[4, 4, 0, 0]}>
+                                                {distKData.map((_, index) => (
+                                                    <Cell
+                                                        key={`cell-${index}`}
+                                                        fill="#4682B4"
+                                                    />
+                                                ))}
+                                            </Bar>
+                                        </RBarChart>
+                                    </ResponsiveContainer>
                                 </div>
-                            )}
-                        </>
-                    )}
 
-                </div>
-            )}
+                                {distKGraficoUrl && (
+                                    <div className="mt-4 text-right">
+                                        <a
+                                            href={distKGraficoUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-emerald-600 hover:underline"
+                                        >
+                                            📥 Baixar gráfico oficial (PNG)
+                                        </a>
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                    </div>
+                )
+            }
 
             {/* ===================== ABA: Frequência de Cidades ===================== */}
-            {activeTab === "centroVencedor" && (
-                <div className="bg-white rounded-2xl shadow p-4">
-                    <h2 className="font-semibold mb-4 flex items-center gap-2">
-                        <Building2 className="w-5 h-5 text-emerald-600" />
-                        Frequência das cidades centro nos pontos ótimos
-                    </h2>
+            {
+                activeTab === "centroVencedor" && (
+                    <div className="bg-white rounded-2xl shadow p-4">
+                        <h2 className="font-semibold mb-4 flex items-center gap-2">
+                            <Building2 className="w-5 h-5 text-emerald-600" />
+                            Frequência das cidades centro nos pontos ótimos
+                        </h2>
 
-                    {/* Filtros */}
-                    <div className="grid md:grid-cols-3 gap-4 mb-4">
-                        <div>
-                            <FieldLabel title="Data inicial" hint="início do período analisado" />
-                            <input
-                                type="date"
-                                value={periodoCidadesDefault.data_inicial}
-                                max={todayISO()}
-                                onChange={(e) => setDataInicial(e.target.value)}
-                                className="input"
-                            />
-                        </div>
-                        <div>
-                            <FieldLabel title="Data final" hint="fim do período analisado" />
-                            <input
-                                type="date"
-                                value={periodoCidadesDefault.data_final}
-                                max={todayISO()}
-                                onChange={(e) => setDataFinal(e.target.value)}
-                                className="input"
-                            />
-                        </div>
-                        <div className="flex items-end">
-                            <button
-                                onClick={carregarFrequenciaCidades}
-                                disabled={loadingFreqCidades}
-                                className="btn w-full flex items-center gap-2"
-                            >
-                                {loadingFreqCidades ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
-                                    </>
-                                ) : (
-                                    "Gerar gráfico de cidades"
-                                )}
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Resultado */}
-                    {freqCidadesData.length === 0 && !loadingFreqCidades && (
-                        <div className="text-sm text-gray-500">Defina o período para carregar as cidades.</div>
-                    )}
-
-                    {freqCidadesData.length > 0 && (
-                        <>
-                            {/* Gráfico Top 20 */}
-                            <div className="w-full h-[420px] border rounded-lg p-2 mb-4 bg-white">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <RBarChart
-                                        data={freqCidadesData}
-                                        layout="vertical"
-                                        margin={{ top: 10, right: 20, left: 120, bottom: 10 }}
-                                    >
-                                        <CartesianGrid strokeDasharray="3 3" />
-                                        <XAxis
-                                            type="number"
-                                            allowDecimals={false}
-                                            label={{
-                                                value: "Frequência",
-                                                position: "insideBottom",
-                                                offset: -5,
-                                            }}
-                                        />
-                                        <YAxis
-                                            type="category"
-                                            dataKey="cluster_cidade"
-                                            tick={{ fontSize: 11 }}
-                                            width={140}
-                                        />
-                                        <Tooltip />
-                                        <Bar dataKey="qtd" fill="#10b981" radius={[0, 6, 6, 0]} />
-                                    </RBarChart>
-                                </ResponsiveContainer>
+                        {/* Filtros */}
+                        <div className="grid md:grid-cols-3 gap-4 mb-4">
+                            <div>
+                                <FieldLabel title="Data inicial" hint="início do período analisado" />
+                                <input
+                                    type="date"
+                                    value={periodoCidadesDefault.data_inicial}
+                                    max={todayISO()}
+                                    onChange={(e) => setDataInicial(e.target.value)}
+                                    className="input"
+                                />
                             </div>
-
-                            {/* Links de download */}
-                            <div className="flex justify-between items-center mt-2">
-                                {freqCidadesGraficoUrl && (
-                                    <a
-                                        href={freqCidadesGraficoUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-emerald-600 hover:underline"
-                                    >
-                                        📥 Baixar gráfico oficial (PNG)
-                                    </a>
-                                )}
-                                {freqCidadesCsvUrl && (
-                                    <a
-                                        href={freqCidadesCsvUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-emerald-600 hover:underline"
-                                    >
-                                        📄 Baixar lista completa (CSV)
-                                    </a>
-                                )}
+                            <div>
+                                <FieldLabel title="Data final" hint="fim do período analisado" />
+                                <input
+                                    type="date"
+                                    value={periodoCidadesDefault.data_final}
+                                    max={todayISO()}
+                                    onChange={(e) => setDataFinal(e.target.value)}
+                                    className="input"
+                                />
                             </div>
+                            <div className="flex items-end">
+                                <button
+                                    onClick={carregarFrequenciaCidades}
+                                    disabled={loadingFreqCidades}
+                                    className="btn w-full flex items-center gap-2"
+                                >
+                                    {loadingFreqCidades ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                                        </>
+                                    ) : (
+                                        "Gerar gráfico de cidades"
+                                    )}
+                                </button>
+                            </div>
+                        </div>
 
-                            {/* Tabela Top 3 */}
-                            <div className="overflow-auto mt-4">
-                                <table className="min-w-full text-sm">
-                                    <thead>
-                                        <tr className="text-left border-b">
-                                            <th className="py-2 pr-4 w-12">#</th>
-                                            <th className="py-2 pr-4">Cidade</th>
-                                            <th className="py-2 pr-4">Frequência</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {freqCidadesData.map((r, i) => (
-                                            <tr key={i} className="border-b">
-                                                <td className="py-2 pr-4">{i + 1}</td>
-                                                <td className="py-2 pr-4">{r.cluster_cidade}</td>
-                                                <td className="py-2 pr-4">{r.qtd}</td>
+                        {/* Resultado */}
+                        {freqCidadesData.length === 0 && !loadingFreqCidades && (
+                            <div className="text-sm text-gray-500">Defina o período para carregar as cidades.</div>
+                        )}
+
+                        {freqCidadesData.length > 0 && (
+                            <>
+                                {/* Gráfico Top 20 */}
+                                <div className="w-full h-[420px] border rounded-lg p-2 mb-4 bg-white">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <RBarChart
+                                            data={freqCidadesData}
+                                            layout="vertical"
+                                            margin={{ top: 10, right: 20, left: 120, bottom: 10 }}
+                                        >
+                                            <CartesianGrid strokeDasharray="3 3" />
+                                            <XAxis
+                                                type="number"
+                                                allowDecimals={false}
+                                                label={{
+                                                    value: "Frequência",
+                                                    position: "insideBottom",
+                                                    offset: -5,
+                                                }}
+                                            />
+                                            <YAxis
+                                                type="category"
+                                                dataKey="cluster_cidade"
+                                                tick={{ fontSize: 11 }}
+                                                width={140}
+                                            />
+                                            <Tooltip />
+                                            <Bar dataKey="qtd" fill="#10b981" radius={[0, 6, 6, 0]} />
+                                        </RBarChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* Links de download */}
+                                <div className="flex justify-between items-center mt-2">
+                                    {freqCidadesGraficoUrl && (
+                                        <a
+                                            href={freqCidadesGraficoUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-emerald-600 hover:underline"
+                                        >
+                                            📥 Baixar gráfico oficial (PNG)
+                                        </a>
+                                    )}
+                                    {freqCidadesCsvUrl && (
+                                        <a
+                                            href={freqCidadesCsvUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-emerald-600 hover:underline"
+                                        >
+                                            📄 Baixar lista completa (CSV)
+                                        </a>
+                                    )}
+                                </div>
+
+                                {/* Tabela Top 3 */}
+                                <div className="overflow-auto mt-4">
+                                    <table className="min-w-full text-sm">
+                                        <thead>
+                                            <tr className="text-left border-b">
+                                                <th className="py-2 pr-4 w-12">#</th>
+                                                <th className="py-2 pr-4">Cidade</th>
+                                                <th className="py-2 pr-4">Frequência</th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </>
-                    )}
-                </div>
-            )}
+                                        </thead>
+                                        <tbody>
+                                            {freqCidadesData.map((r, i) => (
+                                                <tr key={i} className="border-b">
+                                                    <td className="py-2 pr-4">{i + 1}</td>
+                                                    <td className="py-2 pr-4">{r.cluster_cidade}</td>
+                                                    <td className="py-2 pr-4">{r.qtd}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )
+            }
 
 
             {/* ===================== ABA: k Fixo (custos) =====================*/}
-            {activeTab === "custos" && (
-                <div className="bg-white rounded-2xl shadow p-4">
-                    <h2 className="font-semibold mb-4 flex items-center gap-2">
-                        <BarChart3 className="w-5 h-5 text-emerald-600" />
-                        Custos consolidados para k fixo
-                    </h2>
+            {
+                activeTab === "custos" && (
+                    <div className="bg-white rounded-2xl shadow p-4">
+                        <h2 className="font-semibold mb-4 flex items-center gap-2">
+                            <BarChart3 className="w-5 h-5 text-emerald-600" />
+                            Custos consolidados para k fixo
+                        </h2>
 
-                    <div className="grid md:grid-cols-4 gap-4 mb-4">
-                        <div>
-                            <FieldLabel title="Data inicial" hint="início do período consolidado" />
-                            <input
-                                type="date"
-                                value={periodoKFixoDefault.data_inicial}
-                                max={todayISO()}
-                                onChange={(e) => setDataInicial(e.target.value)}
-                                className="input"
-                            />
-                        </div>
-                        <div>
-                            <FieldLabel title="Data final" hint="fim do período consolidado" />
-                            <input
-                                type="date"
-                                value={periodoKFixoDefault.data_final}
-                                max={todayISO()}
-                                onChange={(e) => setDataFinal(e.target.value)}
-                                className="input"
-                            />
-                        </div>
-                        {/* 👇 Novo campo cobertura mínima */}
-                        <div>
-                            <FieldLabel title="Cobertura mínima (%)" hint="percentual mínimo de dias válidos exigido para considerar um k" />
-                            <input
-                                type="number"
-                                value={minCobertura}
-                                onChange={(e) => setMinCobertura(+e.target.value)}
-                                className="input"
-                                min={0}
-                                max={100}
-                                step={1}
-                                placeholder="Ex.: 70"
-                            />
-                        </div>
-                        <div className="flex items-end">
-                            <button
-                                onClick={carregarKFixo}
-                                disabled={loadingKFixo}
-                                className="btn w-full flex items-center gap-2"
-                            >
-                                {loadingKFixo ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
-                                    </>
-                                ) : (
-                                    "Gerar custos por k"
-                                )}
-                            </button>
-                        </div>
-                    </div>
-
-                    {kFixoData.length === 0 && !loadingKFixo && (
-                        <div className="text-sm text-gray-500">Defina o período para carregar os custos.</div>
-                    )}
-
-                    {kFixoData.length > 0 && (
-                        <>
-                            <div className="w-full h-[420px] border rounded-lg p-2 mb-4 bg-white">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <RBarChart data={kFixoData}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                        <XAxis dataKey="k_clusters" tickMargin={8} tickFormatter={formatKLabel}>
-                                            <Label value="Cenários" offset={-5} position="insideBottom" />
-                                        </XAxis>
-                                        <YAxis
-                                            tickFormatter={(v) =>
-                                                new Intl.NumberFormat("pt-BR", {
-                                                    notation: "compact",
-                                                    maximumFractionDigits: 1,
-                                                }).format(v)
-                                            }
-                                            label={{
-                                                value: "Custo consolidado (R$)",
-                                                angle: -90,
-                                                position: "insideLeft",
-                                            }}
-                                            tickMargin={6}
-                                        />
-                                        <Tooltip
-                                            formatter={(v: number) =>
-                                                new Intl.NumberFormat("pt-BR", {
-                                                    style: "currency",
-                                                    currency: "BRL",
-                                                }).format(v)
-                                            }
-                                            labelFormatter={(k) => `Cenário ${formatKLabel(String(k))}`}
-                                        />
-                                        <Bar dataKey="custo_alvo" fill="#2563eb" radius={[6, 6, 0, 0]} />
-                                    </RBarChart>
-                                </ResponsiveContainer>
+                        <div className="grid md:grid-cols-4 gap-4 mb-4">
+                            <div>
+                                <FieldLabel title="Data inicial" hint="início do período consolidado" />
+                                <input
+                                    type="date"
+                                    value={periodoKFixoDefault.data_inicial}
+                                    max={todayISO()}
+                                    onChange={(e) => setDataInicial(e.target.value)}
+                                    className="input"
+                                />
                             </div>
+                            <div>
+                                <FieldLabel title="Data final" hint="fim do período consolidado" />
+                                <input
+                                    type="date"
+                                    value={periodoKFixoDefault.data_final}
+                                    max={todayISO()}
+                                    onChange={(e) => setDataFinal(e.target.value)}
+                                    className="input"
+                                />
+                            </div>
+                            {/* 👇 Novo campo cobertura mínima */}
+                            <div>
+                                <FieldLabel title="Cobertura mínima (%)" hint="percentual mínimo de dias válidos exigido para considerar um k" />
+                                <input
+                                    type="number"
+                                    value={minCobertura}
+                                    onChange={(e) => setMinCobertura(+e.target.value)}
+                                    className="input"
+                                    min={0}
+                                    max={100}
+                                    step={1}
+                                    placeholder="Ex.: 70"
+                                />
+                            </div>
+                            <div className="flex items-end">
+                                <button
+                                    onClick={carregarKFixo}
+                                    disabled={loadingKFixo}
+                                    className="btn w-full flex items-center gap-2"
+                                >
+                                    {loadingKFixo ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                                        </>
+                                    ) : (
+                                        "Gerar custos por k"
+                                    )}
+                                </button>
+                            </div>
+                        </div>
 
-                            {kFixoGraficoUrl && (
-                                <div className="mt-2 text-right">
-                                    <a
-                                        href={kFixoGraficoUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-emerald-600 hover:underline"
-                                    >
-                                        📥 Baixar gráfico oficial (PNG)
-                                    </a>
+                        {kFixoData.length === 0 && !loadingKFixo && (
+                            <div className="text-sm text-gray-500">Defina o período para carregar os custos.</div>
+                        )}
+
+                        {kFixoData.length > 0 && (
+                            <>
+                                <div className="w-full h-[420px] border rounded-lg p-2 mb-4 bg-white">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <RBarChart data={kFixoData}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                            <XAxis dataKey="k_clusters" tickMargin={8} tickFormatter={formatKLabel}>
+                                                <Label value="Cenários" offset={-5} position="insideBottom" />
+                                            </XAxis>
+                                            <YAxis
+                                                tickFormatter={(v) =>
+                                                    new Intl.NumberFormat("pt-BR", {
+                                                        notation: "compact",
+                                                        maximumFractionDigits: 1,
+                                                    }).format(v)
+                                                }
+                                                label={{
+                                                    value: "Custo consolidado (R$)",
+                                                    angle: -90,
+                                                    position: "insideLeft",
+                                                }}
+                                                tickMargin={6}
+                                            />
+                                            <Tooltip
+                                                formatter={(v: number) =>
+                                                    new Intl.NumberFormat("pt-BR", {
+                                                        style: "currency",
+                                                        currency: "BRL",
+                                                    }).format(v)
+                                                }
+                                                labelFormatter={(k) => `Cenário ${formatKLabel(String(k))}`}
+                                            />
+                                            <Bar dataKey="custo_alvo" fill="#2563eb" radius={[6, 6, 0, 0]} />
+                                        </RBarChart>
+                                    </ResponsiveContainer>
                                 </div>
-                            )}
 
-                            <div className="overflow-auto mt-4">
-                                <table className="min-w-full text-sm">
-                                    <thead>
-                                        <tr className="text-left border-b">
-                                            <th className="py-2 pr-4">k</th>
-                                            <th className="py-2 pr-4">Dias válidos</th>
-                                            <th className="py-2 pr-4">Cobertura</th>
-                                            <th className="py-2 pr-4">Custo alvo (R$)</th>
-                                            <th className="py-2 pr-4">Regret %</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {kFixoData
-                                            .slice()
-                                            .sort(
-                                                (a: KFixoResponse["cenarios"][0], b: KFixoResponse["cenarios"][0]) =>
-                                                    a.k_clusters - b.k_clusters
-                                            )
-                                            .map((r: KFixoResponse["cenarios"][0]) => (
-                                                <tr key={r.k_clusters} className="border-b">
-                                                    <td className="py-2 pr-4">{formatKLabel(r.k_clusters)}</td>
-                                                    <td className="py-2 pr-4">
-                                                        {r.dias_presentes}/{r.total_dias}
-                                                    </td>
-                                                    <td className="py-2 pr-4">
-                                                        {(r.cobertura_pct * 100).toFixed(1)}%
-                                                    </td>
-                                                    <td className="py-2 pr-4">
-                                                        {r.custo_alvo?.toLocaleString("pt-BR", {
-                                                            style: "currency",
-                                                            currency: "BRL",
-                                                        })}
-                                                    </td>
-                                                    <td className="py-2 pr-4">
-                                                        {(r.regret_relativo * 100).toFixed(2)}%
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </>
-                    )}
-                </div>
-            )}
+                                {kFixoGraficoUrl && (
+                                    <div className="mt-2 text-right">
+                                        <a
+                                            href={kFixoGraficoUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-emerald-600 hover:underline"
+                                        >
+                                            📥 Baixar gráfico oficial (PNG)
+                                        </a>
+                                    </div>
+                                )}
+
+                                <div className="overflow-auto mt-4">
+                                    <table className="min-w-full text-sm">
+                                        <thead>
+                                            <tr className="text-left border-b">
+                                                <th className="py-2 pr-4">k</th>
+                                                <th className="py-2 pr-4">Dias válidos</th>
+                                                <th className="py-2 pr-4">Cobertura</th>
+                                                <th className="py-2 pr-4">Custo alvo (R$)</th>
+                                                <th className="py-2 pr-4">Regret %</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {kFixoData
+                                                .slice()
+                                                .sort(
+                                                    (a: KFixoResponse["cenarios"][0], b: KFixoResponse["cenarios"][0]) =>
+                                                        a.k_clusters - b.k_clusters
+                                                )
+                                                .map((r: KFixoResponse["cenarios"][0]) => (
+                                                    <tr key={r.k_clusters} className="border-b">
+                                                        <td className="py-2 pr-4">{formatKLabel(r.k_clusters)}</td>
+                                                        <td className="py-2 pr-4">
+                                                            {r.dias_presentes}/{r.total_dias}
+                                                        </td>
+                                                        <td className="py-2 pr-4">
+                                                            {(r.cobertura_pct * 100).toFixed(1)}%
+                                                        </td>
+                                                        <td className="py-2 pr-4">
+                                                            {r.custo_alvo?.toLocaleString("pt-BR", {
+                                                                style: "currency",
+                                                                currency: "BRL",
+                                                            })}
+                                                        </td>
+                                                        <td className="py-2 pr-4">
+                                                            {(r.regret_relativo * 100).toFixed(2)}%
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )
+            }
 
             {/* ===================== ABA: Frota p/ k Fixo ===================== */}
-            {activeTab === "frota" && (
-                <div className="bg-white rounded-2xl shadow p-4">
-                    <h2 className="font-semibold mb-4 flex items-center gap-2">
-                        Frota média sugerida por k fixo
-                    </h2>
+            {
+                activeTab === "frota" && (
+                    <div className="bg-white rounded-2xl shadow p-4">
+                        <h2 className="font-semibold mb-4 flex items-center gap-2">
+                            Frota média sugerida por k fixo
+                        </h2>
 
-                    {/* Filtros */}
-                    <div className="grid md:grid-cols-4 gap-4 mb-4">
-                        <div>
-                            <FieldLabel title="Data inicial" hint="início do período da frota" />
-                            <input
-                                type="date"
-                                value={periodoFrotaDefault.data_inicial}
-                                max={todayISO()}
-                                onChange={(e) =>
-                                    setDataInicial(e.target.value)
-                                }
-                                className="input"
-                            />
-                        </div>
-                        <div>
-                            <FieldLabel title="Data final" hint="fim do período da frota" />
-                            <input
-                                type="date"
-                                value={periodoFrotaDefault.data_final}
-                                max={todayISO()}
-                                onChange={(e) =>
-                                    setDataFinal(e.target.value)
-                                }
-                                className="input"
-                            />
-                        </div>
-                        <div>
-                            <FieldLabel title="Valor de k" hint="use 0 para considerar todos os cenários; informe um número para filtrar" />
-                            <input
-                                type="number"
-                                value={frotaK ?? ""}
-                                onChange={(e) => setFrotaK(Number(e.target.value))}
-                                className="input"
-                                placeholder="Ex.: 8 ou 0"
-                            />
+                        {/* Filtros */}
+                        <div className="grid md:grid-cols-4 gap-4 mb-4">
+                            <div>
+                                <FieldLabel title="Data inicial" hint="início do período da frota" />
+                                <input
+                                    type="date"
+                                    value={periodoFrotaDefault.data_inicial}
+                                    max={todayISO()}
+                                    onChange={(e) =>
+                                        setDataInicial(e.target.value)
+                                    }
+                                    className="input"
+                                />
+                            </div>
+                            <div>
+                                <FieldLabel title="Data final" hint="fim do período da frota" />
+                                <input
+                                    type="date"
+                                    value={periodoFrotaDefault.data_final}
+                                    max={todayISO()}
+                                    onChange={(e) =>
+                                        setDataFinal(e.target.value)
+                                    }
+                                    className="input"
+                                />
+                            </div>
+                            <div>
+                                <FieldLabel title="Valor de k" hint="use 0 para considerar todos os cenários; informe um número para filtrar" />
+                                <input
+                                    type="number"
+                                    value={frotaK ?? ""}
+                                    onChange={(e) => setFrotaK(Number(e.target.value))}
+                                    className="input"
+                                    placeholder="Ex.: 8 ou 0"
+                                />
+                            </div>
+
+                            <div className="flex items-end">
+                                <button
+                                    onClick={carregarFrota}
+                                    disabled={loadingFrota}
+                                    className="btn w-full flex items-center gap-2"
+                                >
+                                    {loadingFrota ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                                        </>
+                                    ) : (
+                                        "Gerar frota"
+                                    )}
+                                </button>
+                            </div>
                         </div>
 
-                        <div className="flex items-end">
-                            <button
-                                onClick={carregarFrota}
-                                disabled={loadingFrota}
-                                className="btn w-full flex items-center gap-2"
-                            >
-                                {loadingFrota ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
-                                    </>
-                                ) : (
-                                    "Gerar frota"
+                        {/* Sem dados */}
+                        {!loadingFrota && !frotaLastmile.length && !frotaTransfer.length && (
+                            <div className="text-sm text-gray-500">Defina período e k para carregar a frota.</div>
+                        )}
+
+                        {/* Bloco Last-mile */}
+                        {frotaLastmile.length > 0 && (
+                            <div className="mb-10">
+                                <h3 className="text-lg font-bold mb-3">🚚 Last-mile</h3>
+                                <FrotaChartTable data={frotaLastmile} chartId="frotaLastmileChart" />
+                                {frotaCsvLastmile && (
+                                    <div className="mt-2 text-right">
+                                        <a
+                                            href={frotaCsvLastmile}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-emerald-600 hover:underline"
+                                        >
+                                            📥 Baixar CSV Last-mile
+                                        </a>
+                                    </div>
                                 )}
-                            </button>
-                        </div>
+                            </div>
+                        )}
+
+                        {/* Bloco Transferências */}
+                        {frotaTransfer.length > 0 && (
+                            <div>
+                                <h3 className="text-lg font-bold mb-3">🚛 Transferências</h3>
+                                <FrotaChartTable data={frotaTransfer} chartId="frotaTransferChart" />
+                                {frotaCsvTransfer && (
+                                    <div className="mt-2 text-right">
+                                        <a
+                                            href={frotaCsvTransfer}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-emerald-600 hover:underline"
+                                        >
+                                            📥 Baixar CSV Transferências
+                                        </a>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
-
-                    {/* Sem dados */}
-                    {!loadingFrota && !frotaLastmile.length && !frotaTransfer.length && (
-                        <div className="text-sm text-gray-500">Defina período e k para carregar a frota.</div>
-                    )}
-
-                    {/* Bloco Last-mile */}
-                    {frotaLastmile.length > 0 && (
-                        <div className="mb-10">
-                            <h3 className="text-lg font-bold mb-3">🚚 Last-mile</h3>
-                            <FrotaChartTable data={frotaLastmile} chartId="frotaLastmileChart" />
-                            {frotaCsvLastmile && (
-                                <div className="mt-2 text-right">
-                                    <a
-                                        href={frotaCsvLastmile}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-emerald-600 hover:underline"
-                                    >
-                                        📥 Baixar CSV Last-mile
-                                    </a>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Bloco Transferências */}
-                    {frotaTransfer.length > 0 && (
-                        <div>
-                            <h3 className="text-lg font-bold mb-3">🚛 Transferências</h3>
-                            <FrotaChartTable data={frotaTransfer} chartId="frotaTransferChart" />
-                            {frotaCsvTransfer && (
-                                <div className="mt-2 text-right">
-                                    <a
-                                        href={frotaCsvTransfer}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-emerald-600 hover:underline"
-                                    >
-                                        📥 Baixar CSV Transferências
-                                    </a>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 }

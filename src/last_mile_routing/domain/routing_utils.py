@@ -1,9 +1,11 @@
 #hub_router_1.0.1/src/last_mile_routing/domain/routing_utils.py
 
 def alocar_veiculo(peso_total, custos_veiculos):
+    # Ordena do menor para o maior veículo
+    custos_veiculos = custos_veiculos.sort_values("peso_maximo_kg")
     for _, row in custos_veiculos.iterrows():
-        if row['peso_minimo_kg'] <= peso_total <= row['peso_maximo_kg']:
-            return row['veiculo']
+        if peso_total <= row["peso_maximo_kg"]:
+            return row["veiculo"]
     return "Indefinido"
 
 

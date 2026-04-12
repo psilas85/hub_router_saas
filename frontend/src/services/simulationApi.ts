@@ -28,7 +28,7 @@ export type RunSimulationParams = {
     hub_id: number;
 
     // Clusterização
-    algoritmo_clusterizacao_principal?: "kmeans" | "balanced_kmeans";
+    algoritmo_clusterizacao_principal?: "kmeans" | "balanced_kmeans" | "time_windows";
     min_entregas_por_cluster_alvo?: number;
     max_entregas_por_cluster_alvo?: number;
 
@@ -65,6 +65,12 @@ export type RunSimulationParams = {
 
     // Forçar sobrescrita
     modo_forcar?: boolean;
+
+    // Time Windows
+    tempo_especial_min?: number;
+    tempo_especial_max?: number;
+    max_especiais_por_rota?: number;
+    special_deliveries?: string;
 };
 
 export async function runSimulation(params: RunSimulationParams) {
@@ -117,6 +123,7 @@ export async function getSimulationStatus(job_id: string) {
 export type VisualizeSimulationResponse = {
     data: string;
     relatorio_pdf?: string;
+    excel_entregas_rotas?: string;
     graficos?: string[];
     cenarios: Record<
         string,

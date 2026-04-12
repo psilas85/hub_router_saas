@@ -78,7 +78,7 @@ def parse_args():
     parser.add_argument("--max-entregas-por-cluster-alvo", type=int, default=100)
     parser.add_argument(
         "--algoritmo-clusterizacao-principal",
-        choices=["kmeans", "balanced_kmeans"],
+        choices=["kmeans", "balanced_kmeans", "time_windows"],
         default="kmeans",
     )
     parser.add_argument("--modo-forcar", action="store_true")

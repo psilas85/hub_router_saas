@@ -1,4 +1,4 @@
-# src/api_gateway/routers/simulation_routes.py
+#hub_router_1.0.1/src/api_gateway/routers/simulation_routes.py
 
 from fastapi import APIRouter, Request, Depends, Query, HTTPException
 from datetime import date
@@ -84,6 +84,11 @@ async def executar_simulacao(
     permitir_rotas_excedentes: bool = Query(False, description="Permite aceitar rotas que ultrapassem o tempo máximo"),
 
     usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
+
+    algoritmo_roteirizacao: str = Query("padrao"),
+    tempo_especial_min: int = Query(180),
+    tempo_especial_max: int = Query(300),
+    max_especiais_por_rota: int = Query(1),
 ):
     """
     Encaminha requisição do API Gateway → Simulation Service.
@@ -134,6 +139,12 @@ async def executar_simulacao(
 
         # ⚙️ Rotas excedentes
         "permitir_rotas_excedentes": permitir_rotas_excedentes,
+
+        # 🔥 ADICIONAR AQUI
+        "algoritmo_roteirizacao": algoritmo_roteirizacao,
+        "tempo_especial_min": tempo_especial_min,
+        "tempo_especial_max": tempo_especial_max,
+        "max_especiais_por_rota": max_especiais_por_rota,
     }
 
     headers = {"authorization": request.headers.get("authorization")}

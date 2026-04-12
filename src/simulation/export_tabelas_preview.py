@@ -33,7 +33,7 @@ tabelas = [
 ]
 
 # 🔹 Caminho para salvar no output
-output_dir = "./output"
+output_dir = "exports/simulation/entregas"
 os.makedirs(output_dir, exist_ok=True)
 output_path = os.path.join(output_dir, "tabelas_preview.xlsx")
 

@@ -52,10 +52,10 @@ class DataCleanerService:
 
     def limpar_artefatos(self):
         """
-        Remove todos os arquivos exportados (maps, graphs, relatorios, csv, json)
+        Remove todos os arquivos exportados (maps, graphs, relatorios, csv, json, entregas)
         relacionados ao tenant e envio_data.
         """
-        subdirs = ["maps", "graphs", "relatorios", "csv", "json"]
+        subdirs = ["maps", "graphs", "relatorios", "csv", "json", "entregas"]
 
         for sub in subdirs:
             # Caminho do diretório: exports/simulation/<sub>/<tenant_id>

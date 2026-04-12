@@ -1,4 +1,4 @@
-# simulation/api/routes.py
+#hub_router_1.0.1/src/simulation/api/routes.py
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from datetime import date, timedelta
@@ -123,6 +123,10 @@ def executar_simulacao(
     permitir_rotas_excedentes: bool = Query(True, description="Permitir rotas que ultrapassem limite"),
     restricao_veiculo_leve_municipio: bool = Query(True, description="Restringe veículos leves em rotas intermunicipais"),
     tenant_id: str = Depends(obter_tenant_id_do_token),
+    tempo_especial_min: int = Query(180, description="Tempo mínimo (min) para considerar entrega especial no modo Time Windows"),
+    tempo_especial_max: int = Query(300, description="Tempo máximo (min) para considerar entrega especial no modo Time Windows"),
+    max_especiais_por_rota: int = Query(1, description="Máximo de entregas especiais por rota no modo Time Windows"),
+    algoritmo_roteirizacao: str = Query("padrao", description="Algoritmo de roteirização"),
 ):
     distancia_outlier_km = _parse_optional_float(distancia_outlier_km, "distancia_outlier_km")
 
@@ -155,6 +159,10 @@ def executar_simulacao(
         "tempo_max_k0": tempo_max_k0,
         "permitir_rotas_excedentes": permitir_rotas_excedentes,
         "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
+        "algoritmo_roteirizacao": algoritmo_roteirizacao,
+        "tempo_especial_min": tempo_especial_min,
+        "tempo_especial_max": tempo_especial_max,
+        "max_especiais_por_rota": max_especiais_por_rota,
     }
 
     logger.info(
@@ -196,6 +204,10 @@ def executar_simulacao(
             "tempo_max_k0": tempo_max_k0,
             "permitir_rotas_excedentes": permitir_rotas_excedentes,
             "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
+            "algoritmo_roteirizacao": algoritmo_roteirizacao,
+            "tempo_especial_min": tempo_especial_min,
+            "tempo_especial_max": tempo_especial_max,
+            "max_especiais_por_rota": max_especiais_por_rota,
         },
         modo_forcar,
         job_id=job_id,
@@ -247,10 +259,15 @@ def visualizar_simulacao(
     """
     response = {"data": str(data), "cenarios": {}}
 
-    # PDF consolidado
-    pdf_path = f"./exports/simulation/relatorios/{tenant_id}/relatorio_simulation_{data}.pdf"
+    # PDF consolidado (novo padrão)
+    pdf_path = f"./exports/simulation/relatorios/{tenant_id}/{data}/relatorio_simulation_{data}.pdf"
     if os.path.exists(pdf_path):
         response["relatorio_pdf"] = pdf_path.replace("./", "/")
+
+    # Excel entregas+rotas (novo padrão)
+    excel_path = f"./exports/simulation/entregas/{tenant_id}/{data}/entregas_simulacao_{data}.xlsx"
+    if os.path.exists(excel_path):
+        response["excel_entregas_rotas"] = excel_path.replace("./", "/")
 
     # Gráfico comparativo
     graficos_dir = f"./exports/simulation/graphs/{tenant_id}"
@@ -852,3 +869,5 @@ def remover_tarifa_transf(veiculo: str, tenant_id: str = Depends(obter_tenant_id
         return {"deleted": True, "veiculo": veiculo}
     finally:
         conn.close()
+
+## Removido endpoint especial de download do Excel. Agora o arquivo é exposto como estático, igual aos demais artefatos.

@@ -380,9 +380,9 @@ class LastMileRoutingService:
                 )
 
             if rota_completa:
-                rota_ida_coords.extend([(p["lat"], p["lon"]) for p in rota_completa])
+                rota_ida_coords.extend([{"lat": p["lat"], "lon": p["lon"]} for p in rota_completa])
             else:
-                rota_ida_coords.append(atual)
+                rota_ida_coords.append({"lat": atual[0], "lon": atual[1]})
 
             anterior = atual
 
@@ -759,8 +759,6 @@ class LastMileRoutingService:
         return df_detalhes
 
 
-
-
     def salvar_rotas_last_mile_em_db(
         self,
         df_rotas: pd.DataFrame,
@@ -778,6 +776,17 @@ class LastMileRoutingService:
         # 🔄 Limpar rotas e resumos anteriores completamente
         self.logger.info(f"🧹 Limpando registros anteriores para tenant={tenant_id}, envio_data={envio_data}, k={k_clusters}...")
 
+        # 🔥 PROTEÇÃO CRÍTICA
+        if df_rotas is None or df_rotas.empty:
+            self.logger.warning("⚠️ df_rotas vazio — abortando persistência")
+            return
+
+        self.logger.info(f"DEBUG salvar_rotas_last_mile_em_db shape: {df_rotas.shape}")
+
+        if df_rotas is None or df_rotas.empty:
+            self.logger.warning("⚠️ DELETE abortado — df_rotas vazio")
+            return
+
         cursor.execute("""
             DELETE FROM rotas_last_mile
             WHERE tenant_id = %s AND envio_data = %s AND k_clusters = %s
@@ -790,24 +799,73 @@ class LastMileRoutingService:
         if auto_commit:
             db_conn.commit()
 
-        # 📝 Inserção das entregas
-        insert_sql = """
+        # 🔥 INSERT PRINCIPAL EM rotas_last_mile
+        insert_rotas_sql = """
             INSERT INTO rotas_last_mile (
                 tenant_id, envio_data, simulation_id, k_clusters,
                 cluster, rota_id, cte_numero, ordem_entrega,
                 distancia_km, tempo_minutos, tipo_veiculo,
-                created_at, qtde_entregas, peso_total,
-                volumes_total, distancia_total_km, tempo_total_min,
+                qtde_entregas, peso_total, volumes_total,
+                distancia_total_km, tempo_total_min,
                 latitude, longitude, coordenadas_seq, entrega_com_rota,
                 distancia_parcial_km, tempo_parcial_min
             )
             VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, CURRENT_TIMESTAMP, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
                 %s, %s
             )
         """
+
+        def safe_json(value):
+            try:
+                return json.dumps(value) if value else None
+            except:
+                return None
+
+
+        for i, row in df_rotas.iterrows():
+            try:
+                cluster_val = row.get("cluster")
+                cluster_val = int(cluster_val) if pd.notnull(cluster_val) else None
+
+                cursor.execute(insert_rotas_sql, (
+                    tenant_id,
+                    envio_data,
+                    simulation_id,
+                    k_clusters,
+                    cluster_val,
+                    str(row.get("rota_id")),
+                    str(row.get("cte_numero")),
+                    int(row.get("ordem_entrega") or 0),
+                    row.get("distancia_km"),
+                    row.get("tempo_minutos"),
+                    row.get("tipo_veiculo"),
+                    row.get("qtde_entregas"),
+                    row.get("peso_total"),
+                    row.get("volumes_total"),
+                    row.get("distancia_total_km"),
+                    row.get("tempo_total_min"),
+                    float(row.get("latitude")) if pd.notnull(row.get("latitude")) else None,
+                    float(row.get("longitude")) if pd.notnull(row.get("longitude")) else None,
+                    safe_json(row.get("coordenadas_seq")),
+                    row.get("entrega_com_rota"),
+                    row.get("distancia_parcial_km"),
+                    row.get("tempo_parcial_min"),
+                ))
+
+            except Exception as e:
+                self.logger.error("❌ ERRO INSERT rotas_last_mile")
+                self.logger.error(f"Erro: {e}")
+                self.logger.error(f"Linha: {row.to_dict()}")
+                db_conn.rollback()
+                cursor.close()
+                raise
+
 
         # 📊 Resumo por rota
         self.logger.info("📝 Gerando resumo por rota para salvar...")
@@ -882,80 +940,58 @@ class LastMileRoutingService:
             for _, row in df_resumo.iterrows()
         ]
 
+
+        # Importa aqui para evitar import circular
+
+        # --- PERSISTE EM detalhes_rotas COM CAMPOS EXISTENTES ---
+        detalhes_insert_sql = """
+            INSERT INTO detalhes_rotas (
+                tenant_id, envio_data, cluster, sequencia, cte_numero, endereco, lat, lon, created_at, simulation_id, ordem_entrega, latitude, longitude, peso, volumes, k_clusters
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, now(), %s, %s, %s, %s, %s, %s, %s
+            )
+        """
+
         for i, row in df_rotas.iterrows():
             try:
                 cte_numero = str(row.get('cte_numero') or f"SIMUL_{simulation_id[:8]}_{i}")
-                cluster = str(row.get('cluster') or '0')
-                rota_id = str(row.get('rota_id') or f"ROTA_{cluster}")
+                cluster = int(row.get('cluster')) if str(row.get('cluster')).isdigit() else None
                 ordem_entrega = int(row.get('ordem_entrega') or 0)
-
-                distancia_km = float(row.get('distancia_km')) if pd.notnull(row.get('distancia_km')) else None
-                tempo_minutos = float(row.get('tempo_minutos')) if pd.notnull(row.get('tempo_minutos')) else None
-                tipo_veiculo = str(row.get('tipo_veiculo') or "Desconhecido")
-
-                qtde_entregas = int(row.get('qtde_entregas') or 0)
-                peso_total = float(row.get('peso_total') or 0)
-                volumes_total = int(row.get('volumes_total') or 0)
-
-                distancia_total_km = float(row.get('distancia_total_km')) if pd.notnull(row.get('distancia_total_km')) else None
-                tempo_total_min = float(row.get('tempo_total_min')) if pd.notnull(row.get('tempo_total_min')) else None
-
+                endereco = row.get('endereco') or None
                 latitude = float(row.get('latitude')) if pd.notnull(row.get('latitude')) else None
                 longitude = float(row.get('longitude')) if pd.notnull(row.get('longitude')) else None
+                peso = float(row.get('peso_total') or row.get('peso') or 0)
+                volumes = int(row.get('volumes_total') or row.get('volumes') or 0)
 
-                entrega_com_rota = bool(row.get('entrega_com_rota', True))
+                # Para compatibilidade, lat/lon podem ser iguais a latitude/longitude
+                lat = latitude
+                lon = longitude
 
-                distancia_parcial_km = float(row.get('distancia_parcial_km')) if pd.notnull(row.get('distancia_parcial_km')) else None
-                tempo_parcial_min = float(row.get('tempo_parcial_min')) if pd.notnull(row.get('tempo_parcial_min')) else None
-
-                coordenadas_raw = row.get("coordenadas_seq")
-                coordenadas_str = None
-
-                try:
-                    if isinstance(coordenadas_raw, str):
-                        coordenadas_str = coordenadas_raw if coordenadas_raw.strip() else None
-                    elif isinstance(coordenadas_raw, list) and len(coordenadas_raw) > 0:
-                        coordenadas_str = json.dumps([
-                            {"lat": float(lat), "lon": float(lon)}
-                            for ponto in coordenadas_raw
-                            if isinstance(ponto, (list, tuple)) and len(ponto) == 2
-                            for lat, lon in [ponto]
-                        ])
-                except Exception as e:
-                    self.logger.warning(
-                        f"⚠️ Erro ao converter coordenadas para JSON na rota {row.get('rota_id')} | CTE {row.get('cte_numero')}: {e}"
-                    )
-                    coordenadas_str = None
-
-
-                cursor.execute(insert_sql, (
+                cursor.execute(detalhes_insert_sql, (
                     tenant_id,
                     envio_data,
-                    simulation_id,
-                    k_clusters,
                     cluster,
-                    rota_id,
-                    cte_numero,
                     ordem_entrega,
-                    distancia_km,
-                    tempo_minutos,
-                    tipo_veiculo,
-                    qtde_entregas,
-                    peso_total,
-                    volumes_total,
-                    distancia_total_km,
-                    tempo_total_min,
+                    cte_numero,
+                    endereco,
+                    lat,
+                    lon,
+                    simulation_id,
+                    ordem_entrega,
                     latitude,
                     longitude,
-                    coordenadas_str,
-                    entrega_com_rota,
-                    distancia_parcial_km,
-                    tempo_parcial_min
+                    peso,
+                    volumes,
+                    k_clusters
                 ))
-
             except Exception as e:
+                self.logger.error("❌ ERRO GRAVE INSERT rotas_last_mile")
+                self.logger.error(f"Erro: {e}")
+                try:
+                    self.logger.error(f"Linha problemática: {row.to_dict()}")
+                except:
+                    pass
                 db_conn.rollback()
-                self.logger.error(f"❌ Erro ao processar rota {i} / {row.get('rota_id')}: {e}")
                 cursor.close()
                 raise
 

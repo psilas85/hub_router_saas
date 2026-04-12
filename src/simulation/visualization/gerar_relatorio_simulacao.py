@@ -38,7 +38,7 @@ def gerar_relatorio_simulacao(
     simulation_id,
     k_clusters_testados,
     simulation_db,
-    base_dir="output",
+    base_dir=None,
     grafico_custo_path=None
 ):
     styles = getSampleStyleSheet()
@@ -47,7 +47,9 @@ def gerar_relatorio_simulacao(
     style_normal = styles["Normal"]
 
     # Caminho do PDF de saída
-    relatorio_dir = os.path.join(base_dir, "relatorios", tenant_id)
+    if base_dir is None:
+        raise ValueError("base_dir deve ser informado no novo padrão!")
+    relatorio_dir = base_dir
     os.makedirs(relatorio_dir, exist_ok=True)
     relatorio_path = os.path.join(relatorio_dir, f"relatorio_simulation_{envio_data}.pdf")
 
@@ -123,7 +125,7 @@ def gerar_relatorio_simulacao(
     elements.append(PageBreak())
 
     # Seção de Mapas por k
-    maps_dir = os.path.join(base_dir, "maps", tenant_id)
+    maps_dir = os.path.join(base_dir, "entregas", tenant_id, envio_data)
     for k in sorted(k_clusters_testados):
         elements.append(Paragraph(f"🔢 Simulação com k = {k} clusters", style_h2))
         elements.append(Spacer(1, 10))
@@ -154,13 +156,17 @@ def gerar_relatorio_simulacao(
                 continue
 
 
-            img_path = os.path.join(
-                maps_dir, f"{tenant_id}_mapa_{tipo}_{envio_data}_k{k}.png"
-            )
+            if tipo == "lastmile":
+                img_path = os.path.join(
+                    maps_dir,
+                    f"{tenant_id}_mapa_lastmile_{envio_data}_k{k}.png"
+                )
+            else:
+                img_path = None
             if os.path.exists(img_path):
                 elements.append(Image(img_path, width=480, height=280, kind="proportional"))
             else:
-                elements.append(Paragraph("⚠️ Mapa não encontrado.", style_normal))
+                elements.append(Paragraph("Mapa disponível em HTML no diretório de entregas.", style_normal))
 
             # ➕ Tabelas de transferências
             if tipo == "transferencias":

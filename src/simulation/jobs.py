@@ -159,8 +159,13 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, parametros, modo_forcar
                 "algoritmo_clusterizacao_principal",
                 "kmeans",
             ),
+            "tempo_especial_min": parametros.get("tempo_especial_min", 180),
+            "tempo_especial_max": parametros.get("tempo_especial_max", 300),
+            "max_especiais_por_rota": parametros.get("max_especiais_por_rota", 1),
+            "algoritmo_roteirizacao": parametros.get("algoritmo_roteirizacao", "padrao"),
         }
 
+        logger.info(f"🧠 Algoritmo de roteirização: {parametros_final.get('algoritmo_roteirizacao')}")
         logger.info(
             "[simulation.worker] envio_data=%s tenant_id=%s parametros_pipeline=%s",
             envio_data,

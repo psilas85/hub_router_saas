@@ -18,7 +18,7 @@ def plotar_mapa_clusterizacao_simulation(
     tenant_id,
     envio_data,
     k_clusters,
-    output_dir="output/maps",
+    output_dir="exports/simulation/entregas",
     modo_forcar=False,
     logger=None
 ):
@@ -85,7 +85,17 @@ def plotar_mapa_clusterizacao_simulation(
         df_entregas["longitude"] = df_entregas["longitude"].fillna(df_entregas["longitude_original"])
 
         # 🌍 Geração do mapa interativo (HTML)
-        mapa = folium.Map(location=[hubs[0]['latitude'], hubs[0]['longitude']], zoom_start=7)
+        # Junta todas as coordenadas relevantes para ajustar o zoom
+        all_lats = list(df_entregas["latitude"].dropna()) + [h["latitude"] for h in hubs] + list(df_clusters["centro_lat"].dropna())
+        all_lons = list(df_entregas["longitude"].dropna()) + [h["longitude"] for h in hubs] + list(df_clusters["centro_lon"].dropna())
+        if all_lats and all_lons:
+            min_lat, max_lat = min(all_lats), max(all_lats)
+            min_lon, max_lon = min(all_lons), max(all_lons)
+            center_lat = (min_lat + max_lat) / 2
+            center_lon = (min_lon + max_lon) / 2
+            mapa = folium.Map(location=[center_lat, center_lon], zoom_start=7)
+        else:
+            mapa = folium.Map(location=[hubs[0]['latitude'], hubs[0]['longitude']], zoom_start=7)
         cores = [
             "red", "blue", "green", "purple", "orange", "darkred", "lightred",
             "beige", "darkblue", "darkgreen", "cadetblue", "darkpurple", "pink",
@@ -121,6 +131,9 @@ def plotar_mapa_clusterizacao_simulation(
                     popup=f"CTE: {row['cte_numero']}<br>Cluster: {row['cluster']}<br>Peso: {peso:.1f} kg"
                 ).add_to(mapa)
 
+        # Ajusta o zoom para englobar todos os pontos
+        if all_lats and all_lons:
+            mapa.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
         mapa.save(mapa_path)
 
         # 📊 Geração do PNG estático

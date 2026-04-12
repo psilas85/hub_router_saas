@@ -105,7 +105,7 @@ def plotar_mapa_transferencias(
     tenant_id,
     envio_data,
     k_clusters,
-    output_dir="output/maps",
+    output_dir="exports/simulation/entregas",
     modo_forcar=False,
     logger=None
 ):
@@ -134,11 +134,17 @@ def plotar_mapa_transferencias(
             raise ValueError("❌ Dados ausentes para plotagem: entregas, clusters, rotas ou hubs.")
 
         # mapa inicial
-        mapa = folium.Map(
-            location=[sum([h["latitude"] for h in hubs]) / len(hubs),
-                      sum([h["longitude"] for h in hubs]) / len(hubs)],
-            zoom_start=7
-        )
+        # Junta todas as coordenadas relevantes para ajustar o zoom
+        all_lats = list(df_entregas["centro_lat"].dropna()) + [h["latitude"] for h in hubs] + list(df_clusters["centro_lat"].dropna())
+        all_lons = list(df_entregas["centro_lon"].dropna()) + [h["longitude"] for h in hubs] + list(df_clusters["centro_lon"].dropna())
+        if all_lats and all_lons:
+            min_lat, max_lat = min(all_lats), max(all_lats)
+            min_lon, max_lon = min(all_lons), max(all_lons)
+            center_lat = (min_lat + max_lat) / 2
+            center_lon = (min_lon + max_lon) / 2
+            mapa = folium.Map(location=[center_lat, center_lon], zoom_start=7)
+        else:
+            mapa = folium.Map(location=[hubs[0]["latitude"], hubs[0]["longitude"]], zoom_start=7)
 
         # Hubs
         for hub in hubs:
@@ -206,7 +212,9 @@ def plotar_mapa_transferencias(
                 popup=row["cte_numero"]
             ).add_to(marker_cluster)
 
-        # salva HTML
+        # Ajusta o zoom para englobar todos os pontos
+        if all_lats and all_lons:
+            mapa.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
         mapa.save(mapa_path)
 
         # === PNG com Matplotlib ===
