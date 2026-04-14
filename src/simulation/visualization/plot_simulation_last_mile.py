@@ -80,6 +80,25 @@ def plotar_mapa_last_mile(
         k_clusters,
         simulation_id
     )
+
+    # 🔥 FILTRO CORRETO (SEM DEPENDER DE FLAG)
+    df_rotas_validas = df_rotas[
+        df_rotas["rota_id"].notna() &
+        (df_rotas["rota_id"] != "")
+    ].copy()
+
+    # 🔥 DEBUG CRÍTICO — NÃO PODE TER ROTA NULL
+    print("📊 TOTAL ROTAS:", len(df_rotas))
+    print("📊 VALIDAS:", len(df_rotas_validas))
+
+    removidas = df_rotas[~df_rotas.index.isin(df_rotas_validas.index)]
+
+    if not removidas.empty:
+        print("🚨 LINHAS REMOVIDAS DO PLOT:")
+        print(removidas[["cte_numero", "rota_id", "entrega_com_rota"]].head(10))
+
+
+
     df_clusters = carregar_resumo_clusters(
         simulation_db, tenant_id, envio_data, k_clusters
     )
@@ -90,8 +109,8 @@ def plotar_mapa_last_mile(
         return
 
     # 🎯 centro do mapa
-    all_lats = list(df_rotas["latitude"].dropna()) + list(df_clusters["centro_lat"].dropna())
-    all_lons = list(df_rotas["longitude"].dropna()) + list(df_clusters["centro_lon"].dropna())
+    all_lats = list(df_rotas_validas["latitude"].dropna()) + list(df_clusters["centro_lat"].dropna())
+    all_lons = list(df_rotas_validas["longitude"].dropna()) + list(df_clusters["centro_lon"].dropna())
 
     if all_lats and all_lons:
         center_lat = sum(all_lats) / len(all_lats)
@@ -116,12 +135,13 @@ def plotar_mapa_last_mile(
     ]
 
     # 🔥 rotas
-    for idx, rota_id in enumerate(df_rotas["rota_id"].unique()):
+    for idx, rota_id in enumerate(df_rotas_validas["rota_id"].unique()):
 
         cor = cores[idx % len(cores)]
 
-        df_rota = df_rotas[df_rotas["rota_id"] == rota_id] \
-            .sort_values("ordem_entrega")
+        df_rota = df_rotas_validas[
+            df_rotas_validas["rota_id"] == rota_id
+        ].sort_values("ordem_entrega")
 
         fg = FeatureGroup(name=f"Rota {rota_id}")
 
@@ -168,14 +188,20 @@ def plotar_mapa_last_mile(
         # 🔥 pontos das entregas
         for _, row in df_rota.iterrows():
             try:
-                lat = float(row["latitude"])
-                lon = float(row["longitude"])
+                lat = row.get("latitude")
+                lon = row.get("longitude")
+
+                if pd.isna(lat) or pd.isna(lon):
+                    continue
+
+                lat = float(lat)
+                lon = float(lon)
 
                 popup_html = f"""
                 <b>Rota:</b> {rota_id}<br>
                 <b>CTE:</b> {row.get('cte_numero','')}<br>
                 <b>Ordem:</b> {row.get('ordem_entrega','')}<br>
-                <b>Peso:</b> {row.get('peso_total','')} kg
+                <b>Peso:</b> {row.get('cte_peso', 0)} kg
                 """
 
                 folium.CircleMarker(
@@ -201,11 +227,12 @@ def plotar_mapa_last_mile(
     # 🔥 PNG
     plt.figure(figsize=(10, 8))
 
-    for idx, rota_id in enumerate(df_rotas["rota_id"].unique()):
+    for idx, rota_id in enumerate(df_rotas_validas["rota_id"].unique()):
         cor = cores[idx % len(cores)]
 
-        df_rota = df_rotas[df_rotas["rota_id"] == rota_id]
-
+        df_rota = df_rotas_validas[
+            df_rotas_validas["rota_id"] == rota_id
+        ].sort_values("ordem_entrega")
         if "coordenadas_seq" in df_rota.columns:
             try:
                 raw_coords = df_rota["coordenadas_seq"].dropna().iloc[0]

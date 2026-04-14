@@ -117,14 +117,14 @@ def solve_time_windows_vrp(
 
     vehicles_by_volume = max(1, math.ceil(total_entregas / entregas_por_rota))
 
-    # 🔥 BASE MÍNIMA
+    # 🔥 piso correto: especiais + volume
     vehicles_base = max(min_vehicles_by_special, vehicles_by_volume)
 
-    # 🔥 FLEXIBILIZAÇÃO (ESSA É A CHAVE)
+    # 🔥 folga para o solver decidir
     fator_flex = 1.3 if params.modo_simulacao == "balanceado" else 1.6
-    vehicles_flex = int(vehicles_base * fator_flex)
+    vehicles_flex = int(math.ceil(vehicles_base * fator_flex))
 
-    # 🔥 LIMITES
+    # 🔥 limite final
     num_vehicles = max(vehicles_base, vehicles_flex)
     num_vehicles = min(num_vehicles, total_entregas)
 
@@ -134,7 +134,6 @@ def solve_time_windows_vrp(
         f"por_volume={vehicles_by_volume} | "
         f"base={vehicles_base}"
     )
-
     # ------------------------------------------------------------------
     # Manager + Routing
     # ------------------------------------------------------------------
@@ -144,6 +143,13 @@ def solve_time_windows_vrp(
         0,  # depot
     )
     routing = pywrapcp.RoutingModel(manager)
+    # ------------------------------------------------------------------
+    # 🔥 CUSTO POR VEÍCULO (ESSENCIAL)
+    # ------------------------------------------------------------------
+    fixed_cost = getattr(params, "custo_fixo_veiculo", 100)
+
+    for v in range(num_vehicles):
+        routing.SetFixedCostOfVehicle(int(fixed_cost), v)
 
     # ------------------------------------------------------------------
     # Callback de custo base: tempo de deslocamento
@@ -200,7 +206,7 @@ def solve_time_windows_vrp(
     routing.AddDimension(
         time_callback_index,
         30,
-        int(route_time_limit_min),
+        int(route_time_limit_min * 3),  # 🔥 aumenta o hard limit
         False,
         "Time",
     )
@@ -214,12 +220,9 @@ def solve_time_windows_vrp(
         end_index = routing.End(vehicle_id)
 
         if permitir_rotas_excedentes:
-            time_dimension.CumulVar(start_index).SetMin(0)
-            time_dimension.SetCumulVarSoftUpperBound(
-                end_index,
-                int(route_time_limit_min),
-                1000
-            )
+            # 🔥 sem limite → solver não trava
+            time_dimension.CumulVar(start_index).SetRange(0, 100000)
+            time_dimension.CumulVar(end_index).SetRange(0, 100000)
         else:
             time_dimension.CumulVar(start_index).SetRange(0, int(route_time_limit_min))
             time_dimension.CumulVar(end_index).SetRange(0, int(route_time_limit_min))
@@ -232,33 +235,35 @@ def solve_time_windows_vrp(
         index = manager.NodeToIndex(node_idx)
         ini, fim = int(tw[0]), int(tw[1])
 
-        if fim < ini:
-            raise ValueError(f"Janela inválida no nó {node_idx}: ({ini}, {fim})")
-
         if permitir_rotas_excedentes:
-            # 🔥 não trava no tempo máximo
-            time_dimension.CumulVar(index).SetMin(ini)
+            # 🔥 NÃO restringe tempo → sempre viável
+            time_dimension.CumulVar(index).SetRange(0, 100000)
         else:
             time_dimension.CumulVar(index).SetRange(ini, fim)
 
+
     # ------------------------------------------------------------------
-    # Penalidade para permitir descartar nós se necessário
-    # Isso evita retorno vazio quando a solução perfeita não existe.
+    # 🔥 CONTROLE DE DROPS (VERSÃO INTELIGENTE)
     # ------------------------------------------------------------------
-    penalty = (
-        params.penalty_excedente
-        if permitir_rotas_excedentes
-        else params.penalty_drop_node
-    )
+
+    penalty_normal = int(route_time_limit_min * 200)
+    penalty_special = 10_000_000
 
     for node in range(1, len(all_locations)):
+        index = manager.NodeToIndex(node)
+
+        # 🔥 CONTROLE DE DROP ALINHADO COM REGRA DE NEGÓCIO
+
         is_special = all_special_flags[node]
 
-        if is_special:
-            routing.AddDisjunction([manager.NodeToIndex(node)], 10_000_000)
+        if permitir_rotas_excedentes:
+            # 🚫 NÃO PODE DROPAR EM NENHUMA HIPÓTESE
+            penalty = 10_000_000_000
         else:
-            routing.AddDisjunction([manager.NodeToIndex(node)], penalty)
+            # ✔ pode dropar, mas com custo
+            penalty = penalty_special if is_special else penalty_normal
 
+        routing.AddDisjunction([index], penalty)
     # ------------------------------------------------------------------
     # Busca
     # ------------------------------------------------------------------
@@ -299,7 +304,11 @@ def solve_time_windows_vrp(
     # OR-Tools: 0 = depot, 1..N = entregas
     # Saída final: 0..N-1 = índice original do df
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Extrai rotas corretamente
+    # ------------------------------------------------------------------
     routes = []
+    atendidos = set()
 
     for vehicle_id in range(num_vehicles):
         index = routing.Start(vehicle_id)
@@ -309,11 +318,31 @@ def solve_time_windows_vrp(
             node = manager.IndexToNode(index)
 
             if node != 0:
-                route.append(node - 1)
+                original_idx = node - 1
+                route.append(original_idx)
+                atendidos.add(original_idx)
 
             index = solution.Value(routing.NextVar(index))
 
         if route:
             routes.append(route)
+
+    # ------------------------------------------------------------------
+    # 🔥 FAIL SAFE CORRETO (FORA DO LOOP)
+    # ------------------------------------------------------------------
+    total_atendidas = len(atendidos)
+    total_esperadas = len(locations)
+
+    faltantes = set(range(total_esperadas)) - atendidos
+
+    print(f"📊 TOTAL ESPERADO: {total_esperadas}")
+    print(f"📊 TOTAL ATENDIDO: {total_atendidas}")
+    print(f"📊 FALTANTES: {len(faltantes)}")
+
+    if permitir_rotas_excedentes and faltantes:
+        raise Exception(
+            f"🚨 ERRO GRAVE: {len(faltantes)} entregas não roteirizadas "
+            f"{list(faltantes)[:10]}"
+        )
 
     return routes

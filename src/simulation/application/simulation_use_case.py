@@ -722,6 +722,19 @@ class SimulationUseCase:
             depot_location=depot_location,
             num_vehicles=num_vehicles,
         )
+
+        # 🔥 PROTEÇÃO HARD CONTRA DROP
+        total_input = len(locations)
+        total_output = sum(len(r) for r in routes)
+
+        if total_output < total_input:
+            self.logger.error(
+                f"🚨 TW DROPPED NODE | input={total_input} vs output={total_output}"
+            )
+
+            if not self.permitir_rotas_excedentes:
+                raise Exception("TW DROPPED NODE — solução inválida")
+
         # 🔥 remove rotas vazias (proteção solver)
         routes = [r for r in routes if r and len(r) > 0]
 
@@ -1081,28 +1094,34 @@ class SimulationUseCase:
                 raise Exception(
                     f"🚨 ERRO CRÍTICO TW: input={total_input} vs output={total_output}"
                 )
+
         # 🔥 IDENTIFICA DROPPED
-        ids_input = set(df["cte_numero"].astype(str))
-        ids_output = set(df_rotas["cte_numero"].astype(str))
+        ids_input = set(df["cte_numero"].astype(str).unique())
+        ids_output = set(df_rotas["cte_numero"].astype(str).unique())
 
         dropped_ids = ids_input - ids_output
 
         if dropped_ids:
+            self.logger.error(f"🚨 DROPPED REAL: {list(dropped_ids)[:10]}")
+
             df_dropped = df[df["cte_numero"].astype(str).isin(dropped_ids)].copy()
 
-            df_dropped["rota_id"] = None
-            df_dropped["ordem_entrega"] = None
+            # 🔥 fallback operacional (NÃO deixa rota None)
+            df_dropped["rota_id"] = "fallback_manual"
+            df_dropped["ordem_entrega"] = 1
             df_dropped["entrega_com_rota"] = False
             df_dropped["motivo"] = "nao_roteirizado_time_windows"
 
             self.logger.warning(f"⚠️ Entregas sem rota: {len(df_dropped)}")
 
+            # 🔥 garante flag nas válidas
             df_rotas["entrega_com_rota"] = True
-            df_rotas = df_rotas[
-                ~df_rotas["cte_numero"].isin(dropped_ids)
-            ]
 
+            # 🔥 concat final
             df_rotas = pd.concat([df_rotas, df_dropped], ignore_index=True)
+
+            # 🔥 GARANTE novamente (evita overwrite estranho)
+            df_rotas.loc[df_rotas["rota_id"] == "fallback_manual", "entrega_com_rota"] = False
 
         if df_rotas.empty:
             self._registrar_cenario_invalidado(
@@ -1931,5 +1950,27 @@ class SimulationUseCase:
             return None
 
         self.logger.info(f"💾 Resultado k=0 salvo com custo_total={custo_total:.2f}")
+
+        output_dir_maps = os.path.join(
+            "exports/simulation/maps",
+            self.tenant_id,
+            str(self.envio_data)
+        )
+
+        try:
+            plotar_mapa_last_mile(
+                simulation_db=self.simulation_db,
+                clusterization_db=self.clusterization_db,
+                tenant_id=self.tenant_id,
+                envio_data=self.envio_data,
+                k_clusters=0,
+                simulation_id=self.simulation_id,
+                output_dir=output_dir_maps,
+                modo_forcar=self.modo_forcar,
+                logger=self.logger
+            )
+            self.logger.info("🗺️ Mapa last-mile (k=0) gerado com sucesso")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Erro ao gerar mapa last-mile k=0: {e}")
 
         return resultado_k0
