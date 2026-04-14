@@ -73,3 +73,7 @@ streamlit_folium==0.25.0
 # Misc
 python-multipart==0.0.9
 typing_extensions==4.12.2
+
+ortools
+protobuf>=5.26,<5.27
+numpy<2.0

@@ -20,15 +20,17 @@ from simulation.infrastructure.cache_routes import (
     obter_rota_last_mile_detalhada,
 )
 
+from simulation.domain.entities import SimulationParams
+from simulation.utils.service_time import calcular_tempo_servico
 
 class LastMileRoutingService:
     def __init__(self, simulation_db, clusterization_db, tenant_id: str, logger,
-                 parametros: dict, envio_data: str, permitir_rotas_excedentes: bool = True):
+                 params: SimulationParams, envio_data: str, permitir_rotas_excedentes: bool = True):
         self.simulation_db = simulation_db
         self.clusterization_db = clusterization_db
         self.tenant_id = tenant_id
         self.logger = logger
-        self.parametros = parametros
+        self.params = params
         self.envio_data = envio_data
         self.permitir_rotas_excedentes = permitir_rotas_excedentes
         self._route_attempts_by_cluster = {}
@@ -137,13 +139,7 @@ class LastMileRoutingService:
         )
 
     def _obter_velocidade_media_kmh(self):
-        return float(
-            self.parametros.get(
-                'velocidade_media_kmh',
-                self.parametros.get('velocidade', 60.0),
-            )
-            or 60.0
-        )
+        return float(self.params.velocidade_kmh or 45.0)
 
     def _calcular_tempo_servico_entrega(self, row):
         tempo_atendimento = row.get('cte_tempo_atendimento_min')
@@ -151,22 +147,23 @@ class LastMileRoutingService:
             return max(float(tempo_atendimento), 0.0)
 
         tempo_parada = (
-            self.parametros['tempo_parada_pesada']
-            if float(row.get('cte_peso', 0.0) or 0.0) > self.parametros['limite_peso_parada']
-            else self.parametros['tempo_parada_leve']
+            self.params.tempo_parada_pesada
+            if float(row.get('cte_peso', 0.0) or 0.0) > self.params.limite_peso_parada
+            else self.params.tempo_parada_leve
         )
-        tempo_descarga = float(row.get('cte_volumes', 0) or 0) * self.parametros['tempo_por_volume']
+
+        tempo_descarga = float(row.get('cte_volumes', 0) or 0) * self.params.tempo_por_volume
         return float(tempo_parada) + float(tempo_descarga)
 
     def _gerar_subclusters_iniciais(self, df_coords: pd.DataFrame):
         n_entregas = len(df_coords)
-        entregas_por_subcluster = self.parametros.get('entregas_por_subcluster', 25)
-        k_sub = max(1, n_entregas // entregas_por_subcluster)
+        entregas_por_rota = self.params.entregas_por_rota
+        k_sub = max(1, n_entregas // entregas_por_rota)
         coordenadas = df_coords[['destino_latitude', 'destino_longitude']].dropna()
 
         self.logger.info(
             f"🚀 Subclusterização inicial definida por heurística: {k_sub} subclusters para {n_entregas} entregas "
-            f"(parâmetro entregas_por_subcluster = {entregas_por_subcluster})"
+            f"(parâmetro entregas_por_rota = {entregas_por_rota})"
         )
 
         if coordenadas.empty or k_sub <= 1:
@@ -193,14 +190,11 @@ class LastMileRoutingService:
         return str(branch_label).count('_r')
 
     def _obter_limite_refino_subcluster(self) -> int:
-        limite = self.parametros.get(
-            'max_tentativas_refino_subcluster',
-            self.parametros.get('max_refinamentos_subcluster', 4),
-        )
+        limite = getattr(self.params, "max_tentativas_refino_subcluster", 4)
         return max(1, int(limite or 4))
 
     def _obter_limite_refino_global_emergencial(self, total_entregas_cluster: int) -> int:
-        limite_parametrizado = self.parametros.get('max_tentativas_refino_cluster')
+        limite_parametrizado = getattr(self.params, "max_tentativas_refino_cluster", 0)
         try:
             limite_parametrizado = int(limite_parametrizado or 0)
         except (TypeError, ValueError):
@@ -222,7 +216,7 @@ class LastMileRoutingService:
             df_subcluster=df_sub,
             df_tarifas=df_tarifas,
             tempo_maximo=tempo_maximo,
-            parametros=self.parametros,
+            params=self.params,
             tenant_id=self.tenant_id,
             simulation_db=self.simulation_db,
             logger=self.logger,
@@ -239,8 +233,8 @@ class LastMileRoutingService:
                 for idx, (df_ordenado, tipo_veiculo, _, _) in enumerate(subclusters)
             ]
 
-        max_depth = int(self.parametros.get('max_refinamentos_subcluster', 4) or 4)
-        max_split = int(self.parametros.get('max_particoes_subcluster_local', 4) or 4)
+        max_depth = int(getattr(self.params, "max_refinamentos_subcluster", 4))
+        max_split = int(getattr(self.params, "max_particoes_subcluster_local", 4))
 
         if depth >= max_depth or len(df_sub) <= 1:
             if self.permitir_rotas_excedentes:
@@ -306,7 +300,7 @@ class LastMileRoutingService:
             df_subcluster=df_sub,
             df_tarifas=df_tarifas,
             tempo_maximo=tempo_maximo,
-            parametros=self.parametros,
+            params=self.params,
             logger=self.logger,
             cluster_cidade=cluster_cidade,
             cidades_entregas=df_sub['cte_cidade'].tolist(),
@@ -358,7 +352,7 @@ class LastMileRoutingService:
                 anterior = atual
                 continue
 
-            dist, tempo, rota_completa, fonte_rota = obter_rota_last_mile_detalhada(
+            dist_km, tempo_min, rota_completa, fonte_rota = obter_rota_last_mile_detalhada(
                 anterior,
                 atual,
                 self.tenant_id,
@@ -368,16 +362,21 @@ class LastMileRoutingService:
                 velocidade_media_kmh,
             )
 
+            if dist_km is None or tempo_min is None:
+                self.logger.warning(
+                    f"⚠️ Rota inválida detectada entre {anterior} -> {atual}. Abortando rota {rota_id}."
+                )
+                return {"excedeu": True, "df": df_ordenado}
+
             try:
-                if dist is not None:
-                    distancia_parcial += float(dist)
-                if tempo is not None:
-                    tempo_parcial += float(tempo)
+                distancia_parcial += float(dist_km)
+                tempo_parcial += float(tempo_min)
                 fontes_metricas.add(fonte_rota)
             except Exception as e:
-                self.logger.warning(
-                    f"⚠️ Erro ao somar dist/tempo para CTE {df_ordenado.iloc[i]['cte_numero']}: {e}"
+                self.logger.error(
+                    f"❌ Erro ao converter dist/tempo para CTE {df_ordenado.iloc[i]['cte_numero']}: {e}"
                 )
+                return {"excedeu": True, "df": df_ordenado}
 
             if rota_completa:
                 rota_ida_coords.extend([{"lat": p["lat"], "lon": p["lon"]} for p in rota_completa])
@@ -393,7 +392,10 @@ class LastMileRoutingService:
                 f"Amostra: {amostra_ctes}"
             )
 
-        tempo_parcial += sum(self._calcular_tempo_servico_entrega(row) for _, row in df_ordenado.iterrows())
+        tempo_parcial += sum(
+            self._calcular_tempo_servico_entrega(row)
+            for _, row in df_ordenado.iterrows()
+        )
 
         rota_volta_coords = []
         if anterior == origem:
@@ -411,14 +413,19 @@ class LastMileRoutingService:
                 self.logger,
                 velocidade_media_kmh,
             )
+            if dist_back is None or tempo_back is None:
+                self.logger.warning(
+                    f"⚠️ Falha no retorno da rota {rota_id}. Marcando rota como inválida."
+                )
+                return {"excedeu": True, "df": df_ordenado}
+
             try:
-                dist_back = float(dist_back) if dist_back is not None else 0.0
-                tempo_back = float(tempo_back) if tempo_back is not None else 0.0
+                dist_back = float(dist_back)
+                tempo_back = float(tempo_back)
                 fontes_metricas.add(fonte_rota_back)
             except Exception as e:
-                self.logger.warning(f"⚠️ Erro ao processar retorno para rota {rota_id}: {e}")
-                dist_back = 0.0
-                tempo_back = 0.0
+                self.logger.error(f"❌ Erro ao converter retorno da rota {rota_id}: {e}")
+                return {"excedeu": True, "df": df_ordenado}
 
             if rota_back:
                 rota_volta_coords.extend([(p["lat"], p["lon"]) for p in rota_back])
@@ -503,12 +510,10 @@ class LastMileRoutingService:
                 "tempo_parcial_min": round(tempo_parcial, 2) if posicao_rota == 0 else None,
                 "fonte_metricas": (
                     "osrm"
-                    if fontes_metricas.issubset({"osrm", "cache_osrm", "fallback_minimo"})
+                    if fontes_metricas.issubset({"osrm", "cache_osrm"})
                     else "fallback"
-                    if fontes_metricas.issubset({
-                        "osrm", "cache_osrm", "fallback_minimo", "google", "manual_haversine"
-                    })
-                    else "nao_osrm"
+                    if "manual_haversine" in fontes_metricas or "google" in fontes_metricas
+                    else "misto"
                 ) if posicao_rota == 0 else None,
                 "latitude": row["destino_latitude"],
                 "longitude": row["destino_longitude"],
@@ -594,7 +599,11 @@ class LastMileRoutingService:
                 )
 
             velocidade_media_kmh = self._obter_velocidade_media_kmh()
-            tempo_limite = tempo_maximo or self.parametros['tempo_maximo_roteirizacao']
+            tempo_limite = (
+                self.params.tempo_max_k0
+                if k_clusters == 0
+                else self.params.tempo_max_roteirizacao
+            )
             pendentes = self._gerar_subclusters_iniciais(df_coords)
             detalhes_cluster = []
             refinamentos_realizados = 0

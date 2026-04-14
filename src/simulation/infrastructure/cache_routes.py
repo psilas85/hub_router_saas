@@ -165,6 +165,20 @@ def _obter_rota_detalhada(
     logger=None,
     velocidade_media_kmh=None,
 ):
+    # 🔥 VALIDAR ANTES DE QUALQUER COISA
+    if not origem or not destino:
+        if logger:
+            logger.warning("⚠️ Origem/destino inválido no cálculo de rota.")
+        return None, None, None, "erro_input"
+
+    try:
+        lat1, lon1 = float(origem[0]), float(origem[1])
+        lat2, lon2 = float(destino[0]), float(destino[1])
+    except Exception:
+        if logger:
+            logger.warning(f"⚠️ Coordenadas inválidas: origem={origem}, destino={destino}")
+        return None, None, None, "erro_coordenada"
+
     origem_str = _formatar_coord(origem)
     destino_str = _formatar_coord(destino)
 
@@ -187,14 +201,20 @@ def _obter_rota_detalhada(
         rota_cache = _extrair_rota_cache(rota_json)
         if rota_cache:
             distancia_km, tempo_min, coordenadas, fonte_cache = rota_cache
-            if fonte_cache == "osrm":
+
+            if distancia_km is None or tempo_min is None:
                 if logger:
-                    logger.info(f"🚗 Cache HIT OSRM: {origem_str} → {destino_str}")
-                return distancia_km, tempo_min, coordenadas, "cache_osrm"
-            if logger:
-                logger.warning(
-                    f"⚠️ Cache sem fonte OSRM para {origem_str} -> {destino_str}. Recalculando rota."
-                )
+                    logger.warning(f"⚠️ Cache inválido descartado {origem_str} -> {destino_str}")
+            else:
+                if fonte_cache == "osrm":
+                    if logger:
+                        logger.info(f"🚗 Cache HIT OSRM: {origem_str} → {destino_str}")
+                    return distancia_km, tempo_min, coordenadas, "cache_osrm"
+
+                if logger:
+                    logger.warning(
+                        f"⚠️ Cache sem fonte OSRM para {origem_str} -> {destino_str}. Recalculando rota."
+                    )
         elif logger:
             logger.warning(f"⚠️ Cache inválido ignorado {origem_str} -> {destino_str}")
 
@@ -202,7 +222,11 @@ def _obter_rota_detalhada(
         logger.info(f"🔍 Cache MISS (rota): {origem_str} → {destino_str} → tentando OSRM...")
 
     distancia_km, tempo_min, rota_raw = buscar_rota_osrm(origem, destino)
-    if distancia_km and tempo_min and rota_raw:
+    if (
+        distancia_km is not None
+        and tempo_min is not None
+        and rota_raw
+    ):
         rota_completa_dicts = [
             {"lat": float(lat), "lon": float(lon)}
             for lat, lon in rota_raw if lat is not None and lon is not None
@@ -229,7 +253,11 @@ def _obter_rota_detalhada(
         destino,
         logger,
     )
-    if distancia_km and tempo_min and rota_raw:
+    if (
+        distancia_km is not None
+        and tempo_min is not None
+        and rota_raw
+    ):
         rota_completa_dicts = [
             {"lat": float(lat), "lon": float(lon)}
             for lat, lon in rota_raw if lat is not None and lon is not None
@@ -243,6 +271,12 @@ def _obter_rota_detalhada(
         velocidade_media_kmh=velocidade_media_kmh,
         logger=logger,
     )
+
+    if distancia_km is None or tempo_min is None:
+        if logger:
+            logger.warning(f"⚠️ Falha total no cálculo de rota {origem_str} -> {destino_str}")
+        return None, None, None, "erro_fallback"
+
     return distancia_km, tempo_min, coordenadas, "manual_haversine"
 
 

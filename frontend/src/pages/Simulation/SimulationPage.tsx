@@ -1,5 +1,6 @@
 // hub_router_1.0.1/frontend/src/pages/Simulation/SimulationPage.tsx
 import { useMemo, useState, useEffect } from "react";
+import { useSimulationJob } from "@/hooks/useSimulationJob";
 import {
     runSimulation,
     visualizeSimulation,
@@ -9,9 +10,7 @@ import {
     getFrotaKFixo,
     listHubs,
     getHistorico,          // 👈 novo
-    getSimulationStatus,   // 👈 novo
     type HistoricoSimulation,
-    type SimulationJobStatus,
     type VisualizeSimulationResponse,
     type DistribuicaoKResponse,
     type FrequenciaCidadesResponse,
@@ -73,12 +72,7 @@ const resolveUrl = (path: string) => {
 type ParamState = Omit<
     RunSimulationParams,
     "data_inicial" | "data_final" | "hub_id"
-> & {
-    algoritmo_roteirizacao?: "padrao" | "time_windows";
-    tempo_especial_min?: number;
-    tempo_especial_max?: number;
-    max_especiais_por_rota?: number;
-};
+>;
 
 // 🔧 Accordion wrapper
 function Accordion({ title, subtitle, defaultOpen = false, children }: { title: string; subtitle?: string; defaultOpen?: boolean; children: React.ReactNode }) {
@@ -159,9 +153,6 @@ type BannerState = {
     tone: BannerTone;
 };
 
-function getJobStatusMessage(status: SimulationJobStatus) {
-    return status.mensagem || status.result?.mensagem || status.error || null;
-}
 
 function isJobSuccess(status: string) {
     return status === "done" || status === "finished";
@@ -256,33 +247,48 @@ export default function SimulationPage() {
 
     // 🔧 Estado centralizado
     const [params, setParams] = useState<ParamState>({
-        algoritmo_clusterizacao_principal: "kmeans",
+        modo_simulacao: "padrao",
+        algoritmo_clusterizacao: "kmeans",
+        algoritmo_roteirizacao: "heuristico",
+
         min_entregas_por_cluster_alvo: 10,
         max_entregas_por_cluster_alvo: 100,
+
         desativar_cluster_hub: false,
         raio_hub_km: 80.0,
+
         usar_outlier: false,
         distancia_outlier_km: undefined,
-        parada_leve: 10,
-        parada_pesada: 20,
-        tempo_volume: 0.4,
-        velocidade: 60.0,
-        limite_peso: 50.0,
-        restricao_veiculo_leve_municipio: true,
-        peso_leve_max: 50.0,
-        tempo_max_transferencia: 600,
+
+        tempo_parada_leve: 10,
+        tempo_parada_pesada: 20,
+        tempo_por_volume: 0.4,
+        limite_peso_parada: 200,
+
+        velocidade_kmh: 45.0,
+
+        limite_peso_veiculo: 50.0,
         peso_max_transferencia: 18000.0,
-        entregas_por_subcluster: 25,
+
+        tempo_max_transferencia: 600,
         tempo_max_roteirizacao: 600,
+
+        // 🔥 ADICIONAR AQUI
         tempo_max_k0: 1200,
+
+        entregas_por_rota: 25,
+
         permitir_rotas_excedentes: true,
+
+        // 🔥 NOVO PARAM
+        permitir_veiculo_leve_intermunicipal: false,
+
         modo_forcar: false,
-        algoritmo_roteirizacao: "padrao",
+
         tempo_especial_min: 180,
         tempo_especial_max: 300,
         max_especiais_por_rota: 1,
     });
-
     // =========================
     // Hubs
     // =========================
@@ -313,10 +319,19 @@ export default function SimulationPage() {
 
     const updateNumericParam = (key: keyof ParamState, rawValue: string) => {
         const trimmed = rawValue.trim();
-        setParams((prev) => ({
-            ...prev,
-            [key]: trimmed === "" ? undefined : Number(trimmed),
-        }));
+
+        setParams((prev) => {
+            if (trimmed === "") {
+                return { ...prev, [key]: undefined };
+            }
+
+            const val = Number(trimmed);
+
+            return {
+                ...prev,
+                [key]: isNaN(val) ? undefined : val,
+            };
+        });
     };
 
     // =========================
@@ -336,30 +351,41 @@ export default function SimulationPage() {
         }
 
         setLoading(true);
+
         try {
-            // 🔹 Monta os parâmetros dinamicamente
-            const simParams: RunSimulationParams = {
+            const simParams: any = {
                 data_inicial: dataInicial,
                 hub_id: hubId,
                 ...params,
+                data_final: dataFinal && dataFinal.trim() !== "" ? dataFinal : dataInicial,
             };
 
-            // 🔥 REMOVE PARAMS DE TIME WINDOWS SE NÃO ESTIVER ATIVO
+            Object.keys(simParams).forEach((key) => {
+                if (simParams[key] === undefined) {
+                    delete simParams[key];
+                }
+            });
+
+            console.log("🚀 PAYLOAD FINAL:", simParams);
+
             if (params.algoritmo_roteirizacao !== "time_windows") {
                 delete simParams.tempo_especial_min;
                 delete simParams.tempo_especial_max;
                 delete simParams.max_especiais_por_rota;
-            }
-
-            if (dataFinal && dataFinal.trim() !== "") {
-                simParams.data_final = dataFinal;
+            } else {
+                simParams.algoritmo_clusterizacao = "balanced_kmeans";
             }
 
             const response = await runSimulation(simParams);
             const novoPendingJobId = response.job_id ?? null;
+
             setPendingJobId(novoPendingJobId);
-            setBanner({ text: "⏳ Simulação enviada para processamento.", tone: "info" });
-            await carregarHistorico(novoPendingJobId);
+
+            setBanner({
+                text: "⏳ Simulação enviada para processamento.",
+                tone: "info"
+            });
+
         } catch (e: any) {
             const errMsg = e?.response?.data?.detail || "Erro ao executar simulação.";
             setBanner({ text: errMsg, tone: "error" });
@@ -368,12 +394,12 @@ export default function SimulationPage() {
             setLoading(false);
         }
     };
-
-    async function carregarHistorico(jobIdEmAcompanhamento: string | null = pendingJobId) {
+    async function carregarHistorico(jobIdEmAcompanhamento?: string | null) {
         try {
             setLoadingHistorico(true);
             const dados = await getHistorico(10);
             const historicoAtualizado = dados.historico || [];
+
             setHistorico(historicoAtualizado);
 
             if (jobIdEmAcompanhamento) {
@@ -405,80 +431,24 @@ export default function SimulationPage() {
         }
     }
 
-    async function sincronizarJobPendente(jobId: string) {
-        try {
-            const status = await getSimulationStatus(jobId);
-            const mensagem = getJobStatusMessage(status);
-
-            if (isJobSuccess(status.status)) {
-                setBanner({
-                    text: mensagem || "✅ Simulação concluída com sucesso.",
-                    tone: "success",
-                });
-                setPendingJobId(null);
-            } else if (isJobFailure(status.status)) {
-                setBanner({
-                    text: mensagem || "❌ A simulação falhou.",
-                    tone: "error",
-                });
-                setPendingJobId(null);
-            } else {
-                setBanner({
-                    text: mensagem || "⏳ Simulação em processamento.",
-                    tone: "info",
-                });
-            }
-        } catch {
-            await carregarHistorico(jobId);
-        }
-    }
-
-    async function atualizarStatus(jobId: string) {
-        try {
-            const status: SimulationJobStatus = await getSimulationStatus(jobId);
-            toast(`Job ${jobId} → ${status.status}`);
-            if (pendingJobId === jobId) {
-                const mensagem = getJobStatusMessage(status);
-
-                if (isJobSuccess(status.status)) {
-                    setBanner({ text: mensagem || "✅ Simulação concluída com sucesso.", tone: "success" });
-                    setPendingJobId(null);
-                } else if (isJobFailure(status.status)) {
-                    setBanner({ text: mensagem || "❌ A simulação falhou.", tone: "error" });
-                    setPendingJobId(null);
-                } else {
-                    setBanner({ text: mensagem || "⏳ Simulação em processamento.", tone: "info" });
-                }
-            }
-            await carregarHistorico();
-        } catch (err: any) {
-            toast.error("Erro ao atualizar status");
-        }
-    }
 
     useEffect(() => {
-        carregarHistorico(); // primeira carga
-
-        const interval = setInterval(() => {
-            carregarHistorico();
-        }, 30000); // ⏱️ atualiza a cada 30s
-
-        return () => clearInterval(interval);
+        carregarHistorico();
     }, []);
 
-    useEffect(() => {
-        if (!pendingJobId) {
-            return;
-        }
-
-        sincronizarJobPendente(pendingJobId);
-
-        const interval = setInterval(() => {
-            sincronizarJobPendente(pendingJobId);
-        }, 10000);
-
-        return () => clearInterval(interval);
-    }, [pendingJobId]);
+    useSimulationJob({
+        jobId: pendingJobId,
+        onUpdate: (msg, tone) => {
+            setBanner({ text: msg, tone });
+        },
+        onFinish: () => {
+            setPendingJobId(null);
+            carregarHistorico();
+        },
+        onError: () => {
+            setPendingJobId(null);
+        },
+    });
 
     // =========================
     // Ações: Visualizar artefatos (por dataVisualizar)
@@ -789,10 +759,27 @@ export default function SimulationPage() {
 
                             <Accordion title="Estratégia" subtitle="cenários e clusterização" defaultOpen>
                                 <div>
-                                    <FieldLabel title="Algoritmo de clusterização principal" hint="define o algoritmo de agrupamento dos clusters principais" />
+                                    <FieldLabel title="Modo de simulação" />
                                     <select
-                                        value={params.algoritmo_clusterizacao_principal}
-                                        onChange={e => updateParam("algoritmo_clusterizacao_principal", e.target.value as "kmeans" | "balanced_kmeans")}
+                                        value={params.modo_simulacao}
+                                        onChange={(e) =>
+                                            updateParam("modo_simulacao", e.target.value as any)
+                                        }
+                                        className="input"
+                                    >
+                                        <option value="padrao">Padrão</option>
+                                        <option value="balanceado">Balanceado</option>
+                                        <option value="time_windows">Time Windows</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Algoritmo de clusterização" />
+                                    <select
+                                        value={params.algoritmo_clusterizacao}
+                                        onChange={e =>
+                                            updateParam("algoritmo_clusterizacao", e.target.value as "kmeans" | "balanced_kmeans")
+                                        }
                                         className="input"
                                     >
                                         <option value="kmeans">K-Means</option>
@@ -801,46 +788,56 @@ export default function SimulationPage() {
                                 </div>
 
                                 <div>
-                                    <FieldLabel title="Mín. entregas por cluster alvo" hint="define o maior k aceitável para os cenários" />
-                                    <input type="number" value={params.min_entregas_por_cluster_alvo ?? ""} onChange={(e) => updateNumericParam("min_entregas_por_cluster_alvo", e.target.value)} className="input" />
-                                </div>
-
-                                <div>
-                                    <FieldLabel title="Máx. entregas por cluster alvo" hint="define o menor k aceitável para os cenários" />
-                                    <input type="number" value={params.max_entregas_por_cluster_alvo ?? ""} onChange={(e) => updateNumericParam("max_entregas_por_cluster_alvo", e.target.value)} className="input" />
-                                </div>
-
-                                <div>
-                                    <FieldLabel
-                                        title="Algoritmo de roteirização"
-                                        hint="define como as rotas serão calculadas (OR-Tools, padrão, etc)"
+                                    <FieldLabel title="Mín. entregas por cluster alvo" />
+                                    <input
+                                        type="number"
+                                        value={params.min_entregas_por_cluster_alvo ?? ""}
+                                        onChange={(e) => updateNumericParam("min_entregas_por_cluster_alvo", e.target.value)}
+                                        className="input"
                                     />
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Máx. entregas por cluster alvo" />
+                                    <input
+                                        type="number"
+                                        value={params.max_entregas_por_cluster_alvo ?? ""}
+                                        onChange={(e) => updateNumericParam("max_entregas_por_cluster_alvo", e.target.value)}
+                                        className="input"
+                                    />
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Algoritmo de roteirização" />
                                     <select
-                                        value={params.algoritmo_roteirizacao ?? "padrao"}
+                                        value={params.algoritmo_roteirizacao}
                                         onChange={(e) => {
-                                            const value = e.target.value as "padrao" | "time_windows";
+                                            const value = e.target.value as "heuristico" | "time_windows";
 
                                             updateParam("algoritmo_roteirizacao", value);
 
                                             if (value === "time_windows") {
-                                                toast.success("Time Windows ativado (roteirização com OR-Tools)");
-                                            } else {
+                                                // 🔥 sincroniza modo
+                                                updateParam("modo_simulacao", "time_windows");
+
+                                                // 🔥 defaults TW
                                                 updateParam("tempo_especial_min", 180);
                                                 updateParam("tempo_especial_max", 300);
                                                 updateParam("max_especiais_por_rota", 1);
+
+                                                toast.success("Time Windows ativado (OR-Tools)");
                                             }
                                         }}
                                         className="input"
                                     >
-                                        <option value="padrao">Padrão</option>
+                                        <option value="heuristico">Heurístico</option>
                                         <option value="time_windows">Time Windows</option>
                                     </select>
                                 </div>
                             </Accordion>
 
-                            {/* 🔥 FORA do Accordion */}
                             {params.algoritmo_roteirizacao === "time_windows" && (
-                                <Accordion title="Time Windows" subtitle="restrições especiais para entregas">
+                                <Accordion title="Time Windows" subtitle="restrições especiais">
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                         <div>
                                             <FieldLabel title="Min. especial (min)" />
@@ -875,69 +872,171 @@ export default function SimulationPage() {
                                 </Accordion>
                             )}
 
-                            <Accordion title="Hub e outliers" subtitle="regras espaciais">
+                            <Accordion title="Hub e outliers">
                                 <div>
-                                    <FieldLabel title="Raio do hub (km)" hint="entregas dentro do raio podem ser reservadas ao hub" />
-                                    <input type="number" step="0.1" value={params.raio_hub_km ?? ""} onChange={(e) => updateNumericParam("raio_hub_km", e.target.value)} className="input" />
+                                    <FieldLabel title="Raio do hub (km)" />
+                                    <input
+                                        type="number"
+                                        value={params.raio_hub_km ?? ""}
+                                        onChange={(e) => updateNumericParam("raio_hub_km", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Distância fixa de outlier (km)" hint="deixe vazio para corte automático" />
-                                    <input type="number" step="0.1" value={params.distancia_outlier_km ?? ""} onChange={(e) => updateNumericParam("distancia_outlier_km", e.target.value)} className="input" />
+                                    <FieldLabel title="Distância outlier (km)" />
+                                    <input
+                                        type="number"
+                                        disabled={!params.usar_outlier}
+                                        value={params.distancia_outlier_km ?? ""}
+                                        onChange={(e) => updateNumericParam("distancia_outlier_km", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
-                                <ToggleField title="Desativar cluster reservado do hub" hint="manda toda a base para clusterização geral" checked={params.desativar_cluster_hub ?? false} onChange={(checked) => updateParam("desativar_cluster_hub", checked)} />
-                                <ToggleField title="Separar outliers geográficos" hint="materializa outliers antes da clusterização principal" checked={params.usar_outlier ?? false} onChange={(checked) => updateParam("usar_outlier", checked)} />
+
+                                <ToggleField
+                                    title="Desativar cluster hub"
+                                    hint="Ignora agrupamento pelo hub"
+                                    checked={params.desativar_cluster_hub ?? false}
+                                    onChange={(checked) => updateParam("desativar_cluster_hub", checked)}
+                                />
+
+                                <ToggleField
+                                    title="Separar outliers"
+                                    hint="Cria clusters separados para pontos distantes"
+                                    checked={params.usar_outlier ?? false}
+                                    onChange={(checked) => updateParam("usar_outlier", checked)}
+                                />
                             </Accordion>
 
-                            <Accordion title="Tempos" subtitle="transferência e last-mile">
+                            <Accordion title="Tempos">
                                 <div>
-                                    <FieldLabel title="Parada leve (min)" hint="tempo base de atendimento para entregas leves" />
-                                    <input type="number" value={params.parada_leve ?? ""} onChange={(e) => updateNumericParam("parada_leve", e.target.value)} className="input" />
+                                    <FieldLabel title="Parada leve (min)" />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_parada_leve ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_parada_leve", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Parada pesada (min)" hint="tempo base de atendimento para entregas acima do limite de peso" />
-                                    <input type="number" value={params.parada_pesada ?? ""} onChange={(e) => updateNumericParam("parada_pesada", e.target.value)} className="input" />
+                                    <FieldLabel title="Parada pesada (min)" />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_parada_pesada ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_parada_pesada", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Tempo por volume (min)" hint="acréscimo de atendimento por volume entregue" />
-                                    <input type="number" step="0.1" value={params.tempo_volume ?? ""} onChange={(e) => updateNumericParam("tempo_volume", e.target.value)} className="input" />
+                                    <FieldLabel title="Tempo por volume" />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_por_volume ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_por_volume", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Tempo máx. transferência (min)" hint="limite por rota de transferência entre hub e clusters" />
-                                    <input type="number" value={params.tempo_max_transferencia ?? ""} onChange={(e) => updateNumericParam("tempo_max_transferencia", e.target.value)} className="input" />
+                                    <FieldLabel title="Tempo máx. rotas (k > 0)" />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_max_roteirizacao ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_max_roteirizacao", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Tempo máx. roteirização (min)" hint="limite por rota last-mile" />
-                                    <input type="number" value={params.tempo_max_roteirizacao ?? ""} onChange={(e) => updateNumericParam("tempo_max_roteirizacao", e.target.value)} className="input" />
+                                    <FieldLabel title="Tempo máx. transferência" />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_max_transferencia ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_max_transferencia", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Tempo máx. Hub único (min)" hint="limite do cenário hub-central sem transferência" />
-                                    <input type="number" value={params.tempo_max_k0 ?? ""} onChange={(e) => updateNumericParam("tempo_max_k0", e.target.value)} className="input" />
+                                    <FieldLabel title="Tempo máx. hub único (k=0)" />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_max_k0 ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_max_k0", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Entregas por subcluster" hint="heurística inicial do last-mile" />
-                                    <input type="number" value={params.entregas_por_subcluster ?? ""} onChange={(e) => updateNumericParam("entregas_por_subcluster", e.target.value)} className="input" />
+                                    <FieldLabel title="Entregas por rota" />
+                                    <input
+                                        type="number"
+                                        value={params.entregas_por_rota ?? ""}
+                                        onChange={(e) => updateNumericParam("entregas_por_rota", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
                             </Accordion>
 
-                            <Accordion title="Capacidade" subtitle="veículos e restrições">
+                            <Accordion title="Capacidade">
                                 <div>
-                                    <FieldLabel title="Velocidade média (km/h)" hint="usada para estimar tempos de deslocamento" />
-                                    <input type="number" value={params.velocidade ?? ""} onChange={(e) => updateNumericParam("velocidade", e.target.value)} className="input" />
+                                    <FieldLabel title="Velocidade (km/h)" />
+                                    <input
+                                        type="number"
+                                        value={params.velocidade_kmh ?? ""}
+                                        onChange={(e) => updateNumericParam("velocidade_kmh", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Limite peso parada pesada (kg)" hint="acima deste peso a entrega usa tempo de parada pesada" />
-                                    <input type="number" value={params.limite_peso ?? ""} onChange={(e) => updateNumericParam("limite_peso", e.target.value)} className="input" />
+                                    <FieldLabel title="Limite peso veículo (kg)" />
+                                    <input
+                                        type="number"
+                                        value={params.limite_peso_veiculo ?? ""}
+                                        onChange={(e) => updateNumericParam("limite_peso_veiculo", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Peso leve máximo (kg)" hint="peso total máximo para rota continuar elegível a veículo leve" />
-                                    <input type="number" value={params.peso_leve_max ?? ""} onChange={(e) => updateNumericParam("peso_leve_max", e.target.value)} className="input" />
+                                    <FieldLabel title="Limite peso parada (kg)" />
+                                    <input
+                                        type="number"
+                                        value={params.limite_peso_parada ?? ""}
+                                        onChange={(e) => updateNumericParam("limite_peso_parada", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
+
                                 <div>
-                                    <FieldLabel title="Peso máx. transferência (kg)" />
-                                    <input type="number" value={params.peso_max_transferencia ?? ""} onChange={(e) => updateNumericParam("peso_max_transferencia", e.target.value)} className="input" />
+                                    <FieldLabel title="Peso máx. transferência" />
+                                    <input
+                                        type="number"
+                                        value={params.peso_max_transferencia ?? ""}
+                                        onChange={(e) => updateNumericParam("peso_max_transferencia", e.target.value)}
+                                        className="input"
+                                    />
                                 </div>
-                                <ToggleField title="Restringir veículo leve em rota intermunicipal" hint="evita frota leve em rotas entre cidades quando a regra estiver ativa" checked={params.restricao_veiculo_leve_municipio ?? true} onChange={(checked) => updateParam("restricao_veiculo_leve_municipio", checked)} />
-                                <ToggleField title="Permitir rotas excedentes" hint="mantém cenários mesmo quando alguma rota ultrapassa o limite" checked={params.permitir_rotas_excedentes ?? true} onChange={(checked) => updateParam("permitir_rotas_excedentes", checked)} />
+
+                                <ToggleField
+                                    title="Permitir rotas excedentes"
+                                    hint="Permite rotas acima do tempo máximo"
+                                    checked={params.permitir_rotas_excedentes ?? true}
+                                    onChange={(checked) => updateParam("permitir_rotas_excedentes", checked)}
+                                />
+
+                                <ToggleField
+                                    title="Permitir veículo leve intermunicipal"
+                                    hint="Permite motos/utilitários atenderem cidades diferentes"
+                                    checked={params.permitir_veiculo_leve_intermunicipal ?? false}
+                                    onChange={(checked) =>
+                                        updateParam("permitir_veiculo_leve_intermunicipal", checked)
+                                    }
+                                />
                             </Accordion>
                         </div>
 
@@ -1170,7 +1269,7 @@ export default function SimulationPage() {
                                                 </div>
                                                 <p className="mt-3 line-clamp-2 text-sm text-slate-600" title={h.mensagem}>{h.mensagem}</p>
                                                 <div className="mt-3 flex justify-end">
-                                                    <button onClick={() => atualizarStatus(h.job_id)} className="btn-secondary gap-2 rounded-xl px-3 py-2 text-sm">
+                                                    <button onClick={() => setPendingJobId(h.job_id)} className="btn-secondary gap-2 rounded-xl px-3 py-2 text-sm">
                                                         <TimerReset className="h-4 w-4" />
                                                         Ver status
                                                     </button>

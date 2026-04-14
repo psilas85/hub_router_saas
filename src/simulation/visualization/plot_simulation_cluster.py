@@ -23,7 +23,7 @@ def plotar_mapa_clusterizacao_simulation(
     logger=None
 ):
     try:
-        output_path = os.path.join(output_dir, tenant_id)
+        output_path = output_dir
         os.makedirs(output_path, exist_ok=True)
 
         mapa_path = os.path.join(output_path, f"{tenant_id}_mapa_clusterizacao_{envio_data}_k{k_clusters}.html")
@@ -32,7 +32,7 @@ def plotar_mapa_clusterizacao_simulation(
         # 🔄 Se modo_forcar=True, remove antes de salvar
         if modo_forcar:
             for path in [mapa_path, png_path]:
-                if os.path.exists(path):
+                if path and os.path.exists(path):
                     try:
                         os.remove(path)
                         if logger:
@@ -41,7 +41,7 @@ def plotar_mapa_clusterizacao_simulation(
                         if logger:
                             logger.error(f"❌ Falha ao remover {path}: {e}")
         # 🟡 Se já existe e não é modo_forcar, não sobrescreve
-        elif os.path.exists(mapa_path) or os.path.exists(png_path):
+        elif (mapa_path and os.path.exists(mapa_path)) or (png_path and os.path.exists(png_path)):
             if logger:
                 logger.info(
                     f"🟡 Mapas de clusterização já existem ({envio_data}, k={k_clusters}). "

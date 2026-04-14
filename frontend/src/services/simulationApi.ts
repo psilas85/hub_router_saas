@@ -4,18 +4,9 @@ import api from "@/services/api";
 function removeEmptyQueryParams<T extends Record<string, unknown>>(params: T) {
     return Object.fromEntries(
         Object.entries(params).filter(([, value]) => {
-            if (value === undefined || value === null) {
-                return false;
-            }
-
-            if (typeof value === "string" && value.trim() === "") {
-                return false;
-            }
-
-            if (typeof value === "number" && Number.isNaN(value)) {
-                return false;
-            }
-
+            if (value === undefined || value === null) return false;
+            if (typeof value === "string" && value.trim() === "") return false;
+            if (typeof value === "number" && Number.isNaN(value)) return false;
             return true;
         })
     ) as Partial<T>;
@@ -27,74 +18,75 @@ export type RunSimulationParams = {
     data_final?: string;
     hub_id: number;
 
-    // Clusterização
-    algoritmo_clusterizacao_principal?: "kmeans" | "balanced_kmeans" | "time_windows";
-    min_entregas_por_cluster_alvo?: number;
-    max_entregas_por_cluster_alvo?: number;
+    // Estratégia
+    modo_simulacao?: "padrao" | "balanceado" | "time_windows";
+    algoritmo_clusterizacao?: "kmeans" | "balanced_kmeans";
+    algoritmo_roteirizacao?: "heuristico" | "time_windows";
 
-    // Cluster hub
+    // HUB
     desativar_cluster_hub?: boolean;
     raio_hub_km?: number;
+
+    // OUTLIER
     usar_outlier?: boolean;
     distancia_outlier_km?: number;
 
-    // Tempos
-    parada_leve?: number;
-    parada_pesada?: number;
-    tempo_volume?: number;
+    // CLUSTER
+    min_entregas_por_cluster_alvo?: number;
+    max_entregas_por_cluster_alvo?: number;
 
-    // Operações
-    velocidade?: number;
-    limite_peso?: number;
+    // TEMPO OPERACIONAL
+    tempo_parada_leve?: number;
+    tempo_parada_pesada?: number;
+    tempo_por_volume?: number;
+    limite_peso_parada?: number;
 
-    // Restrições
-    restricao_veiculo_leve_municipio?: boolean;
-    peso_leve_max?: number;
+    // VELOCIDADE
+    velocidade_kmh?: number;
 
-    // Transferências
-    tempo_max_transferencia?: number;
+    // PESO
+    limite_peso_veiculo?: number;
     peso_max_transferencia?: number;
 
-    // Last-mile
-    entregas_por_subcluster?: number;
+    // TEMPO
     tempo_max_roteirizacao?: number;
+    tempo_max_transferencia?: number;
     tempo_max_k0?: number;
 
-    // Rotas excedentes
-    permitir_rotas_excedentes?: boolean;
+    // LAST-MILE
+    entregas_por_rota?: number;
 
-    // Forçar sobrescrita
+    // REGRAS
+    permitir_rotas_excedentes?: boolean;
+    permitir_veiculo_leve_intermunicipal?: boolean;
+
+    // EXECUÇÃO
     modo_forcar?: boolean;
 
-    // Time Windows
+    // TIME WINDOWS
     tempo_especial_min?: number;
     tempo_especial_max?: number;
     max_especiais_por_rota?: number;
-    special_deliveries?: string;
 };
 
 export async function runSimulation(params: RunSimulationParams) {
     const { data_inicial, data_final, ...rest } = params;
-    const df = data_final && data_final.trim() !== "" ? data_final : data_inicial;
-    const queryParams = removeEmptyQueryParams({
+
+    const payload = removeEmptyQueryParams({
         data_inicial,
-        data_final: df,
+        ...(data_final && data_final.trim() !== "" ? { data_final } : {}),
         ...rest,
     });
 
-    const resp = await api.post("/simulation/executar", null, {
-        params: queryParams,
+    console.log("🚀 PAYLOAD FINAL:", payload);
+
+    const resp = await api.post("/simulation/executar", payload, {
+        headers: {
+            "Content-Type": "application/json",
+        },
     });
 
-    return resp.data as {
-        status: "ok" | "queued" | "processing";
-        job_id?: string;
-        tenant_id?: string;
-        mensagem: string;
-        datas_processadas?: string[];
-        datas_ignoradas?: string[];
-        parametros?: Record<string, unknown>;
-    };
+    return resp.data;
 }
 
 // ===== Status de execução da simulação =====

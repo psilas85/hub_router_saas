@@ -1,4 +1,4 @@
-# clusterization/domain/clustering_service.py atualizado
+#hub_router_1.0.1/src/clusterization/domain/clustering_service.py
 
 import pandas as pd
 import numpy as np
@@ -177,3 +177,102 @@ class ClusteringService:
             df_hub['cluster_endereco'] = 'HUB_CENTRAL'
 
         return df_hub, df_restante
+
+    def clusterizar(
+        self,
+        df: pd.DataFrame,
+        k: int,
+        algoritmo: str = "kmeans",
+        **kwargs
+    ) -> pd.DataFrame:
+
+        if df.empty:
+            return df
+
+        if algoritmo == "kmeans":
+            df_clusterizado, _ = self.perform_clustering(df, n_clusters=k)
+            return df_clusterizado
+
+        elif algoritmo == "balanced_kmeans":
+            return self.balanced_kmeans(df, n_clusters=k)
+
+        else:
+            raise ValueError(f"Algoritmo não suportado: {algoritmo}")
+
+    def balanced_kmeans(
+        self,
+        df: pd.DataFrame,
+        n_clusters: int,
+        max_iter: int = 10,
+        tolerance: int = 2
+    ) -> pd.DataFrame:
+
+        if df.empty:
+            return df
+
+        # 🔥 garantir colunas corretas
+        df = df.rename(columns={
+            "latitude": "destino_latitude",
+            "longitude": "destino_longitude"
+        }).copy()
+
+        coords = df[['destino_latitude', 'destino_longitude']].values
+
+        # 1️⃣ KMeans inicial
+        kmeans = KMeans(n_clusters=n_clusters, random_state=self.random_state, n_init=10)
+        df['cluster'] = kmeans.fit_predict(coords)
+
+        target_size = int(len(df) / n_clusters)
+
+        for _ in range(max_iter):
+
+            cluster_sizes = df['cluster'].value_counts().to_dict()
+
+            clusters_excesso = [c for c, s in cluster_sizes.items() if s > target_size + tolerance]
+            clusters_deficit = [c for c, s in cluster_sizes.items() if s < target_size - tolerance]
+
+            if not clusters_excesso or not clusters_deficit:
+                break
+
+            for c_excesso in clusters_excesso:
+                excesso = cluster_sizes[c_excesso] - target_size
+
+                pontos = df[df['cluster'] == c_excesso].copy()
+
+                # distância ao centro atual
+                centro = pontos[['destino_latitude', 'destino_longitude']].mean().values
+                pontos['dist_centro'] = np.linalg.norm(
+                    pontos[['destino_latitude', 'destino_longitude']].values - centro,
+                    axis=1
+                )
+
+                # pega os mais distantes (melhor candidatos a mover)
+                candidatos = pontos.sort_values('dist_centro', ascending=False).head(excesso)
+
+                for idx, row in candidatos.iterrows():
+
+                    # acha cluster mais próximo com déficit
+                    dist_min = float("inf")
+                    best_cluster = None
+
+                    for c_def in clusters_deficit:
+                        centro_def = df[df['cluster'] == c_def][['destino_latitude', 'destino_longitude']].mean().values
+                        dist = np.linalg.norm(
+                            row[['destino_latitude', 'destino_longitude']].values - centro_def
+                        )
+
+                        if dist < dist_min:
+                            dist_min = dist
+                            best_cluster = c_def
+
+                    if best_cluster is not None:
+                        df.at[idx, 'cluster'] = best_cluster
+
+        # 🔁 recalcular centros
+        centers_df = self._recalculate_centers(df)
+
+        for cluster_id, row in centers_df.iterrows():
+            df.loc[df['cluster'] == cluster_id, 'centro_lat'] = row['centro_lat']
+            df.loc[df['cluster'] == cluster_id, 'centro_lon'] = row['centro_lon']
+
+        return df

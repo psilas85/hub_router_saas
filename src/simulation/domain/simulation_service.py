@@ -7,8 +7,11 @@ from geopy.distance import geodesic
 from sklearn.cluster import KMeans
 from collections import namedtuple
 
+import math
+
 from simulation.config import UF_BOUNDS
 from simulation.utils.heuristics import avaliar_parada_heuristica
+from simulation.domain.entities import SimulationParams
 
 class SimulationService:
     @staticmethod
@@ -30,13 +33,15 @@ class SimulationService:
         self.logger.info(f"🆔 Simulation ID gerado: {self.simulation_id}")
         return self.simulation_id
 
-    def preparar_dados_operacionais_iniciais(self, df_entregas, parametros):
+
+
+    def preparar_dados_operacionais_iniciais(self, df_entregas, params: SimulationParams):
         df = df_entregas.copy()
 
-        cobertura_minima_tempo = float(parametros.get("cobertura_minima_tempo", 0.9))
-        cobertura_minima_peso = float(parametros.get("cobertura_minima_peso", 0.95))
-        cobertura_minima_volumes = float(parametros.get("cobertura_minima_volumes", 0.9))
-        cobertura_minima_prazo = float(parametros.get("cobertura_minima_prazo", 0.9))
+        cobertura_minima_tempo = params.cobertura_minima_tempo
+        cobertura_minima_peso = params.cobertura_minima_peso
+        cobertura_minima_volumes = params.cobertura_minima_volumes
+        cobertura_minima_prazo = params.cobertura_minima_prazo
 
         total_registros = max(len(df), 1)
 
@@ -65,10 +70,10 @@ class SimulationService:
             errors="coerce",
         ) if "cte_peso" in df.columns else pd.Series(np.nan, index=df.index)
 
-        tempo_parada_leve = float(parametros.get("tempo_parada_leve", 0.0))
-        tempo_parada_pesada = float(parametros.get("tempo_parada_pesada", 0.0))
-        tempo_por_volume = float(parametros.get("tempo_por_volume", 0.0))
-        limite_peso_parada = float(parametros.get("limite_peso_parada", 0.0))
+        tempo_parada_leve = params.tempo_parada_leve
+        tempo_parada_pesada = params.tempo_parada_pesada
+        tempo_por_volume = params.tempo_por_volume
+        limite_peso_parada = params.limite_peso_parada
 
         paradas_estimadas = np.where(
             pesos.fillna(0) > limite_peso_parada,
@@ -132,17 +137,14 @@ class SimulationService:
 
         return df, metadata
 
-    def separar_outliers_geograficos(self, df_entregas, parametros):
+    def separar_outliers_geograficos(self, df_entregas, params: SimulationParams):
         if df_entregas.empty or len(df_entregas) < 3:
             return df_entregas, pd.DataFrame(columns=df_entregas.columns), {
                 "qtd_outliers": 0,
                 "limite_km": None,
             }
 
-        usar_outlier = parametros.get(
-            "usar_outlier",
-            parametros.get("separar_outliers_geograficos", False),
-        )
+        usar_outlier = params.usar_outlier
         if not usar_outlier:
             return df_entregas, pd.DataFrame(columns=df_entregas.columns), {
                 "qtd_outliers": 0,
@@ -179,20 +181,14 @@ class SimulationService:
 
         q1, q3 = np.quantile(distancias_vizinho_proximo, [0.25, 0.75])
         iqr = max(float(q3 - q1), 0.0)
-        multiplicador_iqr = float(
-            parametros.get("multiplicador_iqr_outlier_geografico", 1.5) or 1.5
-        )
-        quantil_referencia = float(
-            parametros.get("quantil_outlier_geografico", 0.98) or 0.98
-        )
-        distancia_minima_km = float(
-            parametros.get("distancia_minima_outlier_km", 25.0) or 25.0
-        )
+        multiplicador_iqr = params.multiplicador_iqr
+        quantil_referencia = params.quantil_referencia
+        distancia_minima_km = params.distancia_minima_km
         limite_iqr = q3 + (multiplicador_iqr * iqr)
         limite_quantil = float(
             np.quantile(distancias_vizinho_proximo, quantil_referencia)
         )
-        limite_outlier_parametrizado = parametros.get("distancia_outlier_km")
+        limite_outlier_parametrizado = params.distancia_outlier_km
         if limite_outlier_parametrizado is not None:
             limite_outlier_km = float(limite_outlier_parametrizado)
         else:
@@ -203,12 +199,10 @@ class SimulationService:
             df_validas["dist_vizinho_mais_proximo_km"] > limite_outlier_km
         ].copy()
 
-        percentual_maximo = float(
-            parametros.get("percentual_maximo_outliers_geograficos", 0.08) or 0.08
-        )
+        percentual_maximo = params.percentual_maximo
         qtd_maxima_outliers = int(np.floor(len(df_validas) * percentual_maximo))
         qtd_maxima_outliers = max(1, qtd_maxima_outliers)
-        k_minimo = int(parametros.get("k_min", 2) or 2)
+        k_minimo = 2
         qtd_maxima_por_base = max(0, len(df_validas) - k_minimo)
         qtd_outliers_permitida = min(qtd_maxima_outliers, qtd_maxima_por_base)
 
@@ -280,7 +274,7 @@ class SimulationService:
 
         return df
 
-    def repartir_cluster_hub_central(self, df_clusterizado, parametros):
+    def repartir_cluster_hub_central(self, df_clusterizado, params: SimulationParams):
         if df_clusterizado.empty or "cluster" not in df_clusterizado.columns:
             return df_clusterizado
 
@@ -297,14 +291,11 @@ class SimulationService:
         if len(coordenadas_validas) <= 1:
             return df
 
-        entregas_por_subcluster = max(
-            1,
-            int(parametros.get("entregas_por_subcluster", 25) or 25),
-        )
-        tempo_limite = float(parametros.get("tempo_maximo_roteirizacao", 0) or 0)
-        fator_ocupacao_hub = float(parametros.get("fator_ocupacao_hub", 0.85) or 0.85)
+        entregas_por_rota = params.entregas_por_rota
+        tempo_limite = params.tempo_max_roteirizacao
+        fator_ocupacao_hub = params.fator_ocupacao_hub
 
-        k_por_entregas = int(np.ceil(len(df_hub) / entregas_por_subcluster))
+        k_por_entregas = int(np.ceil(len(df_hub) / entregas_por_rota))
 
         tempo_total_hub = float(
             pd.to_numeric(df_hub.get("tempo_operacional_min"), errors="coerce").fillna(0).sum()
@@ -351,17 +342,17 @@ class SimulationService:
 
         return df_resultado
 
-    def calcular_faixa_operacional_k(self, df_entregas, parametros):
-        k_min_param = max(1, int(parametros.get("k_min", 1) or 1))
-        k_max_param = max(k_min_param, int(parametros.get("k_max", 50) or 50))
+    def calcular_faixa_operacional_k(self, df_entregas, params: SimulationParams):
+        k_min_param = 1
+        k_max_param = 50
 
         coordenadas_validas = df_entregas[["latitude", "longitude"]].dropna()
         total_entregas = len(coordenadas_validas)
         if total_entregas == 0:
             raise ValueError("❌ Nenhuma entrega com coordenadas válidas disponível para calcular faixa de k.")
 
-        minimo_alvo = parametros.get("min_entregas_por_cluster_alvo")
-        maximo_alvo = parametros.get("max_entregas_por_cluster_alvo")
+        minimo_alvo = params.min_entregas_por_cluster_alvo
+        maximo_alvo = params.max_entregas_por_cluster_alvo
         if minimo_alvo is None and maximo_alvo is None:
             k_min_final = min(k_min_param, total_entregas)
             k_max_final = min(k_max_param, total_entregas)
@@ -374,9 +365,9 @@ class SimulationService:
             }
 
         if minimo_alvo is None:
-            minimo_alvo = parametros.get("min_entregas_cluster", 1)
+            minimo_alvo = 1
         if maximo_alvo is None:
-            maximo_alvo = max(minimo_alvo, parametros.get("alvo_entregas_por_cluster", minimo_alvo))
+            maximo_alvo = max(minimo_alvo, minimo_alvo)
 
         minimo_alvo = max(1, int(minimo_alvo))
         maximo_alvo = max(minimo_alvo, int(maximo_alvo))
@@ -411,7 +402,7 @@ class SimulationService:
         }
 
 
-    def obter_k_inicial(self, df_entregas, k_min, k_max, parametros=None) -> int:
+    def obter_k_inicial(self, df_entregas, k_min, k_max, params=None) -> int:
         lat_col = [col for col in df_entregas.columns if col.strip().lower() == "latitude"]
         lon_col = [col for col in df_entregas.columns if col.strip().lower() == "longitude"]
 
@@ -423,73 +414,35 @@ class SimulationService:
             raise ValueError(f"❌ Apenas {len(coordenadas)} entregas válidas para k_min={k_min}.")
 
         k_base_operacional = k_min
-        if parametros:
+        if params:
             candidatos_operacionais = [k_min]
             detalhes_candidatos = {"k_min": k_min}
 
-            alvo_entregas = max(
-                1,
-                int(parametros.get(
-                    "alvo_entregas_por_cluster",
-                    parametros.get("min_entregas_cluster", 25),
-                )),
-            )
+            alvo_entregas = max(1, int(getattr(params, "alvo_entregas_por_cluster", getattr(params, "min_entregas_por_cluster_alvo", 25))))
             k_por_entregas = int(np.ceil(len(coordenadas) / alvo_entregas))
             candidatos_operacionais.append(k_por_entregas)
             detalhes_candidatos["k_entregas"] = k_por_entregas
 
             if "peso_operacional" in df_entregas.columns:
-                peso_total = pd.to_numeric(
-                    df_entregas["peso_operacional"],
-                    errors="coerce",
-                ).fillna(0).sum()
-                alvo_peso = float(
-                    parametros.get(
-                        "alvo_peso_por_cluster",
-                        parametros.get("peso_max_kg", 0),
-                    )
-                    or 0
-                )
+                peso_total = pd.to_numeric(df_entregas["peso_operacional"], errors="coerce").fillna(0).sum()
+                alvo_peso = float(getattr(params, "alvo_peso_por_cluster", getattr(params, "peso_max_kg", 0)) or 0)
                 if alvo_peso > 0 and peso_total > 0:
                     k_por_peso = int(np.ceil(peso_total / alvo_peso))
                     candidatos_operacionais.append(k_por_peso)
                     detalhes_candidatos["k_peso"] = k_por_peso
 
             if "tempo_operacional_min" in df_entregas.columns:
-                tempo_total = pd.to_numeric(
-                    df_entregas["tempo_operacional_min"],
-                    errors="coerce",
-                ).fillna(0).sum()
-                alvo_tempo_base = float(
-                    parametros.get(
-                        "alvo_tempo_por_cluster",
-                        parametros.get("tempo_maximo_roteirizacao", 0),
-                    )
-                    or 0
-                )
-                rotas_alvo_por_cluster = max(
-                    1,
-                    int(
-                        parametros.get(
-                            "rotas_alvo_por_cluster",
-                            parametros.get("limite_critico_rotas_precheck", 4),
-                        )
-                        or 4
-                    ),
-                )
-                fator_ocupacao_cluster = float(
-                    parametros.get("fator_ocupacao_cluster_inicial", 0.85) or 0.85
-                )
+                tempo_total = pd.to_numeric(df_entregas["tempo_operacional_min"], errors="coerce").fillna(0).sum()
+                alvo_tempo_base = float(getattr(params, "alvo_tempo_por_cluster", getattr(params, "tempo_maximo_roteirizacao", 0)) or 0)
+                rotas_alvo_por_cluster = max(1, int(getattr(params, "rotas_alvo_por_cluster", getattr(params, "limite_critico_rotas_precheck", 4)) or 4))
+                fator_ocupacao_cluster = float(getattr(params, "fator_ocupacao_cluster_inicial", 0.85) or 0.85)
                 alvo_tempo = alvo_tempo_base * rotas_alvo_por_cluster * fator_ocupacao_cluster
                 if alvo_tempo > 0 and tempo_total > 0:
                     k_por_tempo = int(np.ceil(tempo_total / alvo_tempo))
                     candidatos_operacionais.append(k_por_tempo)
                     detalhes_candidatos["k_tempo"] = k_por_tempo
                     detalhes_candidatos["rotas_alvo_por_cluster"] = rotas_alvo_por_cluster
-                    detalhes_candidatos["fator_ocupacao_cluster_inicial"] = round(
-                        fator_ocupacao_cluster,
-                        2,
-                    )
+                    detalhes_candidatos["fator_ocupacao_cluster_inicial"] = round(fator_ocupacao_cluster, 2)
 
             k_base_operacional = max(candidatos_operacionais)
             k_base_operacional = max(k_min, min(k_base_operacional, k_max, len(coordenadas)))
@@ -545,45 +498,76 @@ class SimulationService:
         self.logger.info(f"🧮 Lista de k gerada para testes: {lista_k_final}")
         return lista_k_final
 
-    def gerar_cenarios_explicitos(self, df_entregas, parametros):
-        faixa_k = self.calcular_faixa_operacional_k(df_entregas, parametros)
-        k_inicial = self.obter_k_inicial(
-            df_entregas,
-            faixa_k["k_min"],
-            faixa_k["k_max"],
-            parametros,
+    def gerar_cenarios_explicitos(self, df_entregas, params: SimulationParams):
+
+        import math
+
+        total_entregas = len(df_entregas)
+
+        if total_entregas == 0:
+            return []
+
+        # 🔴 FAIXA OPERACIONAL DE K
+        minimo_alvo = max(1, int(params.min_entregas_por_cluster_alvo or 1))
+        maximo_alvo = max(minimo_alvo, int(params.max_entregas_por_cluster_alvo or total_entregas))
+
+        k_min = max(1, math.ceil(total_entregas / maximo_alvo))
+        k_max = max(1, math.floor(total_entregas / minimo_alvo))
+
+        if k_min > k_max:
+            k_min = k_max
+
+        self.logger.info(
+            f"[K DEBUG] total={total_entregas} | "
+            f"min_cluster={minimo_alvo} | max_cluster={maximo_alvo} | "
+            f"k_min={k_min} | k_max={k_max}"
         )
-        lista_k = self.gerar_lista_k(
-            k_inicial,
-            faixa_k["k_min"],
-            faixa_k["k_max"],
-        )
-        usa_cluster_hub = not parametros.get("desativar_cluster_hub", False)
+
+        # 🔴 CENÁRIO K0 (SEMPRE PRESENTE)
+        cenarios = [
+            {
+                "tipo": "k_zero",
+                "identificador": "k=0",
+                "k_clusters": 0,
+            }
+        ]
+
+        # 🔴 RANGE COMPLETO DE K
+        lista_k = list(range(k_min, k_max + 1))
+
+        usa_cluster_hub = not params.desativar_cluster_hub
+
         if usa_cluster_hub:
+            # ajuste para considerar hub como cluster adicional
             lista_k = [k - 1 for k in lista_k if k >= 2]
         else:
             lista_k = [k for k in lista_k if k >= 1]
 
-        cenarios = [
+        # 🔴 (OPCIONAL) PRIORIZAR K MAIS PROVÁVEL
+        try:
+            k_inicial = getattr(params, "k_inicial", None)
+            if k_inicial:
+                lista_k = sorted(lista_k, key=lambda x: abs(x - k_inicial))
+        except Exception:
+            pass
+
+        # 🔴 MONTA CENÁRIOS
+        cenarios_k = [
             {
                 "tipo": "k_numero",
                 "identificador": f"k={k}",
                 "k_clusters": k,
-                "algoritmo": parametros.get(
-                    "algoritmo_clusterizacao_principal",
-                    "kmeans",
-                ),
-                "origem_faixa_k": faixa_k["origem"],
+                "algoritmo": getattr(params, "algoritmo_clusterizacao", "kmeans"),
             }
             for k in lista_k
         ]
 
+        cenarios.extend(cenarios_k)
+
         self.logger.info(
-            "🧭 Cenários explícitos gerados: "
-            f"qtd={len(cenarios)} | "
-            f"lista={[cenario['identificador'] for cenario in cenarios]} | "
-            "k=0 é representado separadamente pelo cenário Hub único"
+            f"🧭 Cenários finais gerados: {[c['identificador'] for c in cenarios]}"
         )
+
         return cenarios
 
 
@@ -700,3 +684,28 @@ class SimulationService:
 
         Hub = namedtuple("Hub", ["nome", "latitude", "longitude", "cidade"])
         return Hub(*row)
+
+
+
+    def gerar_range_k(total_entregas: int, min_cluster: int, max_cluster: int, max_cenarios: int = 20):
+
+        if total_entregas <= 0:
+            return []
+
+        min_cluster = max(1, int(min_cluster))
+        max_cluster = max(min_cluster, int(max_cluster))
+
+        k_min = math.ceil(total_entregas / max_cluster)
+        k_max = math.floor(total_entregas / min_cluster)
+
+        if k_min > k_max:
+            k_min = k_max
+
+        k_values = list(range(k_min, k_max + 1))
+
+        # 🔴 proteção contra explosão
+        if len(k_values) > max_cenarios:
+            step = math.ceil(len(k_values) / max_cenarios)
+            k_values = k_values[::step]
+
+        return k_values

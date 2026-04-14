@@ -1,9 +1,9 @@
 curl -X POST "http://localhost/auth/login?email=paulo.silas@igotech.com.br&senha=Admin@2025"
 curl -X POST "http://34.227.175.23/auth/login?email=paulo.silas@igotech.com.br&senha=Psilas@85"
-curl -X POST http://34.227.175.23/auth/login \
+curl -k -X POST https://44.210.12.52/auth/login \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "paulo.silas@igotech.com.br",
+    "email": "paulo.silas@friozem.com.br",
     "senha": "Psilas@85"
   }'
 

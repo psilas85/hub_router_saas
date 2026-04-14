@@ -43,7 +43,7 @@ def executar_geracao_relatorio_final(
         return
 
     # Caminho do gráfico consolidado
-    grafico_custo_path = os.path.join(base_dir, "graphs", tenant_id, f"grafico_simulacao_{envio_data}.png")
+    grafico_custo_path = os.path.join(base_dir, "graphs", tenant_id, envio_data, f"grafico_simulacao_{envio_data}.png")
 
     # 🔹 Respeita modo_forcar para gráficos
     if modo_forcar or not os.path.exists(grafico_custo_path):
@@ -94,7 +94,7 @@ def executar_geracao_relatorio_final(
             grafico_custo_path = None
 
     # Geração do PDF (sempre sobrescreve)
-    relatorio_dir = os.path.join(base_dir, "relatorios", tenant_id)
+    relatorio_dir = os.path.join(base_dir, "relatorios", tenant_id, envio_data)
     os.makedirs(relatorio_dir, exist_ok=True)
     relatorio_path = gerar_relatorio_simulacao(
         tenant_id=tenant_id,

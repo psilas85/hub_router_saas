@@ -4,7 +4,7 @@ from datetime import date
 from typing import List, Dict
 import uuid
 
-from simulation.domain.entities import TransferenciaDetalhe, TransferenciaResumo, Hub, ClusterTransferencia
+from simulation.domain.entities import SimulationParams, TransferenciaDetalhe, TransferenciaResumo, Hub, ClusterTransferencia
 from simulation.domain.transfer_grouping_service import agrupar_clusters_em_rotas
 
 
@@ -16,16 +16,14 @@ class TransferPlannerAdapter:
         k_clusters: int,
         is_ponto_otimo: bool,
         logger,
-        tempo_max_transferencia: int,
-        peso_max_kg: float
+        params: SimulationParams
     ):
         self.tenant_id = tenant_id
         self.simulation_id = simulation_id
         self.k_clusters = k_clusters
         self.is_ponto_otimo = is_ponto_otimo
         self.logger = logger
-        self.tempo_max_transferencia = tempo_max_transferencia
-        self.peso_max_kg = peso_max_kg
+        self.params = params
 
     def planejar_rotas(self, df_entregas, hub: Hub, envio_data: date) -> Dict:
         self.logger.info("📦 Consolidando entregas por cluster...")
@@ -50,8 +48,8 @@ class TransferPlannerAdapter:
         rotas_grupo = agrupar_clusters_em_rotas(
             clusters=clusters_consolidados,
             hub_coord=hub_coord,
-            tempo_max=self.tempo_max_transferencia,
-            peso_max=self.peso_max_kg,
+            tempo_max=self.params.tempo_max_transferencia,
+            peso_max=self.params.peso_max_transferencia,
             tenant_id=self.tenant_id,
             db_conn=hub.db_conn,
             logger=self.logger

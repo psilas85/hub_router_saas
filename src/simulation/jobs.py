@@ -1,5 +1,6 @@
 #hub_router_1.0.1/src/simulation/jobs.py
 
+import os
 import uuid
 import traceback
 import json
@@ -14,67 +15,12 @@ from simulation.infrastructure.simulation_database_connection import (
 )
 from simulation.logs.simulation_logger import configurar_logger
 
+from simulation.domain.entities import SimulationParams
 
-FRONTEND_TO_PIPELINE_PARAM_MAP = {
-    "parada_leve": "tempo_parada_leve",
-    "parada_pesada": "tempo_parada_pesada",
-    "tempo_volume": "tempo_por_volume",
-    "velocidade": "velocidade_media_kmh",
-    "limite_peso": "limite_peso_parada",
-    "tempo_max_transferencia": "tempo_maximo_transferencia",
-    "peso_max_transferencia": "peso_max_kg",
-    "entregas_por_subcluster": "entregas_por_subcluster",
-    "tempo_max_roteirizacao": "tempo_maximo_roteirizacao",
-    "tempo_max_k0": "tempo_maximo_k0",
-    "permitir_rotas_excedentes": "permitir_rotas_excedentes",
-    "restricao_veiculo_leve_municipio": "restricao_veiculo_leve_municipio",
-    "peso_leve_max": "peso_leve_max",
-    "desativar_cluster_hub": "desativar_cluster_hub",
-    "raio_hub_km": "raio_hub_km",
-    "usar_outlier": "usar_outlier",
-    "distancia_outlier_km": "distancia_outlier_km",
-    "min_entregas_por_cluster_alvo": "min_entregas_por_cluster_alvo",
-    "max_entregas_por_cluster_alvo": "max_entregas_por_cluster_alvo",
-    "algoritmo_clusterizacao_principal": "algoritmo_clusterizacao_principal",
-}
-
-PIPELINE_DEFAULTS_FIXOS = {
-    "k_min": 1,
-    "k_max": 50,
-    "min_entregas_cluster": 25,
-}
 
 
 def _json_log(payload):
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
-
-
-def _montar_diff_propagacao(parametros_recebidos, parametros_final):
-    comparacao = []
-
-    for frontend_key, pipeline_key in FRONTEND_TO_PIPELINE_PARAM_MAP.items():
-        recebido = parametros_recebidos.get(frontend_key)
-        propagado = parametros_final.get(pipeline_key)
-        comparacao.append({
-            "frontend": frontend_key,
-            "pipeline": pipeline_key,
-            "recebido": recebido,
-            "propagado": propagado,
-            "igual": recebido == propagado,
-        })
-
-    defaults_fixos = []
-    for pipeline_key, valor in PIPELINE_DEFAULTS_FIXOS.items():
-        defaults_fixos.append({
-            "pipeline": pipeline_key,
-            "valor": parametros_final.get(pipeline_key, valor),
-            "origem": "default_interno",
-        })
-
-    return {
-        "comparacao": comparacao,
-        "defaults_fixos": defaults_fixos,
-    }
 
 
 def _extrair_motivo_curto_invalidacao(resultado_ignorado):
@@ -112,7 +58,7 @@ def _montar_mensagem_ignoradas(data_inicial, data_final, ignoradas):
     )
 
 
-def _processar_data_envio(envio_data, tenant_id, hub_id, parametros, modo_forcar):
+def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
     """Executa simulação para 1 data de envio (processo separado)."""
     simulation_id = str(uuid.uuid4())
     log_file = f"/app/logs/simulation_{envio_data}.log"
@@ -127,69 +73,30 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, parametros, modo_forcar
             "[simulation.worker] envio_data=%s tenant_id=%s parametros_recebidos=%s",
             envio_data,
             tenant_id,
-            _json_log(parametros),
+            _json_log(params),
         )
 
-        parametros_final = {
-            "tempo_parada_min": parametros.get("parada_leve", 10),
-            "tempo_parada_leve": parametros.get("parada_leve", 10),
-            "tempo_parada_pesada": parametros.get("parada_pesada", 20),
-            "tempo_descarga_por_volume": parametros.get("tempo_volume", 0.40),
-            "tempo_por_volume": parametros.get("tempo_volume", 0.40),
-            "velocidade_media_kmh": parametros.get("velocidade", 60),
-            "limite_peso_parada": parametros.get("limite_peso", 50),
-            "tempo_maximo_transferencia": parametros.get("tempo_max_transferencia", 600),
-            "peso_max_kg": parametros.get("peso_max_transferencia", 18000),
-            "entregas_por_subcluster": parametros.get("entregas_por_subcluster", 25),
-            "tempo_maximo_roteirizacao": parametros.get("tempo_max_roteirizacao", 600),
-            "tempo_maximo_k0": parametros.get("tempo_max_k0", 1200),
-            "k_min": 1,
-            "k_max": 50,
-            "min_entregas_cluster": 25,
-            "permitir_rotas_excedentes": parametros.get("permitir_rotas_excedentes", True),
-            "restricao_veiculo_leve_municipio": parametros.get("restricao_veiculo_leve_municipio", True),
-            "peso_leve_max": parametros.get("peso_leve_max", 50.0),
-            "desativar_cluster_hub": parametros.get("desativar_cluster_hub", False),
-            "raio_hub_km": parametros.get("raio_hub_km", 80.0),
-            "usar_outlier": parametros.get("usar_outlier", False),
-            "distancia_outlier_km": parametros.get("distancia_outlier_km"),
-            "min_entregas_por_cluster_alvo": parametros.get("min_entregas_por_cluster_alvo", 10),
-            "max_entregas_por_cluster_alvo": parametros.get("max_entregas_por_cluster_alvo", 100),
-            "algoritmo_clusterizacao_principal": parametros.get(
-                "algoritmo_clusterizacao_principal",
-                "kmeans",
-            ),
-            "tempo_especial_min": parametros.get("tempo_especial_min", 180),
-            "tempo_especial_max": parametros.get("tempo_especial_max", 300),
-            "max_especiais_por_rota": parametros.get("max_especiais_por_rota", 1),
-            "algoritmo_roteirizacao": parametros.get("algoritmo_roteirizacao", "padrao"),
-        }
+        if not isinstance(params, SimulationParams):
+            params = SimulationParams(**params)
 
-        logger.info(f"🧠 Algoritmo de roteirização: {parametros_final.get('algoritmo_roteirizacao')}")
         logger.info(
-            "[simulation.worker] envio_data=%s tenant_id=%s parametros_pipeline=%s",
+            "[simulation.worker] envio_data=%s tenant_id=%s params=%s",
             envio_data,
             tenant_id,
-            _json_log(parametros_final),
-        )
-        logger.info(
-            "[simulation.worker] envio_data=%s tenant_id=%s diff_propagacao=%s",
-            envio_data,
-            tenant_id,
-            _json_log(_montar_diff_propagacao(parametros, parametros_final)),
+            _json_log(params.dict()),
         )
 
         use_case = SimulationUseCase(
             tenant_id=tenant_id,
             envio_data=envio_data,
             hub_id=hub_id,
-            parametros=parametros_final,
+            params=params,
             clusterization_db=clusterization_db,
             simulation_db=simulation_db,
             logger=logger,
             modo_forcar=modo_forcar,
             simulation_id=simulation_id,
-            permitir_rotas_excedentes=parametros_final.get("permitir_rotas_excedentes", True),
+            permitir_rotas_excedentes=params.permitir_rotas_excedentes,
         )
 
         ponto = use_case.executar_simulacao_completa()
@@ -232,7 +139,7 @@ def processar_simulacao(
     data_inicial: str,
     data_final: str,
     hub_id: int,
-    parametros: dict,
+    params: dict,
     modo_forcar: bool = False,
 ):
     """
@@ -253,10 +160,12 @@ def processar_simulacao(
 
     results = []
     try:
-        max_workers = 4
+
+
+        max_workers = min(4, os.cpu_count() or 2)
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(_processar_data_envio, d, tenant_id, hub_id, parametros, modo_forcar): d
+                executor.submit(_processar_data_envio, str(d), tenant_id, hub_id, params, modo_forcar): d
                 for d in lista_datas
             }
             for idx, future in enumerate(as_completed(futures), 1):

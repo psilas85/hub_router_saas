@@ -1,4 +1,4 @@
-#simulation/domain/clusterization_service.py
+#hub_router_1.0.1/src/simulation/domain/clusterization_service.py
 
 import pandas as pd
 import numpy as np
@@ -129,19 +129,100 @@ class ClusterizationService:
 
         return df_clusterizado
 
-    def clusterizar(self, df_entregas, k, tenant_id, envio_data, simulation_id):
-        self.logger.info(f"📊 Realizando clusterização com KMeans (k={k})...")
+    def _balanced_kmeans(self, df, k, max_iter=10, tolerance=2):
+
+        df = df.copy()
+        coords = df[["latitude", "longitude"]].values
+
+        # KMeans inicial
+        modelo = KMeans(n_clusters=k, n_init='auto', random_state=42)
+        df["cluster"] = modelo.fit_predict(coords)
+
+        target = int(len(df) / k)
+
+        for _ in range(max_iter):
+            sizes = df["cluster"].value_counts().to_dict()
+
+            excesso = [c for c, s in sizes.items() if s > target + tolerance]
+            deficit = [c for c, s in sizes.items() if s < target - tolerance]
+
+            if not excesso or not deficit:
+                break
+
+            for c_ex in excesso:
+                sobra = sizes[c_ex] - target
+
+                pontos = df[df["cluster"] == c_ex].copy()
+
+                centro = pontos[["latitude", "longitude"]].mean().values
+                pontos["dist"] = np.linalg.norm(
+                    pontos[["latitude", "longitude"]].values - centro,
+                    axis=1
+                )
+
+                mover = pontos.sort_values("dist", ascending=False).head(sobra)
+
+                for idx, row in mover.iterrows():
+
+                    melhor_cluster = None
+                    melhor_dist = float("inf")
+
+                    for c_def in deficit:
+                        centro_def = df[df["cluster"] == c_def][["latitude", "longitude"]].mean().values
+                        dist = np.linalg.norm(
+                            row[["latitude", "longitude"]].values - centro_def
+                        )
+
+                        if dist < melhor_dist:
+                            melhor_dist = dist
+                            melhor_cluster = c_def
+
+                    if melhor_cluster is not None:
+                        df.at[idx, "cluster"] = melhor_cluster
+
+        return df
+
+    def clusterizar(
+        self,
+        df_entregas,
+        k,
+        tenant_id,
+        envio_data,
+        simulation_id,
+        algoritmo="kmeans",
+        entregas_por_rota=25  # 🔥 novo
+    ):
+        self.logger.info(f"📊 Clusterização algoritmo={algoritmo} (k={k})...")
 
         df_validas = self._preparar_dataframe_clusterizacao(df_entregas)
+
+        # 🔥 ajuste inteligente baseado na regra de negócio
+        k_original = k
+
+        if len(df_validas) > 0:
+            k = min(k, max(1, int(len(df_validas) / entregas_por_rota)))
+
+        if k != k_original:
+            self.logger.warning(
+                f"⚠️ Ajustando k de {k_original} para {k} baseado em entregas_por_rota={entregas_por_rota} (total={len(df_validas)})"
+            )
 
         if len(df_validas) < k:
             raise ValueError(
                 f"❌ Quantidade insuficiente de entregas válidas para k={k}: {len(df_validas)}"
             )
 
-        coordenadas_validas = df_validas[["latitude", "longitude"]].values
-        modelo = KMeans(n_clusters=k, n_init='auto', random_state=42)
-        df_validas['cluster'] = modelo.fit_predict(coordenadas_validas)
+        if algoritmo == "kmeans":
+            modelo = KMeans(n_clusters=k, n_init='auto', random_state=42)
+            df_validas['cluster'] = modelo.fit_predict(
+                df_validas[["latitude", "longitude"]].values
+            )
+
+        elif algoritmo == "balanced_kmeans":
+            df_validas = self._balanced_kmeans(df_validas, k)
+
+        else:
+            raise ValueError(f"Algoritmo não suportado: {algoritmo}")
         df_validas = self._atribuir_centros_a_clusters(df_validas)
 
         self.logger.info(f"✅ Clusterização finalizada para k={k} com {k} clusters.")

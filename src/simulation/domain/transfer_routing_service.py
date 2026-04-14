@@ -19,14 +19,16 @@ from simulation.infrastructure.simulation_database_writer import (
     salvar_rotas_transferencias
 )
 
+from simulation.domain.entities import SimulationParams
+
 
 class TransferRoutingService:
-    def __init__(self, clusterization_db, simulation_db, logger, tenant_id, parametros, hub_id):
+    def __init__(self, clusterization_db, simulation_db, logger, tenant_id, params: SimulationParams, hub_id):
+        self.params = params
         self.clusterization_db = clusterization_db
         self.simulation_db = simulation_db
         self.logger = logger
         self.tenant_id = tenant_id
-        self.parametros = parametros
         self.hub_id = hub_id
 
     @staticmethod
@@ -66,13 +68,7 @@ class TransferRoutingService:
         return df
 
     def _obter_velocidade_media_kmh(self):
-        return float(
-            self.parametros.get(
-                "velocidade_media_kmh",
-                self.parametros.get("velocidade", 60.0),
-            )
-            or 60.0
-        )
+        return float(self.params.velocidade_kmh)
 
     def _calcular_tempo_servico_ponto(self, ponto):
         tempo_atendimento = ponto.get("tempo_atendimento_min")
@@ -81,17 +77,13 @@ class TransferRoutingService:
 
         peso = float(ponto.get("peso") or 0.0)
         volumes = float(ponto.get("volumes") or 0.0)
-        limite_peso_parada = float(
-            self.parametros.get("limite_peso_parada", 50.0) or 50.0
-        )
         tempo_parada = (
-            float(self.parametros.get("tempo_parada_pesada", 20.0) or 20.0)
-            if peso > limite_peso_parada
-            else float(self.parametros.get("tempo_parada_leve", 10.0) or 10.0)
+            self.params.tempo_parada_pesada
+            if peso > self.params.limite_peso_parada
+            else self.params.tempo_parada_leve
         )
-        tempo_por_volume = float(
-            self.parametros.get("tempo_descarga_por_volume", 0.4) or 0.4
-        )
+
+        tempo_por_volume = self.params.tempo_por_volume
         return tempo_parada + (volumes * tempo_por_volume)
 
     def rotear_transferencias(self, envio_data, simulation_id, k_clusters, is_ponto_otimo, persistir=True):
@@ -147,9 +139,11 @@ class TransferRoutingService:
         # ❌ Ignorar entregas do cluster do hub central e seus subgrupos (9999, 9999_1, ...)
         df = df[~df["cluster"].astype(str).str.startswith("9999")]
 
+        if df.empty:
+            self.logger.info("ℹ️ Todas as entregas estão no cluster do hub central. Não há roteirização de transferência a executar.")
+            return self._retorno_vazio()
 
         self.logger.info(f"🔍 Total de entregas únicas (CTEs): {df['cte_numero'].nunique()}")
-
 
         hub = carregar_hub_por_id(self.simulation_db, self.tenant_id, self.hub_id)
         if not hub:
@@ -201,11 +195,8 @@ class TransferRoutingService:
         rotas = gerar_rotas_savings_transfer(
             pontos=pontos,
             origem=origem,
-            tempo_maximo=self.parametros["tempo_maximo_transferencia"],
-            tempo_parada_pesada=self.parametros["tempo_parada_pesada"],
-            tempo_parada_leve=self.parametros["tempo_parada_leve"],
-            tempo_por_volume=self.parametros["tempo_descarga_por_volume"],
-            peso_max_kg=self.parametros["peso_max_kg"],
+            tempo_maximo=self.params.tempo_max_transferencia,
+            params=self.params,
             obter_rota_func=obter_rota,
             logger=self.logger
         )

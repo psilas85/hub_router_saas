@@ -43,6 +43,10 @@ from simulation.visualization.gerador_relatorio_final import \
 from simulation.utils.export_entregas_excel import \
     exportar_entregas_com_rotas_excel
 
+from simulation.domain.entities import SimulationParams
+from simulation.domain.strategy_resolver import resolver_estrategia
+from simulation.domain.simulation_service import SimulationService
+
 
 class SimulationUseCase:
     def __init__(
@@ -52,7 +56,7 @@ class SimulationUseCase:
         simulation_db,
         clusterization_db,
         logger,
-        parametros=None,
+        params=None,
         modo_forcar=False,
         simulation_id=None,
         permitir_rotas_excedentes=True,
@@ -63,41 +67,94 @@ class SimulationUseCase:
         self.simulation_db = simulation_db
         self.clusterization_db = clusterization_db
         self.logger = logger
-        self.parametros = parametros or {}
+
+        # 🔥 FONTE ÚNICA
+        if not isinstance(params, SimulationParams):
+            self.params = SimulationParams(**(params or {}))
+        else:
+            self.params = params
+
+        # 🔥 GARANTE CONSISTÊNCIA DO PARAM
+        self.params.permitir_rotas_excedentes = permitir_rotas_excedentes
+
+        # 🔥 estratégia derivada
+        self.estrategia = resolver_estrategia(self.params)
+
+        # 🔥 LOG CORRETO
+        self.logger.info(
+            f"[SIMULATION CONFIG] modo={self.params.modo_simulacao} | "
+            f"cluster={self.estrategia.algoritmo_clusterizacao} | "
+            f"routing={self.estrategia.algoritmo_roteirizacao} | "
+            f"velocidade_kmh={self.params.velocidade_kmh}"
+        )
+
+        self.logger.info(
+            f"[PARAMS] raio_hub_km={self.params.raio_hub_km} | "
+            f"tempo_max_k0={getattr(self.params, 'tempo_max_k0', 'NA')} | "
+            f"tempo_max_roteirizacao={self.params.tempo_max_roteirizacao}"
+        )
+
         self.modo_forcar = modo_forcar
         self.simulation_id = simulation_id or str(uuid.uuid4())
         self.permitir_rotas_excedentes = permitir_rotas_excedentes
         self.hub_id = hub_id
-        self.output_dir = f"exports/simulation/entregas/{self.tenant_id}"
+        self.output_dir = f"exports/simulation/entregas/{self.tenant_id}/{self.envio_data}"
 
-        # Inicializa lista de cenários invalidados
+        # cenários inválidos
         self.cenarios_invalidados = []
 
-        self.simulation_service = SimulationService(tenant_id, envio_data, simulation_db, logger, hub_id=hub_id)
-        self.cluster_service = ClusterizationService(clusterization_db, simulation_db, logger, tenant_id)
+        # 🔥 SERVICES PADRONIZADOS (SEM ADAPTER)
+
+        self.simulation_service = SimulationService(
+            tenant_id,
+            envio_data,
+            simulation_db,
+            logger,
+            hub_id=hub_id
+        )
+
+        self.cluster_service = ClusterizationService(
+            clusterization_db,
+            simulation_db,
+            logger,
+            tenant_id
+        )
+
         self.last_mile_service = LastMileRoutingService(
             simulation_db=simulation_db,
             clusterization_db=clusterization_db,
             tenant_id=tenant_id,
             logger=logger,
-            parametros=self.parametros,
+            params=self.params,  # 🔥 aqui muda tudo
             envio_data=envio_data,
             permitir_rotas_excedentes=permitir_rotas_excedentes
         )
+
         self.transfer_service = TransferRoutingService(
-            clusterization_db, simulation_db, logger, tenant_id, self.parametros, hub_id
+            clusterization_db=clusterization_db,
+            simulation_db=simulation_db,
+            logger=logger,
+            tenant_id=tenant_id,
+            params=self.params,  # 🔥 aqui também
+            hub_id=hub_id
         )
+
         self.cost_last_mile_service = CostLastMileService(
             simulation_db,
             logger,
             tenant_id,
         )
+
         self.cost_transfer_service = CostTransferService(
             simulation_db,
             logger,
             tenant_id,
         )
-        self.result_service = SimulationResultService(simulation_db, logger)
+
+        self.result_service = SimulationResultService(
+            simulation_db,
+            logger
+        )
 
     def exportar_excel_entregas_rotas(self):
         """
@@ -120,10 +177,13 @@ class SimulationUseCase:
         self.cenarios_invalidados = []
 
     def _contar_especiais_na_rota(self, route, special_flags):
-        return sum(
-            1 for idx in route
-            if isinstance(idx, int) and 0 <= idx < len(special_flags) and special_flags[idx]
-        )
+        total = 0
+        for idx in route:
+            if idx == 0:
+                continue  # depot
+            if 0 <= idx < len(special_flags) and special_flags[idx]:
+                total += 1
+        return total
 
     def _registrar_cenario_invalidado(self, k, motivo, detalhes=None):
         registro = {
@@ -169,7 +229,7 @@ class SimulationUseCase:
                 clusterization_db=clusterization_db,
                 tenant_id=self.tenant_id,
                 logger=self.logger,
-                parametros=self.parametros,
+                params=self.params,
                 envio_data=self.envio_data,
                 permitir_rotas_excedentes=self.permitir_rotas_excedentes,
             )
@@ -179,11 +239,7 @@ class SimulationUseCase:
                 self.tenant_id,
             )
 
-            tempo_maximo = (
-                self.parametros.get("tempo_maximo_k0")
-                if int(k) == 0
-                else self.parametros.get("tempo_maximo_roteirizacao")
-            )
+            tempo_maximo = getattr(self.params, "tempo_max_k0", self.params.tempo_max_roteirizacao)
 
             rotas = last_mile_service.rotear_last_mile(
                 df_cluster,
@@ -357,7 +413,8 @@ class SimulationUseCase:
         k_persistencia,
     ):
         resultados_clusters = []
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        max_workers = min(8, os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(
                     self._processar_cluster_lastmile,
@@ -480,9 +537,9 @@ class SimulationUseCase:
         # --------------------------------------------------
         # 🔹 Regra de especiais
         # --------------------------------------------------
-        tempo_especial_min = int(self.parametros.get("tempo_especial_min", 180))
-        tempo_especial_max = int(self.parametros.get("tempo_especial_max", 300))
-        max_especiais_por_rota = int(self.parametros.get("max_especiais_por_rota", 1))
+        tempo_especial_min = self.params.tempo_especial_min
+        tempo_especial_max = self.params.tempo_especial_max
+        max_especiais_por_rota = self.params.max_especiais_por_rota
 
         df["is_especial"] = df["cte_tempo_atendimento_min"].between(
             tempo_especial_min,
@@ -510,23 +567,70 @@ class SimulationUseCase:
         df_especiais = df[df["is_especial"]].copy()
         df_normais = df[~df["is_especial"]].copy()
 
-        num_rotas_seed = min(
-            max(1, math.ceil(len(df_especiais) / max_especiais_por_rota)),
-            max(1, int(len(df) / 5))
+        # 🔹 parâmetros
+        entregas_por_rota = self.params.entregas_por_rota
+
+        # 🔹 mínimo de rotas por especiais
+        min_rotas_por_especiais = (
+            max(1, math.ceil(len(df_especiais) / max_especiais_por_rota))
+            if len(df_especiais) > 0 else 1
         )
+
+        # 🔹 rotas por volume (CORRIGIDO)
+        rotas_por_volume = max(
+            1,
+            math.ceil(len(df) / entregas_por_rota)
+        )
+
+        # 🔹 seed inicial
+        num_rotas_seed = max(min_rotas_por_especiais, rotas_por_volume)
+
+        # --------------------------------------------------
+        # 🔹 Definição de veículos (ANTES DO SEED FINAL)
+        # --------------------------------------------------
+        tempo_max = self.params.tempo_max_roteirizacao
+
+        min_veiculos_especial = (
+            max(1, math.ceil(total_especiais / max_especiais_por_rota))
+            if total_especiais > 0 else 1
+        )
+
+        veiculos_por_volume = max(
+            1,
+            math.ceil(total_entregas / entregas_por_rota)
+        )
+
+        num_vehicles = max(min_veiculos_especial, veiculos_por_volume)
+
+        # --------------------------------------------------
+        # 🔥 CORREÇÃO CRÍTICA: ALINHAR SEED COM VEÍCULOS
+        # --------------------------------------------------
+        if num_rotas_seed < num_vehicles:
+            self.logger.warning(
+                f"⚠️ Ajustando rotas_seed de {num_rotas_seed} para {num_vehicles} "
+                f"para respeitar capacidade de veículos"
+            )
+            num_rotas_seed = num_vehicles
 
         self.logger.info(
-            f"🧠 SEEDING | especiais={len(df_especiais)} | rotas_seed={num_rotas_seed}"
+            f"🧠 SEEDING | especiais={len(df_especiais)} | "
+            f"rotas_seed={num_rotas_seed} | "
+            f"min_rotas_por_especiais={min_rotas_por_especiais} | "
+            f"rotas_por_volume={rotas_por_volume}"
         )
 
+        # --------------------------------------------------
+        # 🔥 CRIAÇÃO DOS BUCKETS (AGORA CORRETO)
+        # --------------------------------------------------
         buckets = [[] for _ in range(num_rotas_seed)]
 
-        # distribui especiais
+        # distribui especiais primeiro
         for i, (_, row) in enumerate(df_especiais.iterrows()):
             bucket_idx = i % num_rotas_seed
             buckets[bucket_idx].append(row)
 
-        df_normais = df_normais.sample(frac=1).reset_index(drop=True)
+        # embaralha normais
+        df_normais = df_normais.sample(frac=1, random_state=42).reset_index(drop=True)
 
         # distribui normais
         for i, (_, row) in enumerate(df_normais.iterrows()):
@@ -534,62 +638,91 @@ class SimulationUseCase:
             buckets[bucket_idx].append(row)
 
         df_rebalanceado = pd.concat(
-            [pd.DataFrame(bucket) for bucket in buckets],
+            [pd.DataFrame(bucket) for bucket in buckets if len(bucket) > 0],
             ignore_index=True
         )
 
         df = df_rebalanceado.reset_index(drop=True)
         self.logger.info("✅ SEEDING aplicado antes do solver")
 
-
         # --------------------------------------------------
-        # 🔹 Inputs solver
+        # 🔥 VALIDAÇÃO FINAL DE CAPACIDADE
         # --------------------------------------------------
-        locations = df[["latitude", "longitude"]].values.tolist()
-        special_flags = df["is_especial"].tolist()
-        # Não temos janela real → None
-        time_windows = [None] * len(df)
+        capacidade_especiais = num_vehicles * max_especiais_por_rota
 
-        # Service time = tempo de atendimento
-        service_times = df["cte_tempo_atendimento_min"].astype(int).tolist()
-
-        # --------------------------------------------------
-        # 🔹 Definição de veículos
-        # --------------------------------------------------
-        entregas_por_rota = int(self.parametros.get("entregas_por_subcluster", 25))
-        tempo_max = int(self.parametros.get("tempo_maximo_roteirizacao", 600))
-
-        min_veiculos_especial = max(
-            1,
-            math.ceil(total_especiais / max_especiais_por_rota)
-        ) if total_especiais > 0 else 1
-
-        veiculos_por_volume = max(
-            1,
-            math.ceil(total_entregas / entregas_por_rota)
-        )
-
-        num_vehicles = max(min_veiculos_especial, veiculos_por_volume, 1)
+        if total_especiais > capacidade_especiais:
+            self._registrar_cenario_invalidado(
+                identificador_cenario,
+                (
+                    f"inviável para TW: especiais={total_especiais} "
+                    f"capacidade={capacidade_especiais} "
+                    f"veiculos={num_vehicles} "
+                    f"max_especiais_por_rota={max_especiais_por_rota}"
+                ),
+            )
+            return None, None
 
         self.logger.info(
-            f"🚚 TW veículos={num_vehicles} | por_especial={min_veiculos_especial} | por_volume={veiculos_por_volume}"
+            f"🚚 TW veículos={num_vehicles} | "
+            f"por_especial={min_veiculos_especial} | "
+            f"por_volume={veiculos_por_volume} | "
+            f"capacidade_especiais={capacidade_especiais}"
         )
 
         # --------------------------------------------------
-        # 🔹 Solver OR-Tools
+        # 🔥 MONTAGEM DOS INPUTS DO SOLVER
         # --------------------------------------------------
+
+        locations = list(zip(df["latitude"], df["longitude"]))
+
+        service_times = []
+
+        for _, row in df.iterrows():
+            tempo_atendimento = row.get("cte_tempo_atendimento_min")
+
+            if pd.notna(tempo_atendimento) and float(tempo_atendimento) > 0:
+                service_times.append(float(tempo_atendimento))
+            else:
+                peso = float(row.get("cte_peso", 0))
+                volumes = float(row.get("cte_volumes", 0))
+
+                tempo_parada = (
+                    self.params.tempo_parada_pesada
+                    if peso > self.params.limite_peso_parada
+                    else self.params.tempo_parada_leve
+                )
+
+                tempo_descarga = volumes * self.params.tempo_por_volume
+
+                service_times.append(tempo_parada + tempo_descarga)
+
+        permitir_rotas_excedentes = self.permitir_rotas_excedentes
+
+        if permitir_rotas_excedentes:
+            time_windows = [(0, 100000)] * len(locations)
+        else:
+            time_windows = [(0, tempo_max)] * len(locations)
+
+        special_flags = df["is_especial"].tolist()
+
+        self.logger.info(
+            f"[TW INPUT] locations={len(locations)} | "
+            f"service_times={len(service_times)} | "
+            f"vehicles={num_vehicles} | "
+            f"velocidade={self.params.velocidade_kmh} | "
+            f"permitir_rotas_excedentes={permitir_rotas_excedentes}"
+        )
+
         routes = solve_time_windows_vrp(
             locations=locations,
             special_flags=special_flags,
             time_windows=time_windows,
             service_times=service_times,
-            max_special_per_route=max_especiais_por_rota,
+            params=self.params,
             depot_location=depot_location,
             num_vehicles=num_vehicles,
-            route_time_limit_min=tempo_max,
         )
-
-       # 🔥 remove rotas vazias (proteção solver)
+        # 🔥 remove rotas vazias (proteção solver)
         routes = [r for r in routes if r and len(r) > 0]
 
         if not routes:
@@ -663,8 +796,11 @@ class SimulationUseCase:
 
         for rota_id, route in enumerate(routes, start=1):
             for ordem, idx in enumerate(route, start=1):
-                if idx >= len(df):
-                    self.logger.warning(f"⚠️ Índice inválido retornado pelo solver: {idx}")
+
+                if not (0 <= idx < len(df)):
+                    self.logger.warning(
+                        f"⚠️ Índice inválido: idx={idx} len(df)={len(df)} rota_id={rota_id}"
+                    )
                     continue
 
                 row = df.iloc[idx]
@@ -680,7 +816,6 @@ class SimulationUseCase:
                     "cte_tempo_atendimento_min": row.get("cte_tempo_atendimento_min"),
                     "fonte_metricas": "ortools_time_windows",
                 })
-
 
 
 
@@ -783,8 +918,13 @@ class SimulationUseCase:
                             peso = float(entrega.get("cte_peso", 0))
                             volumes = float(entrega.get("cte_volumes", 0))
 
-                            tempo_parada = 20 if peso > 200 else 10
-                            tempo_descarga = volumes * 0.4
+                            tempo_parada = (
+                                self.params.tempo_parada_pesada
+                                if peso > self.params.limite_peso_parada
+                                else self.params.tempo_parada_leve
+                            )
+
+                            tempo_descarga = volumes * self.params.tempo_por_volume
 
                             tempo_atendimento = tempo_parada + tempo_descarga
 
@@ -927,11 +1067,42 @@ class SimulationUseCase:
             })
         df_detalhes = pd.DataFrame(detalhes_list)
 
-        # 🔍 SANIDADE FINAL
-        if len(df_rotas) != len(df):
+        # 🔍 SANIDADE FINAL (CORRIGIDO)
+        total_input = df["cte_numero"].nunique()
+        total_output = df_rotas["cte_numero"].nunique()
+        dropped_nodes = total_input - total_output
+
+        if dropped_nodes > 0:
             self.logger.warning(
-                f"⚠️ SANIDADE TW FALHOU | input={len(df)} vs rotas={len(df_rotas)}"
+                f"⚠️ TW com perda de entregas | dropped={dropped_nodes} | input={total_input} | output={total_output}"
             )
+
+            if not self.permitir_rotas_excedentes:
+                raise Exception(
+                    f"🚨 ERRO CRÍTICO TW: input={total_input} vs output={total_output}"
+                )
+        # 🔥 IDENTIFICA DROPPED
+        ids_input = set(df["cte_numero"].astype(str))
+        ids_output = set(df_rotas["cte_numero"].astype(str))
+
+        dropped_ids = ids_input - ids_output
+
+        if dropped_ids:
+            df_dropped = df[df["cte_numero"].astype(str).isin(dropped_ids)].copy()
+
+            df_dropped["rota_id"] = None
+            df_dropped["ordem_entrega"] = None
+            df_dropped["entrega_com_rota"] = False
+            df_dropped["motivo"] = "nao_roteirizado_time_windows"
+
+            self.logger.warning(f"⚠️ Entregas sem rota: {len(df_dropped)}")
+
+            df_rotas["entrega_com_rota"] = True
+            df_rotas = df_rotas[
+                ~df_rotas["cte_numero"].isin(dropped_ids)
+            ]
+
+            df_rotas = pd.concat([df_rotas, df_dropped], ignore_index=True)
 
         if df_rotas.empty:
             self._registrar_cenario_invalidado(
@@ -957,24 +1128,6 @@ class SimulationUseCase:
         return df_rotas, custo
 
 
-    def _executar_cenario(self, cenario, df_entregas, df_hub, df_outliers_geograficos=None):
-        tipo = cenario.get("tipo")
-        identificador = cenario.get("identificador", tipo)
-        self.logger.info(f"🧪 Executando cenário explícito {identificador}")
-
-        if tipo == "k_numero":
-            return self._executar_simulacao_para_k(
-                cenario["k_clusters"],
-                df_entregas,
-                df_hub,
-                df_outliers_geograficos,
-            )
-
-        self._registrar_cenario_invalidado(
-            identificador,
-            f"tipo de cenário não suportado: {tipo}",
-        )
-        return None
 
     def _persistir_cenario_concluido(
         self,
@@ -1028,9 +1181,25 @@ class SimulationUseCase:
                 df_rotas_last_mile["coordenadas_seq"] = None
 
             # 🔥 PROTEÇÃO
+            # 🔥 PROTEÇÃO + LIMPEZA JSON
             if df_rotas_last_mile is None or df_rotas_last_mile.empty:
                 self.logger.warning("⚠️ df_rotas_last_mile vazio — não será persistido")
             else:
+                import numpy as np
+
+                # 🔥 1. REMOVE NaN (CRÍTICO PARA POSTGRES JSON)
+                df_rotas_last_mile = df_rotas_last_mile.replace({np.nan: None})
+
+                # 🔥 2. GARANTE JSON VÁLIDO EM coordenadas_seq
+                if "coordenadas_seq" in df_rotas_last_mile.columns:
+                    df_rotas_last_mile["coordenadas_seq"] = df_rotas_last_mile["coordenadas_seq"].apply(
+                        lambda x: x if isinstance(x, list) else []
+                    )
+
+                # 🔥 DEBUG
+                self.logger.info("🧼 Limpeza JSON aplicada antes do insert")
+
+                # 🔥 INSERT
                 self.last_mile_service.salvar_rotas_last_mile_em_db(
                     df_rotas_last_mile,
                     self.tenant_id,
@@ -1071,6 +1240,9 @@ class SimulationUseCase:
 
         self.result_service.salvar_resultado({
             **melhor_resultado,
+            "tenant_id": self.tenant_id,
+            "envio_data": self.envio_data,
+            "simulation_id": self.simulation_id,
             "is_ponto_otimo": True
         }, modo_forcar=self.modo_forcar)
 
@@ -1083,7 +1255,7 @@ class SimulationUseCase:
 
         executar_geracao_relatorio_final(
             tenant_id=self.tenant_id,
-            envio_data=str(self.envio_data),
+            envio_data=self.envio_data,
             simulation_id=self.simulation_id,
             simulation_db=self.simulation_db,
             modo_forcar=self.modo_forcar
@@ -1093,6 +1265,7 @@ class SimulationUseCase:
         try:
             # output_dir padronizado
             output_dir = os.path.join("exports/simulation/entregas", self.tenant_id, str(self.envio_data))
+            os.makedirs(output_dir, exist_ok=True)
             excel_path = exportar_entregas_com_rotas_excel(
                 clusterization_db=self.clusterization_db,
                 simulation_db=self.simulation_db,
@@ -1121,6 +1294,7 @@ class SimulationUseCase:
 
 
     def executar_simulacao_completa(self):
+
         if not self.modo_forcar and self.simulation_service.simulacao_ja_existente():
             self.logger.warning(f"🚫 Simulação já existente para {self.envio_data}. Use --modo-forcar para sobrescrever.")
             return None
@@ -1138,180 +1312,229 @@ class SimulationUseCase:
 
         self.logger.info("🔁 Iniciando execução completa da simulação.")
         self.logger.info(f"🆔 Simulation ID: {self.simulation_id}")
-        self.logger.info(f"📥 Carregando entregas para envio_data = {self.envio_data}, tenant_id = {self.tenant_id}")
 
-        df_entregas_original = self.cluster_service.carregar_entregas(self.tenant_id, self.envio_data)
-
-        if "latitude" in df_entregas_original.columns and "longitude" in df_entregas_original.columns:
-            n_coordenadas = df_entregas_original[["latitude", "longitude"]].dropna().shape[0]
-            self.logger.info(f"📍 {n_coordenadas} entregas com coordenadas válidas carregadas do clusterization_db.")
-        else:
-            self.logger.warning("⚠️ Colunas latitude/longitude não encontradas ao carregar entregas.")
+        # =============================
+        # 🔹 CARREGAMENTO
+        # =============================
+        df_entregas_original = self.cluster_service.carregar_entregas(
+            self.tenant_id, self.envio_data
+        )
 
         if df_entregas_original.empty:
-            self.logger.warning(f"⚠️ Nenhuma entrega encontrada para {self.envio_data}. Simulação será ignorada.")
+            self.logger.warning("⚠️ Nenhuma entrega encontrada.")
             return None
 
-        if {"latitude", "longitude"}.issubset(df_entregas_original.columns):
-            indices_coordenadas_validas = df_entregas_original[["latitude", "longitude"]].dropna().index
-            mascara_coordenadas_validas = df_entregas_original.index.isin(indices_coordenadas_validas)
-            qtd_invalidas = int((~mascara_coordenadas_validas).sum())
-            if qtd_invalidas:
-                self.logger.warning(
-                    f"⚠️ {qtd_invalidas} entregas sem coordenadas válidas serão removidas da simulação."
-                )
-            df_entregas_original = df_entregas_original.loc[mascara_coordenadas_validas].copy()
-
-        if df_entregas_original.empty:
-            self.logger.warning(
-                f"⚠️ Nenhuma entrega com coordenadas válidas encontrada para {self.envio_data}. Simulação será ignorada."
+        # =============================
+        # 🔹 PRÉ-PROCESSAMENTO
+        # =============================
+        df_entregas_original, metadata_operacional = (
+            self.simulation_service.preparar_dados_operacionais_iniciais(
+                df_entregas_original,
+                self.params,
             )
-            return None
-
-        df_entregas_original, metadata_operacional = self.simulation_service.preparar_dados_operacionais_iniciais(
-            df_entregas_original,
-            self.parametros,
         )
+        # 🔥 DEBUG CRÍTICO DE COORDENADAS
         self.logger.info(
-            "📦 Base operacional pronta "
-            f"modo={metadata_operacional['modo_avaliacao']} "
-            f"entregas={metadata_operacional['total_entregas']}"
+            f"[DEBUG] antes filtro coords | total={len(df_entregas_original)} | "
+            f"lat_valid={df_entregas_original['latitude'].notna().sum()} | "
+            f"lon_valid={df_entregas_original['longitude'].notna().sum()}"
         )
 
-        hub_central = carregar_hub_por_id(self.simulation_db, self.tenant_id, self.hub_id)
-        if not hub_central:
-            raise ValueError(f"❌ Hub central com hub_id={self.hub_id} não encontrado para este tenant.")
+        # 🔥 FORÇA SANIDADE (NÃO DEIXA PIPELINE QUEBRAR)
+        df_entregas_original = df_entregas_original.copy()
 
-        if not self.parametros.get("desativar_cluster_hub", False):
-            self.logger.info(f"🧲 Atribuindo entregas próximas ao hub central como cluster especial")
+        df_entregas_original["latitude"] = pd.to_numeric(
+            df_entregas_original["latitude"], errors="coerce"
+        )
+        df_entregas_original["longitude"] = pd.to_numeric(
+            df_entregas_original["longitude"], errors="coerce"
+        )
+
+        df_entregas_original = df_entregas_original.dropna(
+            subset=["latitude", "longitude"]
+        )
+
+        if df_entregas_original.empty:
+            raise Exception(
+                "❌ Todas as entregas ficaram sem coordenadas após preparação operacional."
+            )
+
+        self.logger.info(
+            f"[DEBUG] após filtro coords | total={len(df_entregas_original)}"
+        )
+        hub_central = carregar_hub_por_id(
+            self.simulation_db,
+            self.tenant_id,
+            self.hub_id
+        )
+
+        if not hub_central:
+            raise ValueError("❌ Hub central não encontrado")
+
+        # =============================
+        # 🔹 CLUSTER HUB
+        # =============================
+        if not self.params.desativar_cluster_hub:
             df_hub, df_entregas = ClusterizationService.atribuir_entregas_proximas_ao_hub_central(
                 df_entregas=df_entregas_original,
                 hubs=[hub_central],
-                raio_km=self.parametros.get("raio_hub_km", 80.0)
+                raio_km=self.params.raio_hub_km
             )
         else:
-            self.logger.info("⚠️ Cluster especial do hub central desativado por parâmetro.")
             df_entregas = df_entregas_original.copy()
             df_hub = pd.DataFrame(columns=df_entregas.columns)
 
-        if df_entregas.empty:
+        # =============================
+        # 🔹 OUTLIERS
+        # =============================
+        if not self.params.usar_outlier:
+            self.logger.info("🚫 Outliers desativados — usando base pós-hub")
+            df_entregas_clusterizaveis = df_entregas.copy()
+            df_outliers_geograficos = pd.DataFrame(columns=df_entregas.columns)
+
+        else:
+            df_entregas_clusterizaveis, df_outliers_geograficos, _ = (
+                self.simulation_service.separar_outliers_geograficos(
+                    df_entregas,
+                    self.params,
+                )
+            )
+
+        # 🔥 DEBUG DO RAIO DO HUB (COLE AQUI)
+        self.logger.info(
+            f"📊 HUB={len(df_hub)} | FORA_HUB={len(df_entregas)} | CLUSTERIZAVEIS={len(df_entregas_clusterizaveis)}"
+        )
+
+        # 🔥 SANIDADE CRÍTICA ANTES DA CLUSTERIZAÇÃO
+        # 🔥 SANIDADE CRÍTICA ANTES DA CLUSTERIZAÇÃO
+        df_entregas_clusterizaveis = df_entregas_clusterizaveis.copy()
+
+        if not df_entregas_clusterizaveis.empty:
+            df_entregas_clusterizaveis["latitude"] = pd.to_numeric(
+                df_entregas_clusterizaveis["latitude"], errors="coerce"
+            )
+            df_entregas_clusterizaveis["longitude"] = pd.to_numeric(
+                df_entregas_clusterizaveis["longitude"], errors="coerce"
+            )
+
+            df_entregas_clusterizaveis = df_entregas_clusterizaveis.dropna(
+                subset=["latitude", "longitude"]
+            )
+
+        self.logger.info(
+            f"📍 Clusterizáveis válidas: {len(df_entregas_clusterizaveis)}"
+        )
+
+        # 🔥 NOVA REGRA:
+        # se tudo caiu no hub, isso NÃO é erro; roda só k=0
+        executar_apenas_k0 = False
+
+        if df_entregas_clusterizaveis.empty:
             if df_hub is not None and not df_hub.empty:
                 self.logger.info(
-                    "⚠️ Cluster especial do hub central absorveu todas as entregas; "
-                    "o cenário Hub único (k=0) será executado sobre a base inteira e os "
-                    "cenários numéricos, se existirem, serão avaliados apenas sobre a base "
-                    "fora do raio do hub."
+                    "🛑 Todas as entregas foram absorvidas pelo hub. "
+                    "A simulação seguirá apenas com k=0."
                 )
+                executar_apenas_k0 = True
             else:
-                self.logger.warning(
-                    f"⚠️ Nenhuma entrega encontrada para {self.envio_data}. Simulação será ignorada."
+                raise Exception(
+                    "❌ Nenhuma entrega com coordenadas válidas disponível para clusterização."
                 )
-                return None
 
-        df_entregas_clusterizaveis, df_outliers_geograficos, metadata_outliers = (
-            self.simulation_service.separar_outliers_geograficos(
-                df_entregas,
-                self.parametros,
-            )
-        )
-        if metadata_outliers["qtd_outliers"]:
-            self.logger.info(
-                "🧭 Base principal ajustada para clusterização "
-                f"entregas_clusterizaveis={len(df_entregas_clusterizaveis)} "
-                f"outliers={metadata_outliers['qtd_outliers']}"
-            )
-        else:
-            df_entregas_clusterizaveis = df_entregas
-            self.logger.info(
-                "🧭 Nenhum outlier geográfico separado antes da clusterização "
-                f"entregas_clusterizaveis={len(df_entregas_clusterizaveis)} "
-                f"limite_km={metadata_outliers['limite_km']}"
-            )
-
-        self._executar_simulacao_k0(df_entregas_original.copy())
-
-        custos_totais: list[float] = []
+        # =============================
+        # 🔴 INICIALIZAÇÃO
+        # =============================
+        custos_totais = []
         melhor_k = None
         menor_custo = float("inf")
         melhor_resultado = None
 
-        k0 = self._buscar_resultado_k0()
-        if k0:
-            qtd = int(df_entregas_original["cte_numero"].nunique())
-            custos_totais.append(k0["custo_total"])
+        # =============================
+        # 🔴 CENÁRIOS (AGORA COM k0)
+        # =============================
+
+        total_entregas = df_entregas_original["cte_numero"].nunique()
+
+        k_values = SimulationService.gerar_range_k(
+            total_entregas=total_entregas,
+            min_cluster=self.params.min_entregas_por_cluster_alvo,
+            max_cluster=self.params.max_entregas_por_cluster_alvo,
+        )
+
+        self.logger.info(f"🧪 Cenários de K gerados: {k_values}")
+
+        # =============================
+        # 🔴 EXECUÇÃO DOS CENÁRIOS
+        # =============================
+
+        # 🔴 K0 primeiro
+        # 🔴 K0 primeiro
+        self.logger.info("🧪 Executando cenário k=0")
+
+        # 🔥 REGRA CORRETA: BASE TOTAL - OUTLIERS (SE ATIVADO)
+        df_base_k0 = df_entregas_original.copy()
+
+        if self.params.usar_outlier and df_outliers_geograficos is not None and not df_outliers_geograficos.empty:
+            self.logger.info(f"➖ Removendo {len(df_outliers_geograficos)} outliers do k=0")
+
+            df_base_k0 = df_base_k0[
+                ~df_base_k0["cte_numero"].isin(df_outliers_geograficos["cte_numero"])
+            ]
+        else:
+            self.logger.info("🚫 Outliers NÃO removidos do k=0 (default OFF)")
+
+        # 🔥 LIMPEZA FINAL
+        df_base_k0["latitude"] = pd.to_numeric(df_base_k0["latitude"], errors="coerce")
+        df_base_k0["longitude"] = pd.to_numeric(df_base_k0["longitude"], errors="coerce")
+
+        df_base_k0 = df_base_k0.dropna(subset=["latitude", "longitude"])
+        df_base_k0 = df_base_k0.drop_duplicates(subset=["cte_numero"])
+
+        resultado_k0 = self._executar_simulacao_k0(df_base_k0)
+
+        if resultado_k0:
+            custo_k0 = resultado_k0["custo_total"]
+            custos_totais.append(custo_k0)
             melhor_k = 0
-            menor_custo = k0["custo_total"]
-            melhor_resultado = {
-                "simulation_id": self.simulation_id,
-                "tenant_id": self.tenant_id,
-                "envio_data": self.envio_data,
-                "k_clusters": 0,
-                "custo_total": k0["custo_total"],
-                "quantidade_entregas": qtd,
-                "custo_transferencia": k0["custo_transferencia"],
-                "custo_last_mile": k0["custo_last_mile"],
-                "custo_cluster": k0["custo_cluster"],
-            }
-            self.logger.info(f"🏁 Cenário Hub único (k=0) incluído como candidato inicial: custo_total={k0['custo_total']:.2f}")
+            menor_custo = custo_k0
+            melhor_resultado = resultado_k0
 
-        cenarios = self.simulation_service.gerar_cenarios_explicitos(
-            df_entregas_original,
-            self.parametros,
-        )
-        self.logger.info(
-            "🧪 Total de cenários numéricos elegíveis para teste: "
-            f"{len(cenarios)} | base_total={len(df_entregas_original)} | "
-            f"base_fora_hub={len(df_entregas_clusterizaveis)}"
-        )
 
-        for indice_cenario, cenario in enumerate(cenarios, start=1):
-            df_cenario = df_entregas_clusterizaveis
-            df_hub_cenario = df_hub
-            df_outliers_cenario = df_outliers_geograficos
+        if executar_apenas_k0:
+            k_values = []
 
-            self.logger.info(
-                "🧪 Tentando cenário numérico "
-                f"{indice_cenario}/{len(cenarios)}: {cenario['identificador']} | "
-                f"entregas_clusterizaveis={len(df_cenario)} | entregas_hub={len(df_hub_cenario)}"
+        for k in k_values:
+
+            self.logger.info(f"🧪 Executando cenário k={k}")
+
+            resultado_k = self._executar_simulacao_para_k(
+                k,
+                df_entregas_clusterizaveis,  # 🔥 base dinâmica
+                df_hub,
+                None  # 🔥 NÃO deixa passar outlier
             )
 
-            if (
-                df_cenario is None or df_cenario.empty
-            ):
-                self.logger.info(
-                    "ℹ️ Cenário numérico não executado porque não restaram entregas fora "
-                    "do raio do hub central. Isso é comportamento esperado para esta base."
-                )
-                continue
-
-            resultado_k = self._executar_cenario(
-                cenario,
-                df_cenario,
-                df_hub_cenario,
-                df_outliers_cenario,
-            )
             if resultado_k is None:
                 continue
 
             custo_k = resultado_k["custo_total"]
             custos_totais.append(custo_k)
-            k_resultado = resultado_k["k_clusters"]
 
             if custo_k < menor_custo:
-                melhor_k = k_resultado
+                melhor_k = resultado_k["k_clusters"]
                 menor_custo = custo_k
                 melhor_resultado = {
                     **resultado_k,
                     "simulation_id": self.simulation_id,
                     "tenant_id": self.tenant_id,
                     "envio_data": self.envio_data,
-                    "quantidade_entregas": len(df_entregas),
+                    "quantidade_entregas": df_entregas_original["cte_numero"].nunique()
                 }
 
-            if self.simulation_service.verificar_ponto_inflexao_com_tendencia(custos_totais):
-                self.logger.info("📉 Heurística de inflexão identificou ponto ótimo.")
-                break
 
+        # =============================
+        # 🔴 RESULTADO FINAL
+        # =============================
         if melhor_k is not None and melhor_resultado is not None:
             return self._finalizar_melhor_resultado(
                 melhor_k,
@@ -1324,9 +1547,7 @@ class SimulationUseCase:
                 f"k={item['k_clusters']}: {item['motivo']}"
                 for item in self.cenarios_invalidados
             )
-            self.logger.warning(
-                f"⚠️ Nenhum cenário válido encontrado. Cenários invalidados: {resumo}"
-            )
+            self.logger.warning(f"⚠️ Cenários inválidos: {resumo}")
 
         return {
             "k_clusters": None,
@@ -1341,6 +1562,7 @@ class SimulationUseCase:
         df_clusterizado,
         df_hub,
         df_outliers_geograficos=None,
+        df_cluster_puro=None  # 🔥 NOVO
     ):
         is_ponto_otimo = False
         df_clusterizado["simulation_id"] = self.simulation_id
@@ -1348,25 +1570,34 @@ class SimulationUseCase:
 
         df_clusterizado = self.cluster_service.ajustar_centros_dos_clusters(df_clusterizado)
 
+        # 🔴 BASE FINAL DO CENÁRIO (CORRETA)
+        dfs = [df_clusterizado]
+
+        # 🔹 outliers
         if df_outliers_geograficos is not None and not df_outliers_geograficos.empty:
             df_outliers_clusterizados = self.simulation_service.materializar_clusters_outliers(
                 df_outliers_geograficos
             )
-            df_clusterizado = pd.concat(
-                [df_clusterizado, df_outliers_clusterizados],
-                ignore_index=True,
-                sort=False,
-            )
+            dfs.append(df_outliers_clusterizados)
 
+        # 🔹 hub
         if df_hub is not None and not df_hub.empty:
+            df_hub = df_hub.copy()
             df_hub["simulation_id"] = self.simulation_id
             df_hub["k_clusters"] = k_persistencia
             df_hub["is_ponto_otimo"] = False
-            df_clusterizado = pd.concat([df_clusterizado, df_hub], ignore_index=True)
+            dfs.append(df_hub)
+
+        # 🔴 monta base final
+        df_clusterizado = pd.concat(dfs, ignore_index=True)
+
+        # 🔴 evita duplicidade
+        df_clusterizado = df_clusterizado.drop_duplicates(subset=["cte_numero"])
+
 
         df_clusterizado = self.simulation_service.repartir_cluster_hub_central(
             df_clusterizado,
-            self.parametros,
+            self.params,
         )
 
         validar_integridade_entregas_clusterizadas(
@@ -1416,9 +1647,9 @@ class SimulationUseCase:
             )
             return None
 
-        algoritmo = self.parametros.get("algoritmo_roteirizacao", "padrao")
+        routing_alg = self.estrategia.algoritmo_roteirizacao
 
-        if algoritmo == "time_windows":
+        if routing_alg == "time_windows":
             df_rotas_last_mile, custo_last_mile = self._executar_last_mile_time_windows_para_dataframe_clusterizado(
                 identificador_cenario,
                 df_clusterizado,
@@ -1437,8 +1668,10 @@ class SimulationUseCase:
 
         try:
             cluster_cost_cfg = carregar_cluster_costs(self.simulation_db, self.tenant_id)
+            df_base_cluster = df_cluster_puro if df_cluster_puro is not None else df_clusterizado
+
             df_resumo_clusters = (
-                df_clusterizado.groupby("cluster").agg(qde_ctes=("cte_numero", "nunique")).reset_index()
+                df_base_cluster.groupby("cluster").agg(qde_ctes=("cte_numero", "nunique")).reset_index()
             )
             custo_cluster = calcular_custo_clusters_por_scenario(
                 df_resumo_clusters=df_resumo_clusters,
@@ -1467,9 +1700,16 @@ class SimulationUseCase:
             "is_ponto_otimo": False
         }
 
+        # 🔴 GARANTE SCHEMA DO DF PURO
+        df_para_persistir = df_cluster_puro.copy() if df_cluster_puro is not None else df_clusterizado.copy()
+
+        df_para_persistir["simulation_id"] = self.simulation_id
+        df_para_persistir["k_clusters"] = k_persistencia
+        df_para_persistir["is_ponto_otimo"] = False
+
         try:
             self._persistir_cenario_concluido(
-                df_clusterizado=df_clusterizado,
+                df_clusterizado=df_para_persistir,
                 lista_resumo_transferencias=lista_resumo_transferencias,
                 detalhes_transferencia_gerados=detalhes_transferencia_gerados,
                 rotas_transferencia_geradas=rotas_transferencia_geradas,
@@ -1486,9 +1726,8 @@ class SimulationUseCase:
 
 
         # Padroniza output_dir para todos os artefatos
-        output_dir = os.path.join("exports/simulation/entregas", self.tenant_id, str(self.envio_data))
-        # Novo diretório para mapas last mile (sem duplicidade de tenant_id)
-        output_dir_maps = os.path.join("exports/simulation/maps", self.tenant_id)
+        output_dir_maps = os.path.join("exports/simulation/maps", self.tenant_id, str(self.envio_data))
+
         try:
             plotar_mapa_clusterizacao_simulation(
                 simulation_db=self.simulation_db,
@@ -1519,16 +1758,15 @@ class SimulationUseCase:
 
         try:
             plotar_mapa_last_mile(
-                simulation_db=self.simulation_db,
-                clusterization_db=self.clusterization_db,
-                tenant_id=self.tenant_id,
-                envio_data=self.envio_data,
-                k_clusters=k_persistencia,
-                simulation_id=self.simulation_id,
-                output_dir=output_dir_maps,
-                modo_forcar=self.modo_forcar,
-                logger=self.logger
-            )
+            simulation_db=self.simulation_db,
+            clusterization_db=self.clusterization_db,
+            tenant_id=self.tenant_id,
+            envio_data=self.envio_data,
+            k_clusters=k_persistencia,
+            output_dir=output_dir_maps,
+            modo_forcar=self.modo_forcar,
+            logger=self.logger
+        )
         except Exception as e:
             self.logger.warning(f"⚠️ Erro mapa last-mile: {e}")
 
@@ -1541,7 +1779,21 @@ class SimulationUseCase:
         }
 
     def _executar_simulacao_para_k(self, k, df_entregas, df_hub, df_outliers_geograficos=None):
-        k_algoritmo = self._obter_k_algoritmo(k, df_hub)
+
+        # 🔥 PROTEÇÃO CRÍTICA
+        df_entregas = df_entregas.copy()
+
+        # 🔥 GARANTE COORDENADAS
+        df_entregas["latitude"] = pd.to_numeric(df_entregas["latitude"], errors="coerce")
+        df_entregas["longitude"] = pd.to_numeric(df_entregas["longitude"], errors="coerce")
+
+        df_entregas = df_entregas.dropna(subset=["latitude", "longitude"])
+
+        if df_entregas.empty:
+            self.logger.warning("⚠️ Sem coordenadas válidas para clusterização")
+            return None
+
+        k_algoritmo = k
         if k_algoritmo <= 0:
             self.logger.info(
                 f"ℹ️ Cenário k={k} absorvido pelo cenário Hub único (k=0); nenhuma clusterização adicional necessária."
@@ -1551,48 +1803,62 @@ class SimulationUseCase:
         self.logger.info(
             f"⚙️ Processando simulação para k={k} | clusters_algoritmo={k_algoritmo}"
         )
+
+        cluster_alg = self.estrategia.algoritmo_clusterizacao
+
         df_clusterizado = self.cluster_service.clusterizar(
             df_entregas,
             k=k_algoritmo,
             tenant_id=self.tenant_id,
             envio_data=self.envio_data,
             simulation_id=self.simulation_id,
+            algoritmo=cluster_alg,
+            entregas_por_rota=self.params.entregas_por_rota
         )
+
+        # 🔴 SNAPSHOT LIMPO
+        df_cluster_puro = df_clusterizado.copy()
+
         return self._executar_simulacao_clusterizada(
             f"k={k}",
             k,
             df_clusterizado,
             df_hub,
             df_outliers_geograficos,
+            df_cluster_puro  # 🔥 NOVO
         )
 
     def _executar_simulacao_k0(self, df_entregas, df_hub=None):
         identificador_cenario = "k=0"
         self.logger.info("🚀 Executando simulação de last-mile do cenário Hub único (k=0)")
-        if df_hub is not None and not df_hub.empty:
-            df_entregas = pd.concat([df_entregas, df_hub], ignore_index=True)
 
-        df_entregas["cluster"] = 0
-        df_entregas["k_clusters"] = 0
+        if df_hub is not None and not df_hub.empty:
+            self.logger.warning("⚠️ df_hub ignorado em k0 (já consolidado)")
+
+        # 🔥 CORREÇÃO CRÍTICA: NÃO MUTAR DF ORIGINAL
+        df_k0 = df_entregas.copy()
+
+        df_k0["cluster"] = 0
+        df_k0["k_clusters"] = 0
 
         hub = self.simulation_service.buscar_hub_central()
-        df_entregas["centro_lat"] = hub.latitude
-        df_entregas["centro_lon"] = hub.longitude
-        df_entregas["cluster_endereco"] = hub.nome
-        df_entregas["cluster_cidade"] = hub.nome
-        df_entregas["simulation_id"] = self.simulation_id
-        df_entregas["is_ponto_otimo"] = False
+        df_k0["centro_lat"] = hub.latitude
+        df_k0["centro_lon"] = hub.longitude
+        df_k0["cluster_endereco"] = hub.nome
+        df_k0["cluster_cidade"] = hub.nome
+        df_k0["simulation_id"] = self.simulation_id
+        df_k0["is_ponto_otimo"] = False
 
-        algoritmo_roteirizacao = self.parametros.get("algoritmo_roteirizacao", "padrao")
+        routing_alg = self.estrategia.algoritmo_roteirizacao
 
-        self.logger.info(f"🧠 Algoritmo de roteirização (k=0): {algoritmo_roteirizacao}")
+        self.logger.info(f"🧠 Algoritmo de roteirização (k=0): {routing_alg}")
 
-        if algoritmo_roteirizacao == "time_windows":
+        if routing_alg == "time_windows":
             self.logger.info("⏳ k=0 usando Time Windows")
 
             df_rotas_last_mile, custo_last_mile = self._executar_last_mile_time_windows_para_dataframe_clusterizado(
                 identificador_cenario,
-                df_entregas,
+                df_k0,
                 0,
             )
         else:
@@ -1600,17 +1866,20 @@ class SimulationUseCase:
 
             df_rotas_last_mile, custo_last_mile = self._executar_last_mile_para_dataframe_clusterizado(
                 identificador_cenario,
-                df_entregas,
+                df_k0,
                 0,
             )
+
         if df_rotas_last_mile is None:
             return None
 
         try:
             cluster_cost_cfg = carregar_cluster_costs(self.simulation_db, self.tenant_id)
+
             df_resumo_clusters = (
-                df_entregas.groupby("cluster").agg(qde_ctes=("cte_numero", "nunique")).reset_index()
+                df_k0.groupby("cluster").agg(qde_ctes=("cte_numero", "nunique")).reset_index()
             )
+
             custo_cluster = calcular_custo_clusters_por_scenario(
                 df_resumo_clusters=df_resumo_clusters,
                 entregas_minimas_por_cluster=cluster_cost_cfg["limite_qtd_entregas"],
@@ -1623,7 +1892,7 @@ class SimulationUseCase:
             self.logger.warning(f"⚠️ Falha ao calcular custo cluster (k=0): {e}")
 
         custo_total = custo_last_mile + custo_cluster
-        qtd = int(df_entregas["cte_numero"].nunique())
+        qtd = int(df_k0["cte_numero"].nunique())
 
         resultado_k0 = {
             "simulation_id": self.simulation_id,
@@ -1639,8 +1908,14 @@ class SimulationUseCase:
         }
 
         try:
+            df_cluster_puro = df_k0.copy()
+
+            df_cluster_puro["simulation_id"] = self.simulation_id
+            df_cluster_puro["k_clusters"] = 0
+            df_cluster_puro["is_ponto_otimo"] = False
+
             self._persistir_cenario_concluido(
-                df_clusterizado=df_entregas,
+                df_clusterizado=df_cluster_puro,
                 lista_resumo_transferencias=[],
                 detalhes_transferencia_gerados=[],
                 rotas_transferencia_geradas=[],
@@ -1656,23 +1931,5 @@ class SimulationUseCase:
             return None
 
         self.logger.info(f"💾 Resultado k=0 salvo com custo_total={custo_total:.2f}")
-
-
-        # Padroniza output_dir para todos os artefatos k=0
-        output_dir = os.path.join("exports/simulation/entregas", self.tenant_id, str(self.envio_data))
-        try:
-            plotar_mapa_last_mile(
-                simulation_db=self.simulation_db,
-                clusterization_db=self.clusterization_db,
-                tenant_id=self.tenant_id,
-                envio_data=self.envio_data,
-                k_clusters=0,
-                output_dir=output_dir,
-                modo_forcar=self.modo_forcar,
-                logger=self.logger
-            )
-        except Exception as e:
-            self.logger.warning(f"⚠️ Erro mapa last-mile k=0: {e}")
-
 
         return resultado_k0

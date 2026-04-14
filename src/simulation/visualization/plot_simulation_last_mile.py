@@ -1,5 +1,7 @@
 #hub_router_1.0.1/src/simulation/visualization/plot_simulation_last_mile.py
 
+# hub_router_1.0.1/src/simulation/visualization/plot_simulation_last_mile.py
+
 import os
 import json
 import folium
@@ -14,6 +16,27 @@ from simulation.infrastructure.simulation_database_reader import (
     carregar_rotas_last_mile,
     carregar_resumo_clusters,
 )
+
+
+# 🔥 FUNÇÃO CENTRAL (CORREÇÃO DEFINITIVA)
+def parse_coords(coords):
+    pontos = []
+
+    if not isinstance(coords, list):
+        return pontos
+
+    for p in coords:
+        try:
+            if isinstance(p, dict) and "lat" in p and "lon" in p:
+                pontos.append((float(p["lat"]), float(p["lon"])))
+
+            elif isinstance(p, (list, tuple)) and len(p) == 2:
+                pontos.append((float(p[0]), float(p[1])))
+
+        except Exception:
+            continue
+
+    return pontos
 
 
 def plotar_mapa_last_mile(
@@ -39,12 +62,12 @@ def plotar_mapa_last_mile(
     # overwrite
     if modo_forcar:
         for path in [mapa_path, png_path]:
-            if os.path.exists(path):
+            if path and os.path.exists(path):
                 try:
                     os.remove(path)
                 except:
                     pass
-    elif os.path.exists(mapa_path):
+    elif mapa_path and os.path.exists(mapa_path):
         if logger:
             logger.info(f"🟡 Mapa já existe: {mapa_path}")
         return
@@ -102,7 +125,6 @@ def plotar_mapa_last_mile(
 
         fg = FeatureGroup(name=f"Rota {rota_id}")
 
-        # 🔥 linha da rota (OSRM)
         coordenadas_seq = df_rota["coordenadas_seq"].dropna()
 
         if not coordenadas_seq.empty:
@@ -110,32 +132,34 @@ def plotar_mapa_last_mile(
                 raw_coords = coordenadas_seq.iloc[0]
 
                 if isinstance(raw_coords, str):
-                    coords = json.loads(raw_coords)
+                    try:
+                        coords = json.loads(raw_coords)
+                    except:
+                        coords = []
                 else:
                     coords = raw_coords
 
-                if isinstance(coords, list):
-                    rota_coords = [(p["lat"], p["lon"]) for p in coords]
+                rota_coords = parse_coords(coords)
 
-                    if len(rota_coords) > 1:
-                        gj = geojson.LineString(
-                            [(float(lon), float(lat)) for lat, lon in rota_coords]
-                        )
+                if len(rota_coords) > 1:
+                    gj = geojson.LineString(
+                        [(float(lon), float(lat)) for lat, lon in rota_coords]
+                    )
 
-                        GeoJson(
-                            data=gj,
-                            style_function=lambda x, cor=cor: {
-                                "color": cor,
-                                "weight": 4,
-                                "opacity": 0.8
-                            },
-                            highlight_function=lambda x: {
-                                "color": "yellow",
-                                "weight": 6
-                            },
-                            tooltip=Tooltip(f"Rota {rota_id}"),
-                            popup=Popup(f"Rota {rota_id}")
-                        ).add_to(fg)
+                    GeoJson(
+                        data=gj,
+                        style_function=lambda x, cor=cor: {
+                            "color": cor,
+                            "weight": 4,
+                            "opacity": 0.8
+                        },
+                        highlight_function=lambda x: {
+                            "color": "yellow",
+                            "weight": 6
+                        },
+                        tooltip=Tooltip(f"Rota {rota_id}"),
+                        popup=Popup(f"Rota {rota_id}")
+                    ).add_to(fg)
 
             except Exception as e:
                 if logger:
@@ -174,7 +198,7 @@ def plotar_mapa_last_mile(
 
     mapa.save(mapa_path)
 
-    # 🔥 PNG simples
+    # 🔥 PNG
     plt.figure(figsize=(10, 8))
 
     for idx, rota_id in enumerate(df_rotas["rota_id"].unique()):
@@ -187,10 +211,14 @@ def plotar_mapa_last_mile(
                 raw_coords = df_rota["coordenadas_seq"].dropna().iloc[0]
 
                 if isinstance(raw_coords, str):
-                    coords = json.loads(raw_coords)
+                    try:
+                        coords = json.loads(raw_coords)
+                    except:
+                        coords = []
                 else:
                     coords = raw_coords
-                rota_coords = [(p["lat"], p["lon"]) for p in coords]
+
+                rota_coords = parse_coords(coords)
 
                 if len(rota_coords) > 1:
                     lats, lons = zip(*rota_coords)

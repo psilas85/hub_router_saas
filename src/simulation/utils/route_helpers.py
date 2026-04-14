@@ -1,4 +1,4 @@
-#simulation/utils/route_helpers.py
+#hub_router_1.0.1/src/simulation/utils/route_helpers.py
 
 import pandas as pd
 from geopy.geocoders import Nominatim
@@ -16,6 +16,7 @@ from simulation.infrastructure.cache_routes import obter_rota_last_mile
 from simulation.infrastructure.cache_routes import obter_rota_real
 from simulation.infrastructure.simulation_database_reader import definir_tipo_veiculo_transferencia
 from simulation.infrastructure.simulation_database_reader import definir_tipo_veiculo_last_mile
+from simulation.domain.entities import SimulationParams
 
 def calcular_distancia_euclidiana(lat1, lon1, lat2, lon2):
     return ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5
@@ -93,12 +94,8 @@ def estimar_distancia_km(lat1, lon1, lat2, lon2):
 def dividir_rotas_transferencia_por_tempo_maximo(
     df_transferencias: pd.DataFrame,
     df_clusterizado: pd.DataFrame,
+    params: SimulationParams,
     tempo_maximo_min: float,
-    tempo_parada_peso_leve: float,
-    tempo_parada_peso_pesado: float,
-    peso_limite_pesado: float,
-    tempo_descarga_por_volume: float,
-    velocidade_media_kmh: float
 ) -> list[pd.DataFrame]:
     """
     Divide clusters em subgrupos com tempo estimado de rota menor que o tempo_maximo_min.
@@ -116,30 +113,36 @@ def dividir_rotas_transferencia_por_tempo_maximo(
 
     grupos = []
     grupo_atual = []
-    tempo_acumulado = 0
+    tempo_acumulado = 0.0
     ponto_anterior = None
 
     for _, row in clusters.iterrows():
         lat_atual = row['cluster_lat']
         lon_atual = row['cluster_lon']
 
-        # Estimar distância incremental entre pontos
         if ponto_anterior:
             dist_km = geodesic(ponto_anterior, (lat_atual, lon_atual)).km
         else:
-            dist_km = 20  # distância estimada ida inicial, pode ser ajustada se necessário
+            dist_km = 20.0
 
-        tempo_transito = (dist_km / velocidade_media_kmh) * 60
-        tempo_parada = tempo_parada_peso_pesado if row['cte_peso'] > peso_limite_pesado else tempo_parada_peso_leve
-        tempo_descarga = row['cte_volumes'] * tempo_descarga_por_volume
+        tempo_transito = (dist_km / params.velocidade_kmh) * 60.0
+        peso = row['cte_peso']
+        volumes = row['cte_volumes']
+
+        parada = (
+            params.tempo_parada_pesada
+            if peso > params.limite_peso_parada
+            else params.tempo_parada_leve
+        )
+
+        descarga = volumes * params.tempo_por_volume
         tempo_cluster = tempo_transito + tempo_parada + tempo_descarga
 
-        # Se ultrapassar o tempo máximo e já houver pontos acumulados, fecha grupo
         if tempo_acumulado + tempo_cluster > tempo_maximo_min and grupo_atual:
             grupos.append(grupo_atual)
             grupo_atual = []
-            tempo_acumulado = 0
-            ponto_anterior = None  # reinicia ponto de referência
+            tempo_acumulado = 0.0
+            ponto_anterior = None
 
         grupo_atual.append(row['cluster'])
         tempo_acumulado += tempo_cluster
@@ -148,17 +151,15 @@ def dividir_rotas_transferencia_por_tempo_maximo(
     if grupo_atual:
         grupos.append(grupo_atual)
 
-    subgrupos_df = [
+    return [
         df_clusterizado[df_clusterizado['cluster'].isin(grupo)].copy()
         for grupo in grupos
     ]
 
-    return subgrupos_df
-
 def subdividir_rota_se_exceder_tempo(
     rota_principal: dict,
     hub: dict,
-    parametros: dict,
+    params: SimulationParams,
     tempo_maximo: float,
     permitir_unico_destino_excedente: bool = True
 ) -> list[dict]:
@@ -183,8 +184,8 @@ def subdividir_rota_se_exceder_tempo(
     destino_coord = (destino["lat"], destino["lon"])
     distancia_km, tempo_transito_min = obter_rota_real(origem, destino_coord, hub["tenant_id"], None)
 
-    tempo_parada = parametros["tempo_parada_pesado"] if peso_total > parametros["peso_limite_pesado"] else parametros["tempo_parada_leve"]
-    tempo_descarga = volumes_total * parametros["tempo_descarga_por_volume"]
+    tempo_parada = params.tempo_parada_pesada if peso_total > params.limite_peso_parada else params.tempo_parada_leve
+    tempo_descarga = volumes_total * params.tempo_por_volume
     tempo_total = tempo_transito_min + tempo_parada + tempo_descarga
 
     # Regra: se passar do tempo mas for só 1 destino, aceita
@@ -356,13 +357,10 @@ def calcular_tempo_e_distancia_rota(rota_completa, tenant_id, db_conn, logger):
     return round(distancia_total, 2), round(tempo_total, 2)
 
 def gerar_rotas_savings_transfer(
-    pontos: List[dict],
-    origem: tuple,
-    tempo_maximo: float,
-    tempo_parada_pesada: float,
-    tempo_parada_leve: float,
-    tempo_por_volume: float,
-    peso_max_kg: float,
+    pontos,
+    origem,
+    tempo_maximo,
+    params: SimulationParams,
     obter_rota_func,
     logger
 ):
@@ -403,15 +401,21 @@ def gerar_rotas_savings_transfer(
         nova_rota = rotas[ri] + rotas[rj]
 
         # Calcular peso total
+        # Calcular peso total
         peso_total = sum(pontos[pid]["peso"] for pid in nova_rota)
-        if peso_total > peso_max_kg:
-            logger.info(f"🚫 Rejeitada por peso excedente: {peso_total:.1f}kg > {peso_max_kg}kg")
+        if peso_total > params.peso_max_transferencia:
+            logger.info(
+                f"🚫 Rejeitada por peso excedente: {peso_total:.1f}kg > {params.peso_max_transferencia}kg"
+            )
             continue
-
         # Calcular tempo total
         tempo_total = _calcular_tempo_total_rota(
-            nova_rota, pontos, origem, obter_rota_func,
-            tempo_parada_pesada, tempo_parada_leve, tempo_por_volume, logger
+            nova_rota,
+            pontos,
+            origem,
+            obter_rota_func,
+            params,
+            logger
         )
         if tempo_total > tempo_maximo:
             logger.info(f"🚫 Rejeitada por tempo excedente: {tempo_total:.1f} min > {tempo_maximo} min")
@@ -441,16 +445,14 @@ def _calcular_tempo_total_rota(
     pontos,
     origem,
     obter_rota_func,
-    tempo_parada_pesada,
-    tempo_parada_leve,
-    tempo_por_volume,
+    params: SimulationParams,
     logger
 ):
     # 🔒 Conversão segura de parâmetros
-    tempo_parada_pesada = float(tempo_parada_pesada)
-    tempo_parada_leve = float(tempo_parada_leve)
-    tempo_por_volume = float(tempo_por_volume)
-
+    tempo_parada_pesada = float(params.tempo_parada_pesada)
+    tempo_parada_leve = float(params.tempo_parada_leve)
+    tempo_por_volume = float(params.tempo_por_volume)
+    limite_peso = float(params.limite_peso_parada)
     tempo_total = 0.0
     anterior = origem
 
@@ -570,7 +572,7 @@ def estimar_viabilidade_subcluster(
     df_subcluster,
     df_tarifas,
     tempo_maximo,
-    parametros,
+    params: SimulationParams,
     logger,
     cluster_cidade=None,
     cidades_entregas=None,
@@ -595,34 +597,49 @@ def estimar_viabilidade_subcluster(
         logger=logger,
     )
 
-    if parametros.get("restricao_veiculo_leve_municipio", True):
-        if peso_total <= parametros.get("peso_leve_max", 200.0) and not todas_na_mesma_cidade:
-            logger.info(
-                f"🚫 Veículo leve para {peso_total} kg não permitido fora da cidade do cluster {cluster_cidade}. "
-                "Selecionando próximo veículo disponível."
-            )
-            tipo_veiculo, _ = definir_tipo_veiculo_last_mile(
-                peso_total=peso_total,
-                df_tarifas=df_tarifas[
-                    df_tarifas["capacidade_kg_min"] > parametros.get("peso_leve_max", 200.0)
-                ],
-                cluster_cidade=None,
-                cidades_entregas=cidades_referencia,
-                logger=logger,
+    if not getattr(params, "permitir_veiculo_leve_intermunicipal", False):
+        if not todas_na_mesma_cidade:
+            logger.info("🚫 Forçando veículo não leve por regra intermunicipal")
+            limite_leve = getattr(params, "limite_peso_veiculo", 50.0)
+
+            df_tarifas_filtrado = df_tarifas.copy()
+            if "capacidade_kg_min" in df_tarifas_filtrado.columns:
+                df_tarifas_filtrado = df_tarifas_filtrado[
+                    df_tarifas_filtrado["capacidade_kg_min"] > limite_leve
+                ]
+
+            if not df_tarifas_filtrado.empty:
+                tipo_veiculo, _ = definir_tipo_veiculo_last_mile(
+                    peso_total=peso_total,
+                    df_tarifas=df_tarifas_filtrado,
+                    cluster_cidade=None,
+                    cidades_entregas=cidades_referencia,
+                    logger=logger,
+                )
+
+    tempo_servico_estimado = 0.0
+
+    for _, row in df_subcluster.iterrows():
+        tempo_atendimento = row.get("cte_tempo_atendimento_min")
+
+        if tempo_atendimento is not None and pd.notna(tempo_atendimento):
+            tempo_servico_estimado += float(tempo_atendimento)
+        else:
+            peso = float(row.get("cte_peso", 0))
+            volumes = float(row.get("cte_volumes", 0))
+
+            tempo_parada = (
+                params.tempo_parada_pesada
+                if peso > params.limite_peso_parada
+                else params.tempo_parada_leve
             )
 
-    tempo_servico_estimado = calcular_tempo_entrega_last_mile(
-        peso_total=peso_total,
-        volumes_total=volumes_total,
-        qtde_entregas=qtde_entregas,
-        tempo_parada_leve=parametros['tempo_parada_leve'],
-        tempo_parada_pesada=parametros['tempo_parada_pesada'],
-        tempo_por_volume=parametros['tempo_por_volume'],
-        limite_peso_parada=parametros['limite_peso_parada'],
-    )
+            tempo_descarga = volumes * params.tempo_por_volume
+            tempo_servico_estimado += tempo_parada + tempo_descarga
 
-    velocidade_media_kmh = float(parametros.get('velocidade_media_kmh', 0) or 0)
+    velocidade_media_kmh = params.velocidade_kmh
     tempo_transito_minimo = 0.0
+
     if velocidade_media_kmh > 0:
         distancias_ao_centro = [
             geodesic(
@@ -633,9 +650,7 @@ def estimar_viabilidade_subcluster(
             if pd.notna(row['destino_latitude']) and pd.notna(row['destino_longitude'])
         ]
         if distancias_ao_centro:
-            tempo_transito_minimo = (
-                (2 * max(distancias_ao_centro) / velocidade_media_kmh) * 60
-            )
+            tempo_transito_minimo = (2 * max(distancias_ao_centro) / velocidade_media_kmh) * 60
 
     tempo_estimado = tempo_servico_estimado + tempo_transito_minimo
     viavel = tempo_estimado <= tempo_maximo
@@ -647,7 +662,6 @@ def estimar_viabilidade_subcluster(
         "tempo_servico_estimado": tempo_servico_estimado,
         "tempo_transito_minimo": tempo_transito_minimo,
     }
-
 
 def dividir_subcluster_local(df_subcluster, n_partes, logger=None):
     coordenadas_df = df_subcluster[['destino_latitude', 'destino_longitude']].dropna()
@@ -706,7 +720,7 @@ def subdividir_subcluster_por_veiculo(
     df_subcluster,
     df_tarifas,
     tempo_maximo,
-    parametros,
+    params: SimulationParams,
     tenant_id,
     simulation_db,
     logger,
@@ -717,29 +731,32 @@ def subdividir_subcluster_por_veiculo(
     k_subveic = 1
 
     coordenadas = df_subcluster[['destino_latitude', 'destino_longitude']].dropna().values
-    centro = (df_subcluster['centro_lat'].iloc[0], df_subcluster['centro_lon'].iloc[0])
 
     if len(coordenadas) <= 1:
         logger.warning("⚠️ Subcluster com uma ou nenhuma entrega. Aceitando como está.")
+        df_subcluster = df_subcluster.copy()
         df_subcluster['ordem_entrega'] = 0
         tipo_veiculo, _ = definir_tipo_veiculo_last_mile(
             peso_total=df_subcluster["cte_peso"].sum(),
             df_tarifas=df_tarifas,
             cluster_cidade=cluster_cidade,
-            cidades_entregas=cidades_entregas or df_subcluster['cte_cidade'].tolist()
+            cidades_entregas=cidades_entregas or df_subcluster['cte_cidade'].tolist(),
+            logger=logger,
         )
         return [(df_subcluster, tipo_veiculo, 0.0, 0.0)]
 
     while k_subveic <= len(coordenadas):
         try:
+            df_trabalho = df_subcluster.copy()
+
             if len(pd.DataFrame(coordenadas).drop_duplicates()) < k_subveic:
-                df_subcluster = _dividir_dataframe_em_blocos(
-                    df_subcluster,
+                df_trabalho = _dividir_dataframe_em_blocos(
+                    df_trabalho,
                     k_subveic,
                     'subveic',
                 )
             else:
-                df_subcluster['subveic'] = KMeans(
+                df_trabalho['subveic'] = KMeans(
                     n_clusters=k_subveic,
                     random_state=42,
                     n_init="auto",
@@ -748,12 +765,12 @@ def subdividir_subcluster_por_veiculo(
             logger.error(f"❌ Erro no KMeans com k={k_subveic}: {e}")
             break
 
-        if df_subcluster['subveic'].nunique() < k_subveic:
+        if df_trabalho['subveic'].nunique() < k_subveic:
             logger.info(
-                f"🧱 KMeans por veículo retornou apenas {df_subcluster['subveic'].nunique()} grupos; aplicando fallback por blocos em {k_subveic} partes."
+                f"🧱 KMeans por veículo retornou apenas {df_trabalho['subveic'].nunique()} grupos; aplicando fallback por blocos em {k_subveic} partes."
             )
-            df_subcluster = _dividir_dataframe_em_blocos(
-                df_subcluster,
+            df_trabalho = _dividir_dataframe_em_blocos(
+                df_trabalho,
                 k_subveic,
                 'subveic',
             )
@@ -761,12 +778,12 @@ def subdividir_subcluster_por_veiculo(
         violou_restricao = False
         rotas_do_subcluster = []
 
-        for sub_id, df_sub in df_subcluster.groupby('subveic'):
+        for _, df_sub in df_trabalho.groupby('subveic'):
             diagnostico = estimar_viabilidade_subcluster(
                 df_subcluster=df_sub,
                 df_tarifas=df_tarifas,
                 tempo_maximo=tempo_maximo,
-                parametros=parametros,
+                params=params,
                 logger=logger,
                 cluster_cidade=cluster_cidade,
                 cidades_entregas=df_sub["cte_cidade"].tolist(),
@@ -782,8 +799,9 @@ def subdividir_subcluster_por_veiculo(
                 break
 
             df_sub = ordenar_entregas_subcluster(df_sub)
-
-            rotas_do_subcluster.append((df_sub, diagnostico['tipo_veiculo'], 0.0, diagnostico['tempo_estimado']))
+            rotas_do_subcluster.append(
+                (df_sub, diagnostico['tipo_veiculo'], 0.0, diagnostico['tempo_estimado'])
+            )
 
         if not violou_restricao:
             subclusters_validos = rotas_do_subcluster
@@ -793,11 +811,12 @@ def subdividir_subcluster_por_veiculo(
         logger.info(f"🔁 Subindo k_subveic para {k_subveic} devido à violação de tempo.")
 
     if not subclusters_validos:
-        logger.error(f"❌ k_subveic={k_subveic} maior que número de pontos ({len(coordenadas)}). Interrompendo tentativa.")
+        logger.error(
+            f"❌ k_subveic={k_subveic} maior que número de pontos ({len(coordenadas)}). Interrompendo tentativa."
+        )
         return []
 
     return subclusters_validos
-
 
 
 def expandir_pontos_por_capacidade_veiculo(

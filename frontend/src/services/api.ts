@@ -37,23 +37,32 @@ api.interceptors.response.use(
         if (status === 401) {
             console.warn("⚠️ 401 recebido:", err.config?.url);
 
-            // 🔥 só desloga se for rota de autenticação
             if (err.config?.url?.includes("/auth")) {
                 useAuthStore.getState().logout();
                 window.location.href = "/login";
             }
+
         } else if (status === 403) {
-            alert("🚫 Você não tem permissão para acessar este recurso.");
+            alert("🚫 Você não tem permissão.");
+
         } else if (status === 404) {
             if (!isSimulationStatusPolling) {
                 alert("❌ Recurso não encontrado.");
             }
+
+        } else if (status === 422) {
+            console.error("🔥 422 RAW:", err.response?.data);
+            console.error("🔥 422 FORMATADO:", JSON.stringify(err.response?.data, null, 2));
+
+            alert("❌ Erro de validação (422). Veja console.");
         } else if (status >= 500) {
-            alert("💥 Erro interno no servidor. Tente novamente mais tarde.");
+            alert("💥 Erro interno no servidor.");
+
         } else if (err.code === "ECONNABORTED") {
-            alert("⏳ A requisição demorou demais e foi cancelada.");
+            alert("⏳ Timeout.");
+
         } else if (!err.response) {
-            alert("🌐 Não foi possível conectar ao servidor. Verifique sua rede.");
+            alert("🌐 Sem conexão.");
         }
 
         return Promise.reject(err);

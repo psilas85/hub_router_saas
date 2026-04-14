@@ -6,6 +6,10 @@ from authentication.utils.dependencies import obter_tenant_id_do_token
 from authentication.domain.entities import UsuarioToken
 from api_gateway.utils.http_client import forward_request
 from api_gateway.config import settings
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
@@ -38,129 +42,31 @@ async def healthcheck(request: Request):
 @router.post("/executar", summary="Executar simulação completa")
 async def executar_simulacao(
     request: Request,
-
-    # 📅 Datas e controle
-    data_inicial: date = Query(..., description="Data inicial (YYYY-MM-DD)"),
-    data_final: date = Query(..., description="Data final (YYYY-MM-DD)"),
-    modo_forcar: bool = Query(False, description="Sobrescreve simulações existentes"),
-
-    # 🔗 Hub central (👈 Faltava)
-    hub_id: int = Query(..., description="ID do hub central"),  # ✅ adicionado
-
-    # 🔢 Clusterização
-    usar_outlier: bool = Query(False, description="Ativa separação de outliers antes da clusterização"),
-    distancia_outlier_km: str | float | None = Query(None, description="Distância fixa em km para corte de outliers"),
-    min_entregas_por_cluster_alvo: int | None = Query(10, description="Mínimo alvo de entregas por cluster para definir faixa operacional de k"),
-    max_entregas_por_cluster_alvo: int | None = Query(100, description="Máximo alvo de entregas por cluster para definir faixa operacional de k"),
-    algoritmo_clusterizacao_principal: str = Query("kmeans", description="Algoritmo principal de clusterização"),
-
-    # 🔗 Cluster hub
-    desativar_cluster_hub: bool = Query(False, description="Desativa cluster automático do hub central"),
-    raio_hub_km: float = Query(80.0, description="Raio em km para considerar entregas no hub central"),
-
-    # ⏱️ Tempos
-    parada_leve: int = Query(10, description="Tempo de parada leve (min)"),
-    parada_pesada: int = Query(20, description="Tempo de parada pesada (min)"),
-    tempo_volume: float = Query(0.40, description="Tempo por volume (min)"),
-
-    # 🚚 Operações
-    velocidade: float = Query(60.0, description="Velocidade média (km/h)"),
-    limite_peso: float = Query(50.0, description="Limite de peso para parada pesada (kg)"),
-
-    # ⚙️ Restrições de veículo
-    restricao_veiculo_leve_municipio: bool = Query(True, description="Impede veículos leves fora do município do hub central"),
-    peso_leve_max: float = Query(50.0, description="Peso máximo para considerar veículo leve"),
-
-    # 🔗 Transferências
-    tempo_max_transferencia: int = Query(600, description="Tempo máximo de rota de transferência (min)"),
-    peso_max_transferencia: float = Query(18000.0, description="Peso máximo por rota de transferência (kg)"),
-
-    # 📦 Last-mile
-    entregas_por_subcluster: int = Query(25, description="Qtd alvo de entregas por subcluster"),
-    tempo_max_roteirizacao: int = Query(600, description="Tempo máximo total por rota last-mile (min)"),
-    tempo_max_k0: int = Query(1200, description="Tempo máximo para o cenário Hub único"),
-
-    # ⚙️ Rotas excedentes
-    permitir_rotas_excedentes: bool = Query(False, description="Permite aceitar rotas que ultrapassem o tempo máximo"),
-
     usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
-
-    algoritmo_roteirizacao: str = Query("padrao"),
-    tempo_especial_min: int = Query(180),
-    tempo_especial_max: int = Query(300),
-    max_especiais_por_rota: int = Query(1),
 ):
-    """
-    Encaminha requisição do API Gateway → Simulation Service.
-    Todos os parâmetros do main_simulation.py, exceto modo_forcar (fixo = True).
-    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
 
-    distancia_outlier_km = parse_optional_float(distancia_outlier_km)
+    logger.info(f"BODY RECEBIDO NO GATEWAY: {body}")
 
-    params = {
-        # 📅 Datas
-        "data_inicial": data_inicial,
-        "data_final": data_final,
-        "modo_forcar": modo_forcar,
-        "hub_id": hub_id,
-
-        # 🔢 Clusterização
-        "usar_outlier": usar_outlier,
-        "distancia_outlier_km": distancia_outlier_km,
-        "min_entregas_por_cluster_alvo": min_entregas_por_cluster_alvo,
-        "max_entregas_por_cluster_alvo": max_entregas_por_cluster_alvo,
-        "algoritmo_clusterizacao_principal": algoritmo_clusterizacao_principal,
-
-        # 🔗 Cluster hub
-        "desativar_cluster_hub": desativar_cluster_hub,
-        "raio_hub_km": raio_hub_km,
-
-        # ⏱️ Tempos
-        "parada_leve": parada_leve,
-        "parada_pesada": parada_pesada,
-        "tempo_volume": tempo_volume,
-
-        # 🚚 Operações
-        "velocidade": velocidade,
-        "limite_peso": limite_peso,
-
-        # ⚙️ Restrições
-        "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
-        "peso_leve_max": peso_leve_max,
-
-        # 🔗 Transferências
-        "tempo_max_transferencia": tempo_max_transferencia,
-        "peso_max_transferencia": peso_max_transferencia,
-
-        # 📦 Last-mile
-        "entregas_por_subcluster": entregas_por_subcluster,
-        "tempo_max_roteirizacao": tempo_max_roteirizacao,
-        "tempo_max_k0": tempo_max_k0,
-
-        # ⚙️ Rotas excedentes
-        "permitir_rotas_excedentes": permitir_rotas_excedentes,
-
-        # 🔥 ADICIONAR AQUI
-        "algoritmo_roteirizacao": algoritmo_roteirizacao,
-        "tempo_especial_min": tempo_especial_min,
-        "tempo_especial_max": tempo_especial_max,
-        "max_especiais_por_rota": max_especiais_por_rota,
-    }
-
-    headers = {"authorization": request.headers.get("authorization")}
+    auth = request.headers.get("authorization")
+    headers = {}
+    if auth:
+        headers["authorization"] = auth
 
     result = await forward_request(
         "POST",
         f"{SIMULATION_URL}/simulation/executar",
         headers=headers,
-        params=params
+        json=body,
     )
 
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
 
     return result["content"]
-
 
 @router.get("/visualizar", summary="Visualizar artefatos da simulação")
 async def visualizar_simulacao(
@@ -184,9 +90,14 @@ async def visualizar_simulacao(
     status_code = result.get("status_code", 500)
     content = result.get("content")
 
+    if status_code == 404:
+        return {
+            "status": "processing",
+            "job_id": job_id,
+            "mensagem": "⏳ Inicializando simulação..."
+        }
+
     if status_code >= 400:
-        # Se o serviço já mandou detail, repassa direto
-        detail = content if isinstance(content, str) else content or "Erro ao buscar artefatos."
         raise HTTPException(status_code=status_code, detail=detail)
 
     return content

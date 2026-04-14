@@ -41,19 +41,27 @@ def gerar_relatorio_simulacao(
     base_dir=None,
     grafico_custo_path=None
 ):
+
+    # 🔥 FIX DEFINITIVO
+    envio_data_local = str(envio_data)
+
     styles = getSampleStyleSheet()
     style_h1 = styles["Heading1"]
     style_h2 = styles["Heading2"]
     style_normal = styles["Normal"]
 
-    # Caminho do PDF de saída
     if base_dir is None:
         raise ValueError("base_dir deve ser informado no novo padrão!")
+
     relatorio_dir = base_dir
     os.makedirs(relatorio_dir, exist_ok=True)
-    relatorio_path = os.path.join(relatorio_dir, f"relatorio_simulation_{envio_data}.pdf")
 
-    # 🔹 Garante que o gráfico consolidado exista
+    relatorio_path = os.path.join(
+        relatorio_dir,
+        f"relatorio_simulation_{envio_data_local}.pdf"
+    )
+
+    # 🔹 Geração de gráfico consolidado
     if not grafico_custo_path or not os.path.exists(grafico_custo_path):
         try:
             query = """
@@ -62,7 +70,9 @@ def gerar_relatorio_simulacao(
                 WHERE tenant_id = %s AND envio_data = %s
                 ORDER BY k_clusters
             """
-            df = pd.read_sql(query, simulation_db, params=(tenant_id, envio_data))
+
+            df = pd.read_sql(query, simulation_db, params=(tenant_id, envio_data_local))
+
             if not df.empty:
                 df["custo_total"] = (
                     df["custo_transferencia"].fillna(0) +
@@ -71,18 +81,19 @@ def gerar_relatorio_simulacao(
                 )
 
                 fig, ax = plt.subplots(figsize=(8, 5))
+
                 ax.bar(df["k_clusters"], df["custo_transferencia"], label="Transferência")
                 ax.bar(
                     df["k_clusters"],
                     df["custo_last_mile"],
                     bottom=df["custo_transferencia"],
-                    label="Last-mile",
+                    label="Last-mile"
                 )
                 ax.bar(
                     df["k_clusters"],
                     df["custo_cluster"],
                     bottom=df["custo_transferencia"] + df["custo_last_mile"],
-                    label="Cluster",
+                    label="Cluster"
                 )
 
                 ax.plot(
@@ -90,9 +101,10 @@ def gerar_relatorio_simulacao(
                     df["custo_total"],
                     color="black",
                     marker="o",
-                    label="Custo Total",
+                    label="Custo Total"
                 )
-                ax.set_title(f"Custo Total por k_clusters — {envio_data}")
+
+                ax.set_title(f"Custo Total por k_clusters — {envio_data_local}")
                 ax.set_xlabel("k_clusters")
                 ax.set_ylabel("Custo (R$)")
                 ax.legend()
@@ -100,32 +112,39 @@ def gerar_relatorio_simulacao(
 
                 grafico_dir = os.path.join(base_dir, "graphs", tenant_id)
                 os.makedirs(grafico_dir, exist_ok=True)
+
                 grafico_custo_path = os.path.join(
-                    grafico_dir, f"grafico_simulacao_{tenant_id}_{envio_data}.png"
+                    grafico_dir,
+                    f"grafico_simulacao_{tenant_id}_{envio_data_local}.png"
                 )
+
                 plt.tight_layout()
                 plt.savefig(grafico_custo_path)
                 plt.close()
+
                 print(f"✅ Gráfico consolidado salvo: {grafico_custo_path}")
+
         except Exception as e:
             print(f"⚠️ Não foi possível gerar gráfico consolidado: {e}")
             grafico_custo_path = None
 
-    # Documento com rodapé personalizado
+    # Documento PDF
     doc = SimpleDocTemplate(relatorio_path, pagesize=A4)
     doc.build([], onFirstPage=rodape, onLaterPages=rodape)
+
     elements = []
 
     # Capa
     elements.append(Paragraph("Relatório de Simulação Logística", style_h1))
     elements.append(Spacer(1, 20))
     elements.append(Paragraph(f"Tenant: {tenant_id}", style_normal))
-    elements.append(Paragraph(f"Data de envio: {envio_data}", style_normal))
+    elements.append(Paragraph(f"Data de envio: {envio_data_local}", style_normal))
     elements.append(Paragraph(f"ID da simulação: {simulation_id}", style_normal))
     elements.append(PageBreak())
 
-    # Seção de Mapas por k
-    maps_dir = os.path.join(base_dir, "entregas", tenant_id, envio_data)
+    # Mapas
+    maps_dir = os.path.join(base_dir, "maps", tenant_id, envio_data_local)
+
     for k in sorted(k_clusters_testados):
         elements.append(Paragraph(f"🔢 Simulação com k = {k} clusters", style_h2))
         elements.append(Spacer(1, 10))
@@ -137,101 +156,76 @@ def gerar_relatorio_simulacao(
         ]:
             elements.append(Paragraph(titulo, style_normal))
 
-            # ✅ Tratamento especial para k = 0 (baseline hub central)
             if k == 0 and tipo in ["clusterizacao", "transferencias"]:
-                if tipo == "clusterizacao":
-                    elements.append(
-                        Paragraph(
-                            "Baseline partindo diretamente do hub central. Clusterização não aplicável.",
-                            style_normal,
-                        )
-                    )
-                elif tipo == "transferencias":
-                    elements.append(
-                        Paragraph(
-                            "Não há rotas de transferência neste cenário baseline (k = 0).",
-                            style_normal,
-                        )
-                    )
+                texto = (
+                    "Clusterização não aplicável."
+                    if tipo == "clusterizacao"
+                    else "Sem transferências no baseline."
+                )
+                elements.append(Paragraph(texto, style_normal))
                 continue
-
 
             if tipo == "lastmile":
                 img_path = os.path.join(
                     maps_dir,
-                    f"{tenant_id}_mapa_lastmile_{envio_data}_k{k}.png"
+                    f"{tenant_id}_mapa_lastmile_{envio_data_local}_k{k}.png"
                 )
             else:
                 img_path = None
-            if os.path.exists(img_path):
-                elements.append(Image(img_path, width=480, height=280, kind="proportional"))
-            else:
-                elements.append(Paragraph("Mapa disponível em HTML no diretório de entregas.", style_normal))
 
-            # ➕ Tabelas de transferências
+            if img_path and os.path.exists(img_path):
+                elements.append(Image(img_path, width=480, height=280))
+            else:
+                elements.append(Paragraph("Mapa disponível em HTML.", style_normal))
+
+            # Transferências
             if tipo == "transferencias":
                 try:
-                    df_resumo_transf = carregar_resumo_transferencias(
-                        simulation_db, tenant_id, envio_data, k
+                    df = carregar_resumo_transferencias(
+                        simulation_db, tenant_id, envio_data_local, k
                     )
-                    if not df_resumo_transf.empty:
+                    if not df.empty:
                         elements.append(Spacer(1, 10))
-                        elements.append(Paragraph("📋 Resumo das Transferências", style_normal))
-                        elements.append(Spacer(1, 6))
-                        elements.append(criar_tabela_transferencias_pdf(df_resumo_transf))
+                        elements.append(Paragraph("Resumo Transferências", style_normal))
+                        elements.append(criar_tabela_transferencias_pdf(df))
                 except Exception as e:
-                    elements.append(
-                        Paragraph(f"⚠️ Erro ao gerar resumo das transferências: {e}", style_normal)
-                    )
+                    elements.append(Paragraph(f"Erro: {e}", style_normal))
 
-            # ➕ Resumo clusterização
+            # Clusterização
             if tipo == "clusterizacao":
                 try:
-                    df_resumo = gerar_resumo_clusterizacao(
-                        simulation_db, tenant_id, envio_data, k
+                    df = gerar_resumo_clusterizacao(
+                        simulation_db, tenant_id, envio_data_local, k
                     )
-                    if not df_resumo.empty:
+                    if not df.empty:
                         elements.append(Spacer(1, 10))
-                        elements.append(Paragraph("📋 Resumo por Cluster", style_normal))
-                        elements.append(Spacer(1, 6))
-                        elements.append(criar_tabela_resumo_pdf(df_resumo))
+                        elements.append(Paragraph("Resumo Cluster", style_normal))
+                        elements.append(criar_tabela_resumo_pdf(df))
                 except Exception as e:
-                    elements.append(
-                        Paragraph(f"⚠️ Erro ao gerar resumo por cluster: {e}", style_normal)
-                    )
+                    elements.append(Paragraph(f"Erro: {e}", style_normal))
 
-            # ➕ Resumo last-mile
+            # Last-mile
             if tipo == "lastmile":
                 try:
-                    df_resumo_lastmile = carregar_resumo_lastmile(
-                        simulation_db, tenant_id, envio_data, k
+                    df = carregar_resumo_lastmile(
+                        simulation_db, tenant_id, envio_data_local, k
                     )
-                    if not df_resumo_lastmile.empty:
+                    if not df.empty:
                         elements.append(Spacer(1, 10))
-                        elements.append(Paragraph("📋 Resumo Last-mile", style_normal))
-                        elements.append(Spacer(1, 6))
-                        elements.append(criar_tabela_lastmile_pdf(df_resumo_lastmile))
+                        elements.append(Paragraph("Resumo Last-mile", style_normal))
+                        elements.append(criar_tabela_lastmile_pdf(df))
                 except Exception as e:
-                    elements.append(
-                        Paragraph(f"⚠️ Erro ao gerar resumo last-mile: {e}", style_normal)
-                    )
-
-            # Separador visual
-            separator = Drawing(480, 1)
-            separator.add(Line(0, 0, 480, 0))
-            elements.append(Spacer(1, 4))
-            elements.append(separator)
-            elements.append(Spacer(1, 12))
+                    elements.append(Paragraph(f"Erro: {e}", style_normal))
 
         elements.append(PageBreak())
 
-    # Gráfico de Custo Consolidado
+    # Gráfico final
     if grafico_custo_path and os.path.exists(grafico_custo_path):
-        elements.append(Paragraph("📊 Gráfico de Custos por Heurística", style_h2))
+        elements.append(Paragraph("📊 Custos", style_h2))
         elements.append(Image(grafico_custo_path, width=480, height=280))
     else:
-        elements.append(Paragraph("⚠️ Gráfico de custos não encontrado.", style_normal))
+        elements.append(Paragraph("⚠️ Gráfico não encontrado.", style_normal))
 
-    # Gera o PDF com rodapé
     doc.build(elements, onFirstPage=rodape, onLaterPages=rodape)
+
     return relatorio_path

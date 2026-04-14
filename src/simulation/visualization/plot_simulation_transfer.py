@@ -110,7 +110,7 @@ def plotar_mapa_transferencias(
     logger=None
 ):
     try:
-        output_path = os.path.join(output_dir, tenant_id)
+        output_path = output_dir
         os.makedirs(output_path, exist_ok=True)
 
         mapa_path = os.path.join(output_path, f"{tenant_id}_mapa_transferencias_{envio_data}_k{k_clusters}.html")
@@ -118,9 +118,9 @@ def plotar_mapa_transferencias(
 
         if modo_forcar:
             for path in [mapa_path, png_path]:
-                if os.path.exists(path):
+                if path and os.path.exists(path):
                     os.remove(path)
-        elif os.path.exists(mapa_path) or os.path.exists(png_path):
+        elif (mapa_path and os.path.exists(mapa_path)) or (png_path and os.path.exists(png_path)):
             if logger:
                 logger.info(f"🟡 Mapas já existem ({envio_data}, k={k_clusters}). Use --modo_forcar para sobrescrever.")
             return

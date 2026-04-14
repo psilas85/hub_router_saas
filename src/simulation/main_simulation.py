@@ -153,7 +153,7 @@ if __name__ == "__main__":
         "limite_peso_parada": args.limite_peso,
         "tempo_maximo_transferencia": args.tempo_max_transferencia,
         "peso_max_kg": args.peso_max_transferencia,
-        "entregas_por_subcluster": args.entregas_por_subcluster,
+        "entregas_por_rota": args.entregas_por_rota,
         "tempo_maximo_roteirizacao": args.tempo_max_roteirizacao,
         "tempo_maximo_k0": args.tempo_max_k0,
         "k_min": 1,

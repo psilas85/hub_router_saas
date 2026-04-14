@@ -5,12 +5,14 @@ from datetime import date, timedelta
 import logging
 import uuid
 import os
+
 from pydantic import BaseModel
 from typing import List
 from rq import Queue
 from redis import Redis
 from rq.job import Job
 from rq import get_current_job
+import json
 
 from simulation.jobs import processar_simulacao
 from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
@@ -30,6 +32,7 @@ from simulation.visualization.gerar_grafico_distribuicao_k import gerar_grafico_
 from simulation.visualization.gerar_grafico_frequencia_cidades import gerar_grafico_frequencia_cidades
 from simulation.visualization.gerar_grafico_k_fixo import gerar_grafico_k_fixo
 from simulation.visualization.gerar_grafico_frota_k_fixo import gerar_grafico_frota_k_fixo
+from simulation.domain.entities import SimulationParams
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
@@ -96,129 +99,54 @@ def healthcheck():
     return {"status": "ok", "servico": "Simulation"}
 
 
+
+
 @router.post("/executar", summary="Executar Simulação Completa")
 def executar_simulacao(
-    data_inicial: date = Query(..., description="Data inicial no formato YYYY-MM-DD"),
-    data_final: date = Query(..., description="Data final no formato YYYY-MM-DD"),
-    modo_forcar: bool = Query(False, description="Sobrescreve simulações existentes"),
-    hub_id: int = Query(..., description="ID do hub central"),
-    desativar_cluster_hub: bool = Query(False, description="Desativa cluster automático próximo ao hub central"),
-    raio_hub_km: float = Query(80.0, description="Raio em km para considerar entregas no cluster do hub"),
-    usar_outlier: bool = Query(False, description="Ativa separação de outliers antes da clusterização"),
-    distancia_outlier_km: str | float | None = Query(None, description="Distância fixa em km para corte de outliers"),
-    min_entregas_por_cluster_alvo: int | None = Query(10, description="Mínimo alvo de entregas por cluster para definir faixa operacional de k"),
-    max_entregas_por_cluster_alvo: int | None = Query(100, description="Máximo alvo de entregas por cluster para definir faixa operacional de k"),
-    algoritmo_clusterizacao_principal: str = Query("kmeans", description="Algoritmo principal de clusterização"),
-    parada_leve: int = Query(10, description="Tempo de parada leve (min)"),
-    parada_pesada: int = Query(20, description="Tempo de parada pesada (min)"),
-    tempo_volume: float = Query(0.4, description="Tempo por volume (min)"),
-    velocidade: float = Query(60.0, description="Velocidade média (km/h)"),
-    limite_peso: float = Query(50.0, description="Limite de peso para considerar parada pesada (kg)"),
-    peso_leve_max: float = Query(50.0, description="Peso máximo para veículo leve"),
-    tempo_max_transferencia: int = Query(600, description="Tempo máximo por rota de transferência (min)"),
-    peso_max_transferencia: float = Query(18000.0, description="Peso máximo por rota de transferência (kg)"),
-    entregas_por_subcluster: int = Query(25, description="Qtd alvo de entregas por subcluster"),
-    tempo_max_roteirizacao: int = Query(600, description="Tempo máximo total por rota last-mile (min)"),
-    tempo_max_k0: int = Query(1200, description="Tempo máximo para o cenário Hub único"),
-    permitir_rotas_excedentes: bool = Query(True, description="Permitir rotas que ultrapassem limite"),
-    restricao_veiculo_leve_municipio: bool = Query(True, description="Restringe veículos leves em rotas intermunicipais"),
+    payload: SimulationParams = Body(...),
     tenant_id: str = Depends(obter_tenant_id_do_token),
-    tempo_especial_min: int = Query(180, description="Tempo mínimo (min) para considerar entrega especial no modo Time Windows"),
-    tempo_especial_max: int = Query(300, description="Tempo máximo (min) para considerar entrega especial no modo Time Windows"),
-    max_especiais_por_rota: int = Query(1, description="Máximo de entregas especiais por rota no modo Time Windows"),
-    algoritmo_roteirizacao: str = Query("padrao", description="Algoritmo de roteirização"),
 ):
-    distancia_outlier_km = _parse_optional_float(distancia_outlier_km, "distancia_outlier_km")
-
-    if data_final < data_inicial:
-        raise HTTPException(status_code=400, detail="Data final não pode ser anterior à data inicial.")
-
     job_id = str(uuid.uuid4())
-    parametros_recebidos = {
-        "data_inicial": data_inicial,
-        "data_final": data_final,
-        "modo_forcar": modo_forcar,
-        "hub_id": hub_id,
-        "desativar_cluster_hub": desativar_cluster_hub,
-        "raio_hub_km": raio_hub_km,
-        "usar_outlier": usar_outlier,
-        "distancia_outlier_km": distancia_outlier_km,
-        "min_entregas_por_cluster_alvo": min_entregas_por_cluster_alvo,
-        "max_entregas_por_cluster_alvo": max_entregas_por_cluster_alvo,
-        "algoritmo_clusterizacao_principal": algoritmo_clusterizacao_principal,
-        "parada_leve": parada_leve,
-        "parada_pesada": parada_pesada,
-        "tempo_volume": tempo_volume,
-        "velocidade": velocidade,
-        "limite_peso": limite_peso,
-        "peso_leve_max": peso_leve_max,
-        "tempo_max_transferencia": tempo_max_transferencia,
-        "peso_max_transferencia": peso_max_transferencia,
-        "entregas_por_subcluster": entregas_por_subcluster,
-        "tempo_max_roteirizacao": tempo_max_roteirizacao,
-        "tempo_max_k0": tempo_max_k0,
-        "permitir_rotas_excedentes": permitir_rotas_excedentes,
-        "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
-        "algoritmo_roteirizacao": algoritmo_roteirizacao,
-        "tempo_especial_min": tempo_especial_min,
-        "tempo_especial_max": tempo_especial_max,
-        "max_especiais_por_rota": max_especiais_por_rota,
-    }
+
+    params = payload
+
+    # 🔥 validação de datas
+    if params.data_final is None:
+        params.data_final = params.data_inicial
+
+    if params.data_final < params.data_inicial:
+        raise HTTPException(
+            status_code=400,
+            detail="Data final não pode ser anterior à inicial."
+        )
 
     logger.info(
-        "[simulation.executar] job_id=%s tenant_id=%s parametros_frontend=%s",
+        "[simulation.executar] job_id=%s tenant_id=%s params=%s",
         job_id,
         tenant_id,
-        _serializar_log(parametros_recebidos),
+        _serializar_log(params.dict()),
     )
 
-    # 🔹 Define timeout dinâmico
-    timeout = 7200 if modo_forcar else 3600  # 2h se modo_forcar, senão 1h
+    timeout = 7200 if params.modo_forcar else 3600
 
-    # 🔹 Enfileira execução no worker (sem duplicar job_id no enqueue!)
     job = q.enqueue(
         processar_simulacao,
         job_id,
         tenant_id,
-        str(data_inicial),
-        str(data_final),
-        hub_id,
-        {
-            "desativar_cluster_hub": desativar_cluster_hub,
-            "raio_hub_km": raio_hub_km,
-            "usar_outlier": usar_outlier,
-            "distancia_outlier_km": distancia_outlier_km,
-            "min_entregas_por_cluster_alvo": min_entregas_por_cluster_alvo,
-            "max_entregas_por_cluster_alvo": max_entregas_por_cluster_alvo,
-            "algoritmo_clusterizacao_principal": algoritmo_clusterizacao_principal,
-            "parada_leve": parada_leve,
-            "parada_pesada": parada_pesada,
-            "tempo_volume": tempo_volume,
-            "velocidade": velocidade,
-            "limite_peso": limite_peso,
-            "peso_leve_max": peso_leve_max,
-            "tempo_max_transferencia": tempo_max_transferencia,
-            "peso_max_transferencia": peso_max_transferencia,
-            "entregas_por_subcluster": entregas_por_subcluster,
-            "tempo_max_roteirizacao": tempo_max_roteirizacao,
-            "tempo_max_k0": tempo_max_k0,
-            "permitir_rotas_excedentes": permitir_rotas_excedentes,
-            "restricao_veiculo_leve_municipio": restricao_veiculo_leve_municipio,
-            "algoritmo_roteirizacao": algoritmo_roteirizacao,
-            "tempo_especial_min": tempo_especial_min,
-            "tempo_especial_max": tempo_especial_max,
-            "max_especiais_por_rota": max_especiais_por_rota,
-        },
-        modo_forcar,
+        str(params.data_inicial),
+        str(params.data_final),
+        params.hub_id,
+        params.dict(),
+        params.modo_forcar,
         job_id=job_id,
         job_timeout=timeout
     )
 
-    # 🔹 Registra no histórico imediatamente
+    # histórico
     try:
-        import json
         conn = conectar_simulation_db()
         cur = conn.cursor()
+
         cur.execute("""
             INSERT INTO historico_simulation
                 (tenant_id, job_id, status, mensagem, datas, parametros)
@@ -227,59 +155,65 @@ def executar_simulacao(
             tenant_id,
             job_id,
             "processing",
-            f"Simulação de {data_inicial} a {data_final} enfileirada",
-            json.dumps({"data_inicial": str(data_inicial), "data_final": str(data_final)}),
+            f"Simulação de {params.data_inicial} a {params.data_final} enfileirada",
             json.dumps({
-                "hub_id": hub_id,
-                "tempo_max_k0": tempo_max_k0,
-            })
+                "data_inicial": str(params.data_inicial),
+                "data_final": str(params.data_final)
+            }),
+            json.dumps(params.dict(), default=str)
         ))
+
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
+
     except Exception as e:
-        logger.error(f"❌ Erro ao registrar histórico inicial: {e}")
+        logger.error(f"❌ Erro ao registrar histórico: {e}")
 
     return {
         "status": "processing",
         "job_id": job_id,
         "tenant_id": tenant_id,
-        "mensagem": f"🔄 Simulação de {data_inicial} a {data_final} enfileirada com sucesso."
     }
-
 
 @router.get("/visualizar", summary="Visualizar artefatos da simulação")
 def visualizar_simulacao(
     data: date = Query(..., description="Data no formato YYYY-MM-DD"),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
-    """
-    Retorna os artefatos gerados (mapas, tabelas, gráficos, CSVs e relatório PDF)
-    para a data informada, organizados por k_clusters.
-    Marca também o cenário ótimo (is_ponto_otimo).
-    """
-    response = {"data": str(data), "cenarios": {}}
 
-    # PDF consolidado (novo padrão)
-    pdf_path = f"./exports/simulation/relatorios/{tenant_id}/{data}/relatorio_simulation_{data}.pdf"
+    data_str = str(data)
+    response = {"data": data_str, "cenarios": {}}
+
+    # ================================
+    # 🔹 PDF
+    # ================================
+    pdf_path = f"./exports/simulation/relatorios/{tenant_id}/{data_str}/relatorio_simulation_{data_str}.pdf"
     if os.path.exists(pdf_path):
         response["relatorio_pdf"] = pdf_path.replace("./", "/")
 
-    # Excel entregas+rotas (novo padrão)
-    excel_path = f"./exports/simulation/entregas/{tenant_id}/{data}/entregas_simulacao_{data}.xlsx"
+    # ================================
+    # 🔹 EXCEL
+    # ================================
+    excel_path = f"./exports/simulation/entregas/{tenant_id}/{data_str}/entregas_simulacao_{data_str}.xlsx"
     if os.path.exists(excel_path):
         response["excel_entregas_rotas"] = excel_path.replace("./", "/")
 
-    # Gráfico comparativo
-    graficos_dir = f"./exports/simulation/graphs/{tenant_id}"
+    # ================================
+    # 🔹 GRÁFICOS (CORRIGIDO)
+    # ================================
+    graficos_dir = f"./exports/simulation/graphs/{tenant_id}/{data_str}"
     if os.path.isdir(graficos_dir):
         graficos = [
-            f"/exports/simulation/graphs/{tenant_id}/{f}"
+            f"/exports/simulation/graphs/{tenant_id}/{data_str}/{f}"
             for f in os.listdir(graficos_dir)
-            if f.startswith("grafico_simulacao_") or f.startswith(f"grafico_custos_{data}_")
+            if f.endswith(".png")
         ]
         response["graficos"] = sorted(graficos)
 
-    # === Descobrir cenário ótimo no banco ===
+    # ================================
+    # 🔹 DESCOBRIR K ÓTIMO
+    # ================================
     import pandas as pd
     from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
 
@@ -290,123 +224,95 @@ def visualizar_simulacao(
             WHERE tenant_id = %s AND envio_data = %s AND is_ponto_otimo = TRUE
             LIMIT 1
         """
-        df = pd.read_sql(query, conectar_simulation_db(), params=(tenant_id, str(data)))
+        df = pd.read_sql(query, conectar_simulation_db(), params=(tenant_id, data_str))
         otimo_k = int(df.iloc[0]["k_clusters"]) if not df.empty else None
     except Exception:
         otimo_k = None
 
-    # Mapas por cenário
-    mapas_dir = f"./exports/simulation/maps/{tenant_id}"
+    # ================================
+    # 🔹 FUNÇÃO AUXILIAR
+    # ================================
+    def add_file(tipo, k, path):
+        response["cenarios"].setdefault(
+            k,
+            {
+                "mapas": [],
+                "tabelas_lastmile": [],
+                "tabelas_transferencias": [],
+                "tabelas_resumo": [],
+                "tabelas_detalhes": []
+            }
+        )
+        response["cenarios"][k][tipo].append(path)
+
+    # ================================
+    # 🔹 MAPAS (CORRIGIDO)
+    # ================================
+    mapas_dir = f"./exports/simulation/maps/{tenant_id}/{data_str}"
     if os.path.isdir(mapas_dir):
         for f in os.listdir(mapas_dir):
-            if f.endswith((".html", ".png")) and f"_{data}_" in f:
-                parts = f.split("_k")
-                if len(parts) > 1:
-                    k = parts[-1].split(".")[0]
-                    response["cenarios"].setdefault(
-                        k,
-                        {
-                            "mapas": [],
-                            "tabelas_lastmile": [],
-                            "tabelas_transferencias": [],
-                            "tabelas_resumo": [],
-                            "tabelas_detalhes": []
-                        }
-                    )
-                    response["cenarios"][k]["mapas"].append(
-                        f"/exports/simulation/maps/{tenant_id}/{f}"
-                    )
+            if f.endswith((".html", ".png")) and "_k" in f:
+                k = f.split("_k")[-1].split(".")[0]
+                add_file("mapas", k, f"/exports/simulation/maps/{tenant_id}/{data_str}/{f}")
 
-    # Tabelas last-mile
-    lastmile_dir = f"./exports/simulation/tabelas_lastmile/{tenant_id}"
+    # ================================
+    # 🔹 LAST MILE
+    # ================================
+    lastmile_dir = f"./exports/simulation/tabelas_lastmile/{tenant_id}/{data_str}"
     if os.path.isdir(lastmile_dir):
         for f in os.listdir(lastmile_dir):
-            if f.endswith(".png") and f"_{data}_" in f:
+            if f.endswith(".png") and "_k" in f:
                 k = f.split("_k")[-1].split(".")[0]
-                response["cenarios"].setdefault(
-                    k,
-                    {
-                        "mapas": [],
-                        "tabelas_lastmile": [],
-                        "tabelas_transferencias": [],
-                        "tabelas_resumo": [],
-                        "tabelas_detalhes": []
-                    }
-                )
-                response["cenarios"][k]["tabelas_lastmile"].append(
-                    f"/exports/simulation/tabelas_lastmile/{tenant_id}/{f}"
-                )
+                add_file("tabelas_lastmile", k, f"/exports/simulation/tabelas_lastmile/{tenant_id}/{data_str}/{f}")
 
-    # Tabelas transferências
-    transf_dir = f"./exports/simulation/tabelas_transferencias/{tenant_id}"
+    # ================================
+    # 🔹 TRANSFERÊNCIAS
+    # ================================
+    transf_dir = f"./exports/simulation/tabelas_transferencias/{tenant_id}/{data_str}"
     if os.path.isdir(transf_dir):
         for f in os.listdir(transf_dir):
-            if f.endswith(".png") and f"_{data}_" in f:
+            if f.endswith(".png") and "_k" in f:
                 k = f.split("_k")[-1].split("_")[0]
-                response["cenarios"].setdefault(
-                    k,
-                    {
-                        "mapas": [],
-                        "tabelas_lastmile": [],
-                        "tabelas_transferencias": [],
-                        "tabelas_resumo": [],
-                        "tabelas_detalhes": []
-                    }
-                )
-                response["cenarios"][k]["tabelas_transferencias"].append(
-                    f"/exports/simulation/tabelas_transferencias/{tenant_id}/{f}"
-                )
+                add_file("tabelas_transferencias", k, f"/exports/simulation/tabelas_transferencias/{tenant_id}/{data_str}/{f}")
 
-    # Tabelas resumo CSV
-    resumo_dir = f"./exports/simulation/resumos/{tenant_id}"
+    # ================================
+    # 🔹 RESUMO CSV
+    # ================================
+    resumo_dir = f"./exports/simulation/resumos/{tenant_id}/{data_str}"
     if os.path.isdir(resumo_dir):
         for f in os.listdir(resumo_dir):
-            if f.endswith(".csv") and f"_{data}_" in f:
+            if f.endswith(".csv") and "_k" in f:
                 k = f.split("_k")[-1].split(".")[0]
-                response["cenarios"].setdefault(
-                    k,
-                    {
-                        "mapas": [],
-                        "tabelas_lastmile": [],
-                        "tabelas_transferencias": [],
-                        "tabelas_resumo": [],
-                        "tabelas_detalhes": []
-                    }
-                )
-                response["cenarios"][k]["tabelas_resumo"].append(
-                    f"/exports/simulation/resumos/{tenant_id}/{f}"
-                )
+                add_file("tabelas_resumo", k, f"/exports/simulation/resumos/{tenant_id}/{data_str}/{f}")
 
-    # Tabelas detalhes CSV
-    detalhes_dir = f"./exports/simulation/detalhes/{tenant_id}"
+    # ================================
+    # 🔹 DETALHES CSV
+    # ================================
+    detalhes_dir = f"./exports/simulation/detalhes/{tenant_id}/{data_str}"
     if os.path.isdir(detalhes_dir):
         for f in os.listdir(detalhes_dir):
-            if f.endswith(".csv") and f"_{data}_" in f:
+            if f.endswith(".csv") and "_k" in f:
                 k = f.split("_k")[-1].split(".")[0]
-                response["cenarios"].setdefault(
-                    k,
-                    {
-                        "mapas": [],
-                        "tabelas_lastmile": [],
-                        "tabelas_transferencias": [],
-                        "tabelas_resumo": [],
-                        "tabelas_detalhes": []
-                    }
-                )
-                response["cenarios"][k]["tabelas_detalhes"].append(
-                    f"/exports/simulation/detalhes/{tenant_id}/{f}"
-                )
+                add_file("tabelas_detalhes", k, f"/exports/simulation/detalhes/{tenant_id}/{data_str}/{f}")
 
-    # Marca o cenário ótimo
+    # ================================
+    # 🔹 MARCAR ÓTIMO
+    # ================================
     if otimo_k is not None and str(otimo_k) in response["cenarios"]:
         response["cenarios"][str(otimo_k)]["otimo"] = True
 
-    # 🔑 Se não achou nada, responde 404
-    if not response.get("relatorio_pdf") and not response.get("cenarios") and not response.get("graficos"):
+    # ================================
+    # 🔴 VALIDAÇÃO FINAL (CORRIGIDA)
+    # ================================
+    if not any([
+        response.get("relatorio_pdf"),
+        response.get("excel_entregas_rotas"),
+        response.get("graficos"),
+        response.get("cenarios")
+    ]):
         raise HTTPException(status_code=404, detail="Nenhum artefato encontrado para esta data.")
 
     return response
-
 
 
 @router.get("/distribuicao_k", summary="Distribuição de k_clusters ponto ótimo")
@@ -738,7 +644,11 @@ def status_simulacao(job_id: str, tenant_id: str = Depends(obter_tenant_id_do_to
             ),
         }
 
-    raise HTTPException(status_code=404, detail="Job não encontrado no Redis nem no histórico.")
+    return {
+        "status": "processing",
+        "job_id": job_id,
+        "mensagem": "Inicializando..."
+    }
 
 @router.get("/historico", summary="Histórico de simulações")
 def listar_historico_simulation(
