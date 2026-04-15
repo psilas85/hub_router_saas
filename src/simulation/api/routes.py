@@ -181,9 +181,25 @@ def visualizar_simulacao(
     data: date = Query(..., description="Data no formato YYYY-MM-DD"),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
-
     data_str = str(data)
     response = {"data": data_str, "cenarios": {}}
+
+    logger.info(f"[VISUALIZAR] tenant={tenant_id} data={data_str}")
+
+    # ================================
+    # 🔥 GARANTE GERAÇÃO DO PDF
+    # ================================
+    try:
+        logger.info("📄 Gerando relatório final (se não existir)...")
+        executar_geracao_relatorio_final(
+            tenant_id=tenant_id,
+            envio_data=data_str,
+            simulation_id=None,
+            simulation_db=conectar_simulation_db(),
+            modo_forcar=False
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ Falha ao gerar relatório: {e}")
 
     # ================================
     # 🔹 PDF
@@ -191,6 +207,9 @@ def visualizar_simulacao(
     pdf_path = f"./exports/simulation/relatorios/{tenant_id}/{data_str}/relatorio_simulation_{data_str}.pdf"
     if os.path.exists(pdf_path):
         response["relatorio_pdf"] = pdf_path.replace("./", "/")
+        logger.info(f"✅ PDF encontrado: {pdf_path}")
+    else:
+        logger.warning(f"❌ PDF NÃO encontrado: {pdf_path}")
 
     # ================================
     # 🔹 EXCEL
@@ -198,9 +217,10 @@ def visualizar_simulacao(
     excel_path = f"./exports/simulation/entregas/{tenant_id}/{data_str}/entregas_simulacao_{data_str}.xlsx"
     if os.path.exists(excel_path):
         response["excel_entregas_rotas"] = excel_path.replace("./", "/")
+        logger.info(f"✅ Excel encontrado")
 
     # ================================
-    # 🔹 GRÁFICOS (CORRIGIDO)
+    # 🔹 GRÁFICOS
     # ================================
     graficos_dir = f"./exports/simulation/graphs/{tenant_id}/{data_str}"
     if os.path.isdir(graficos_dir):
@@ -210,12 +230,12 @@ def visualizar_simulacao(
             if f.endswith(".png")
         ]
         response["graficos"] = sorted(graficos)
+        logger.info(f"📊 {len(graficos)} gráficos encontrados")
 
     # ================================
-    # 🔹 DESCOBRIR K ÓTIMO
+    # 🔹 K ÓTIMO
     # ================================
     import pandas as pd
-    from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
 
     try:
         query = """
@@ -230,7 +250,7 @@ def visualizar_simulacao(
         otimo_k = None
 
     # ================================
-    # 🔹 FUNÇÃO AUXILIAR
+    # 🔹 AUXILIAR
     # ================================
     def add_file(tipo, k, path):
         response["cenarios"].setdefault(
@@ -246,7 +266,7 @@ def visualizar_simulacao(
         response["cenarios"][k][tipo].append(path)
 
     # ================================
-    # 🔹 MAPAS (CORRIGIDO)
+    # 🔹 MAPAS
     # ================================
     mapas_dir = f"./exports/simulation/maps/{tenant_id}/{data_str}"
     if os.path.isdir(mapas_dir):
@@ -276,7 +296,7 @@ def visualizar_simulacao(
                 add_file("tabelas_transferencias", k, f"/exports/simulation/tabelas_transferencias/{tenant_id}/{data_str}/{f}")
 
     # ================================
-    # 🔹 RESUMO CSV
+    # 🔹 RESUMO
     # ================================
     resumo_dir = f"./exports/simulation/resumos/{tenant_id}/{data_str}"
     if os.path.isdir(resumo_dir):
@@ -286,7 +306,7 @@ def visualizar_simulacao(
                 add_file("tabelas_resumo", k, f"/exports/simulation/resumos/{tenant_id}/{data_str}/{f}")
 
     # ================================
-    # 🔹 DETALHES CSV
+    # 🔹 DETALHES
     # ================================
     detalhes_dir = f"./exports/simulation/detalhes/{tenant_id}/{data_str}"
     if os.path.isdir(detalhes_dir):
@@ -302,16 +322,22 @@ def visualizar_simulacao(
         response["cenarios"][str(otimo_k)]["otimo"] = True
 
     # ================================
-    # 🔴 VALIDAÇÃO FINAL (CORRIGIDA)
+    # 🔴 VALIDAÇÃO FINAL CORRIGIDA
     # ================================
+    possui_cenarios = any(
+        any(v.values()) for v in response.get("cenarios", {}).values()
+    )
+
     if not any([
         response.get("relatorio_pdf"),
         response.get("excel_entregas_rotas"),
         response.get("graficos"),
-        response.get("cenarios")
+        possui_cenarios
     ]):
+        logger.error("❌ Nenhum artefato encontrado")
         raise HTTPException(status_code=404, detail="Nenhum artefato encontrado para esta data.")
 
+    logger.info("✅ Visualização pronta")
     return response
 
 

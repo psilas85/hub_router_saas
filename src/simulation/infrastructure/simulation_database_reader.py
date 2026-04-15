@@ -531,6 +531,7 @@ __all__ = [
     "carregar_hubs",
     "obter_veiculo_transferencia_por_peso",
     "obter_tarifa_km_veiculo_transferencia",
+    "obter_tarifas_veiculo_transferencia",  # 👈 AQUI
     "listar_tarifas_last_mile",
     "listar_tarifas_transferencia",
     "obter_capacidade_veiculo",
@@ -550,6 +551,32 @@ def carregar_historico_simulation(db_conn, tenant_id: str, limit: int = 10) -> p
         LIMIT %s
     """
     return pd.read_sql(query, db_conn, params=(tenant_id, limit))
+
+def obter_tarifas_veiculo_transferencia(
+    tipo_veiculo: str,
+    db_conn,
+    tenant_id: str,
+) -> tuple[float, float]:
+    """
+    Retorna (tarifa_km, tarifa_fixa) do veículo de transferência
+    """
+    query = """
+        SELECT tarifa_km, tarifa_fixa
+        FROM veiculos_transferencia
+        WHERE tenant_id = %s AND tipo_veiculo = %s
+    """
+    cursor = db_conn.cursor()
+    cursor.execute(query, (tenant_id, tipo_veiculo))
+    result = cursor.fetchone()
+    cursor.close()
+
+    if not result:
+        return 0.0, 0.0
+
+    tarifa_km = float(result[0] or 0.0)
+    tarifa_fixa = float(result[1] or 0.0)
+
+    return tarifa_km, tarifa_fixa
 
 
 

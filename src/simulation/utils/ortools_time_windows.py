@@ -1,7 +1,8 @@
-#hub_router_1.0.1/src/simulation/utils/ortools_time_windows.py
+# hub_router_1.0.1/src/simulation/utils/ortools_time_windows.py
 
 from simulation.domain.entities import SimulationParams
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+
 
 def solve_time_windows_vrp(
     locations,
@@ -11,6 +12,7 @@ def solve_time_windows_vrp(
     params: SimulationParams,
     depot_location=None,
     num_vehicles=None,
+    route_time_limit_min=None,
 ):
     """
     Retorna rotas como lista de listas de índices DAS ENTREGAS ORIGINAIS.
@@ -20,10 +22,15 @@ def solve_time_windows_vrp(
     import math
 
     max_special_per_route = params.max_especiais_por_rota
-    route_time_limit_min = params.tempo_max_roteirizacao
+    route_time_limit_min = (
+        int(route_time_limit_min)
+        if route_time_limit_min is not None
+        else int(params.tempo_max_roteirizacao)
+    )
     permitir_rotas_excedentes = params.permitir_rotas_excedentes
     velocidade_kmh = params.velocidade_kmh
     entregas_por_rota = params.entregas_por_rota
+
     # ------------------------------------------------------------------
     # Validações básicas
     # ------------------------------------------------------------------
@@ -75,7 +82,6 @@ def solve_time_windows_vrp(
                 c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
                 dist_km = r_km * c
 
-                # 🔥 ALINHADO COM O SISTEMA
                 fator = getattr(params, "fator_correcao_distancia", 1.3)
                 velocidade = max(float(params.velocidade_kmh or 45.0), 1)
 
@@ -91,10 +97,12 @@ def solve_time_windows_vrp(
     # ------------------------------------------------------------------
     all_locations = [depot_location] + list(locations)
     all_special_flags = [False] + list(special_flags)
+
     if permitir_rotas_excedentes:
         all_time_windows = [(0, 100000)] + [(0, 100000)] * len(locations)
     else:
         all_time_windows = [(0, int(route_time_limit_min))] + list(time_windows)
+
     all_service_times = [0] + [int(max(0, round(v))) for v in service_times]
 
     # ------------------------------------------------------------------
@@ -104,47 +112,29 @@ def solve_time_windows_vrp(
         all_locations,
         velocidade_kmh=velocidade_kmh,
     )
+
     # ------------------------------------------------------------------
-    # Quantidade de veículos
+    # Quantidade de veículos (CONTROLADO PELO PIPELINE)
     # ------------------------------------------------------------------
-    total_entregas = len(locations)
-    total_especiais = sum(1 for x in special_flags if x)
+    if num_vehicles is None:
+        raise ValueError("num_vehicles deve ser definido antes de chamar o solver.")
 
-    min_vehicles_by_special = (
-        max(1, math.ceil(total_especiais / max_special_per_route))
-        if total_especiais > 0 else 1
-    )
+    num_vehicles = int(num_vehicles)
 
-    vehicles_by_volume = max(1, math.ceil(total_entregas / entregas_por_rota))
+    print(f"🚚 TW veículos={num_vehicles} (input)")
 
-    # 🔥 piso correto: especiais + volume
-    vehicles_base = max(min_vehicles_by_special, vehicles_by_volume)
-
-    # 🔥 folga para o solver decidir
-    fator_flex = 1.3 if params.modo_simulacao == "balanceado" else 1.6
-    vehicles_flex = int(math.ceil(vehicles_base * fator_flex))
-
-    # 🔥 limite final
-    num_vehicles = max(vehicles_base, vehicles_flex)
-    num_vehicles = min(num_vehicles, total_entregas)
-
-    print(
-        f"🚚 TW veículos={num_vehicles} | "
-        f"min_especiais={min_vehicles_by_special} | "
-        f"por_volume={vehicles_by_volume} | "
-        f"base={vehicles_base}"
-    )
     # ------------------------------------------------------------------
     # Manager + Routing
     # ------------------------------------------------------------------
     manager = pywrapcp.RoutingIndexManager(
         len(time_matrix),
         num_vehicles,
-        0,  # depot
+        0,
     )
     routing = pywrapcp.RoutingModel(manager)
+
     # ------------------------------------------------------------------
-    # 🔥 CUSTO POR VEÍCULO (ESSENCIAL)
+    # Custo fixo por veículo
     # ------------------------------------------------------------------
     fixed_cost = getattr(params, "custo_fixo_veiculo", 100)
 
@@ -194,11 +184,8 @@ def solve_time_windows_vrp(
     # ------------------------------------------------------------------
     def time_callback(from_index, to_index):
         from_node = manager.IndexToNode(from_index)
-        to_node = manager.IndexToNode(to_index)
-
-        travel_time = time_matrix[from_node][to_node]
+        travel_time = time_matrix[from_node][manager.IndexToNode(to_index)]
         service_time = all_service_times[from_node]
-
         return int(travel_time + service_time)
 
     time_callback_index = routing.RegisterTransitCallback(time_callback)
@@ -206,28 +193,24 @@ def solve_time_windows_vrp(
     routing.AddDimension(
         time_callback_index,
         30,
-        int(route_time_limit_min * 3),  # 🔥 aumenta o hard limit
+        int(route_time_limit_min * 3),
         False,
         "Time",
     )
 
     time_dimension = routing.GetDimensionOrDie("Time")
 
-    # Depot
-    # Depot
     for vehicle_id in range(num_vehicles):
         start_index = routing.Start(vehicle_id)
         end_index = routing.End(vehicle_id)
 
         if permitir_rotas_excedentes:
-            # 🔥 sem limite → solver não trava
             time_dimension.CumulVar(start_index).SetRange(0, 100000)
             time_dimension.CumulVar(end_index).SetRange(0, 100000)
         else:
             time_dimension.CumulVar(start_index).SetRange(0, int(route_time_limit_min))
             time_dimension.CumulVar(end_index).SetRange(0, int(route_time_limit_min))
 
-    # Janelas de tempo
     for node_idx, tw in enumerate(all_time_windows):
         if tw is None:
             continue
@@ -236,34 +219,27 @@ def solve_time_windows_vrp(
         ini, fim = int(tw[0]), int(tw[1])
 
         if permitir_rotas_excedentes:
-            # 🔥 NÃO restringe tempo → sempre viável
             time_dimension.CumulVar(index).SetRange(0, 100000)
         else:
             time_dimension.CumulVar(index).SetRange(ini, fim)
 
-
     # ------------------------------------------------------------------
-    # 🔥 CONTROLE DE DROPS (VERSÃO INTELIGENTE)
+    # Controle de drops
     # ------------------------------------------------------------------
-
     penalty_normal = int(route_time_limit_min * 200)
     penalty_special = 10_000_000
 
     for node in range(1, len(all_locations)):
         index = manager.NodeToIndex(node)
-
-        # 🔥 CONTROLE DE DROP ALINHADO COM REGRA DE NEGÓCIO
-
         is_special = all_special_flags[node]
 
         if permitir_rotas_excedentes:
-            # 🚫 NÃO PODE DROPAR EM NENHUMA HIPÓTESE
             penalty = 10_000_000_000
         else:
-            # ✔ pode dropar, mas com custo
             penalty = penalty_special if is_special else penalty_normal
 
         routing.AddDisjunction([index], penalty)
+
     # ------------------------------------------------------------------
     # Busca
     # ------------------------------------------------------------------
@@ -276,18 +252,17 @@ def solve_time_windows_vrp(
     )
     search_parameters.time_limit.FromSeconds(10)
 
-
-    print(f"[TW DEBUG] tempo_max={route_time_limit_min}")
-    print(f"[TW DEBUG] maior_service_time={max(service_times)}")
+    print(f"[TW DEBUG] tempo_max={route_time_limit_min} | vehicles={num_vehicles}")
+    print(f"[TW DEBUG] maior_service_time={max(service_times) if service_times else 0}")
 
     solution = routing.SolveWithParameters(search_parameters)
 
     if not solution:
         return []
 
-    # --------------------------------------------------
-    # 🔍 DEBUG: ENTREGAS NÃO ATENDIDAS
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Debug: entregas não atendidas
+    # ------------------------------------------------------------------
     dropped_nodes = []
 
     for node in range(routing.Size()):
@@ -300,12 +275,7 @@ def solve_time_windows_vrp(
     print(f"⚠️ DROPPED NODES: {len(dropped_nodes)}")
 
     # ------------------------------------------------------------------
-    # Extrai rotas convertendo de volta para índices originais das entregas
-    # OR-Tools: 0 = depot, 1..N = entregas
-    # Saída final: 0..N-1 = índice original do df
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    # Extrai rotas corretamente
+    # Extrai rotas
     # ------------------------------------------------------------------
     routes = []
     atendidos = set()
@@ -327,12 +297,8 @@ def solve_time_windows_vrp(
         if route:
             routes.append(route)
 
-    # ------------------------------------------------------------------
-    # 🔥 FAIL SAFE CORRETO (FORA DO LOOP)
-    # ------------------------------------------------------------------
     total_atendidas = len(atendidos)
     total_esperadas = len(locations)
-
     faltantes = set(range(total_esperadas)) - atendidos
 
     print(f"📊 TOTAL ESPERADO: {total_esperadas}")

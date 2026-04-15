@@ -744,8 +744,10 @@ def subdividir_subcluster_por_veiculo(
             logger=logger,
         )
         return [(df_subcluster, tipo_veiculo, 0.0, 0.0)]
+    k_subveic = 1
+    MAX_K_SUBVEIC = 6
 
-    while k_subveic <= len(coordenadas):
+    while k_subveic <= min(len(coordenadas), MAX_K_SUBVEIC):
         try:
             df_trabalho = df_subcluster.copy()
 

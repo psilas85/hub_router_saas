@@ -67,12 +67,15 @@ class LastMileRoutingService:
             return
 
         total_tentativas = len(registros)
-        registros_finais_por_branch = {}
-        for item in registros:
-            registros_finais_por_branch[item['branch_label']] = item
 
-        registros_finais = list(registros_finais_por_branch.values())
-        total_branches_finais = len(registros_finais)
+        # 🔥 AGRUPAR POR ROTA (CORRETO)
+        registros_finais_por_rota = {}
+        for item in registros:
+            registros_finais_por_rota[item['rota_id']] = item
+
+        registros_finais = list(registros_finais_por_rota.values())
+
+        total_rotas_finais = len(registros_finais)
         total_viaveis = sum(
             1 for item in registros_finais if item['status'] == 'viavel_sla'
         )
@@ -85,18 +88,18 @@ class LastMileRoutingService:
 
         self.logger.info(
             f"📋 Resumo de viabilização do cluster {cluster_id}: status_final={status_final} | "
-            f"tentativas={total_tentativas} | branches_finais={total_branches_finais} | "
+            f"tentativas={total_tentativas} | rotas_finais={total_rotas_finais} | "
             f"viaveis_sla={total_viaveis} | "
             f"fallback_excedente={total_fallback} | inviaveis={total_inviaveis}"
         )
+
         for item in registros_finais:
             self.logger.info(
-                "📋 Tentativa rota "
-                f"{item['rota_id']} | branch={item['branch_label']} | status={item['status']} | "
+                "📋 Rota final "
+                f"{item['rota_id']} | status={item['status']} | "
                 f"entregas={item['qtde_entregas']} | veiculo={item['tipo_veiculo']} | "
                 f"tempo={item['tempo_total_min']:.2f}/{item['tempo_limite_min']:.2f} min | "
-                f"distancia={item['distancia_total_km']:.2f} km | "
-                f"origem_igual_destino={item['ignoradas_mesmo_ponto']}"
+                f"distancia={item['distancia_total_km']:.2f} km"
             )
 
     def _carregar_coords_cluster(self, df_cluster: pd.DataFrame, k_clusters: int):
@@ -156,23 +159,24 @@ class LastMileRoutingService:
         return float(tempo_parada) + float(tempo_descarga)
 
     def _gerar_subclusters_iniciais(self, df_coords: pd.DataFrame):
+        import math
+
         n_entregas = len(df_coords)
         entregas_por_rota = self.params.entregas_por_rota
-        k_sub = max(1, n_entregas // entregas_por_rota)
+
+        k_sub = max(1, math.ceil(n_entregas / entregas_por_rota))
+
         coordenadas = df_coords[['destino_latitude', 'destino_longitude']].dropna()
 
         self.logger.info(
-            f"🚀 Subclusterização inicial definida por heurística: {k_sub} subclusters para {n_entregas} entregas "
-            f"(parâmetro entregas_por_rota = {entregas_por_rota})"
+            f"🚀 Subclusterização inicial via KMeans: k_sub={k_sub} "
+            f"(entregas={n_entregas} / alvo={entregas_por_rota})"
         )
 
         if coordenadas.empty or k_sub <= 1:
             return [("0", df_coords.copy())]
 
         if len(coordenadas) < k_sub:
-            self.logger.warning(
-                f"⚠️ Número de pontos ({len(coordenadas)}) menor que k_sub ({k_sub}). Ajustando para {len(coordenadas)}."
-            )
             k_sub = len(coordenadas)
 
         df_inicial = df_coords.copy()
@@ -181,6 +185,7 @@ class LastMileRoutingService:
             random_state=42,
             n_init="auto",
         ).fit_predict(coordenadas.values)
+
         return [
             (str(sub_id), df_sub.copy())
             for sub_id, df_sub in df_inicial.groupby('subcluster')
@@ -212,6 +217,9 @@ class LastMileRoutingService:
         branch_label: str,
         depth: int = 0,
     ):
+        max_depth = int(getattr(self.params, "max_refinamentos_subcluster", 4))
+        max_split = int(getattr(self.params, "max_particoes_subcluster_local", 4))
+
         subclusters = subdividir_subcluster_por_veiculo(
             df_subcluster=df_sub,
             df_tarifas=df_tarifas,
@@ -223,18 +231,17 @@ class LastMileRoutingService:
             cluster_cidade=cluster_cidade,
             cidades_entregas=df_sub['cte_cidade'].tolist(),
         )
+
         if subclusters:
             return [
                 {
                     'label': f"{branch_label}_{idx}" if len(subclusters) > 1 else branch_label,
                     'df': df_ordenado,
                     'tipo_veiculo': tipo_veiculo,
+                    'depth': depth,
                 }
                 for idx, (df_ordenado, tipo_veiculo, _, _) in enumerate(subclusters)
             ]
-
-        max_depth = int(getattr(self.params, "max_refinamentos_subcluster", 4))
-        max_split = int(getattr(self.params, "max_particoes_subcluster_local", 4))
 
         if depth >= max_depth or len(df_sub) <= 1:
             if self.permitir_rotas_excedentes:
@@ -244,32 +251,40 @@ class LastMileRoutingService:
                     tempo_maximo=tempo_maximo,
                     cluster_cidade=cluster_cidade,
                     branch_label=branch_label,
-                    motivo="limite de refinamento local atingido",
+                    motivo=f"limite de refinamento por subcluster atingido (depth={depth}/{max_depth})",
+                    depth=depth,
                 )
             return None
 
-        for split_size in range(2, min(max_split, len(df_sub)) + 1):
+        for split_size in [2]:
+            if split_size > min(max_split, len(df_sub)):
+                continue
+
             self.logger.info(
-                f"🧩 Refinando localmente subcluster {branch_label} em {split_size} partes (profundidade={depth + 1})."
+                f"🧩 Refinando localmente subcluster {branch_label} em {split_size} partes "
+                f"(depth atual={depth}, próximo={depth + 1})."
             )
+
             filhos = dividir_subcluster_local(df_sub, split_size, logger=self.logger)
             if not filhos:
                 continue
 
             resolvidos = []
             refinamento_ok = True
+
             for child_idx, (_, df_filho) in enumerate(filhos):
                 resultado_filho = self._resolver_subcluster_localmente(
                     df_sub=df_filho,
                     df_tarifas=df_tarifas,
                     tempo_maximo=tempo_maximo,
                     cluster_cidade=cluster_cidade,
-                    branch_label=f"{branch_label}_{split_size}_{child_idx}",
+                    branch_label=f"{branch_label}_r{child_idx}",
                     depth=depth + 1,
                 )
                 if not resultado_filho:
                     refinamento_ok = False
                     break
+
                 resolvidos.extend(resultado_filho)
 
             if refinamento_ok:
@@ -282,7 +297,8 @@ class LastMileRoutingService:
                 tempo_maximo=tempo_maximo,
                 cluster_cidade=cluster_cidade,
                 branch_label=branch_label,
-                motivo="subcluster permaneceu inviável após refinamento máximo",
+                motivo=f"subcluster permaneceu inviável após refinamento máximo (depth={depth}/{max_depth})",
+                depth=depth,
             )
 
         return None
@@ -295,6 +311,7 @@ class LastMileRoutingService:
         cluster_cidade,
         branch_label: str,
         motivo: str,
+        depth: int = 0,
     ):
         diagnostico = estimar_viabilidade_subcluster(
             df_subcluster=df_sub,
@@ -306,20 +323,23 @@ class LastMileRoutingService:
             cidades_entregas=df_sub['cte_cidade'].tolist(),
         )
         tempo_estimado = float(diagnostico['tempo_estimado'])
+
         if tempo_estimado > float(tempo_maximo):
             self.logger.warning(
                 f"⚠️ Aceitando subcluster {branch_label} com excedente porque permitir_rotas_excedentes=True. "
-                f"motivo={motivo} | tempo_estimado={tempo_estimado:.2f} min | limite={tempo_maximo:.2f} min"
+                f"motivo={motivo} | depth={depth} | tempo_estimado={tempo_estimado:.2f} min | limite={tempo_maximo:.2f} min"
             )
         else:
             self.logger.warning(
                 f"⚠️ Aceitando subcluster {branch_label} sem novo refinamento porque permitir_rotas_excedentes=True. "
-                f"motivo={motivo} | tempo_estimado={tempo_estimado:.2f} min | limite={tempo_maximo:.2f} min"
+                f"motivo={motivo} | depth={depth} | tempo_estimado={tempo_estimado:.2f} min | limite={tempo_maximo:.2f} min"
             )
+
         return [{
             'label': branch_label,
             'df': ordenar_entregas_subcluster(df_sub),
             'tipo_veiculo': diagnostico['tipo_veiculo'],
+            'depth': depth,
         }]
 
     def _montar_detalhes_rota(
@@ -604,64 +624,28 @@ class LastMileRoutingService:
                 if k_clusters == 0
                 else self.params.tempo_max_roteirizacao
             )
-            pendentes = self._gerar_subclusters_iniciais(df_coords)
+            pendentes_iniciais = self._gerar_subclusters_iniciais(df_coords)
+            pendentes = [(branch_label, df_sub, 0) for branch_label, df_sub in pendentes_iniciais]
+
             detalhes_cluster = []
-            refinamentos_realizados = 0
             max_tentativas_refino_subcluster = self._obter_limite_refino_subcluster()
-            max_tentativas_refino = self._obter_limite_refino_global_emergencial(len(df_coords))
             cluster_cidade = df_cluster['cluster_cidade'].iloc[0]
 
             self.logger.info(
-                f"🧮 Limites de refinamento do cluster {cluster_id}: "
-                f"por_subcluster={max_tentativas_refino_subcluster} | guarda_global={max_tentativas_refino}"
+                f"🧮 Limite de refinamento por subcluster no cluster {cluster_id}: "
+                f"{max_tentativas_refino_subcluster}"
             )
 
             while pendentes:
-                if refinamentos_realizados >= max_tentativas_refino:
-                    if self.permitir_rotas_excedentes:
-                        self.logger.warning(
-                            f"⚠️ Guarda global de refinamentos atingida no cluster {cluster_id}. "
-                            "Continuando com os subclusters restantes pois permitir_rotas_excedentes=True."
-                        )
-                        fallback_pendentes = list(pendentes)
-                        pendentes = []
-                        for branch_pendente, df_pendente in fallback_pendentes:
-                            resolvidos = self._montar_subcluster_excedente(
-                                df_sub=df_pendente,
-                                df_tarifas=df_tarifas,
-                                tempo_maximo=tempo_limite,
-                                cluster_cidade=cluster_cidade,
-                                branch_label=branch_pendente,
-                                motivo="limite global de refinamentos do cluster atingido",
-                            )
-                            for candidato in resolvidos:
-                                resultado_rota = self._montar_detalhes_rota(
-                                    cluster_id=cluster_id,
-                                    rota_label=candidato['label'],
-                                    df_ordenado=candidato['df'],
-                                    tipo_veiculo=candidato['tipo_veiculo'],
-                                    tempo_limite=tempo_limite,
-                                    velocidade_media_kmh=velocidade_media_kmh,
-                                    aceitar_excedente=True,
-                                )
-                                detalhes_cluster.extend(resultado_rota['detalhes'])
-                        break
+                branch_label, df_sub, depth = pendentes.pop(0)
 
-                    msg = (
-                        f"❌ Falha ao encontrar subclusters viáveis no cluster {cluster_id} "
-                        f"com {len(df_coords)} entregas após {refinamentos_realizados} refinamentos locais."
-                    )
-                    self._emitir_resumo_tentativas_cluster(cluster_id, status_final='falha')
-                    self.logger.error(msg)
-                    raise RuntimeError(msg)
-
-                branch_label, df_sub = pendentes.pop(0)
                 resolvidos = self._resolver_subcluster_localmente(
                     df_sub=df_sub,
                     df_tarifas=df_tarifas,
                     tempo_maximo=tempo_limite,
                     cluster_cidade=cluster_cidade,
                     branch_label=branch_label,
+                    depth=depth,
                 )
                 if not resolvidos:
                     msg = (
@@ -682,12 +666,13 @@ class LastMileRoutingService:
                         velocidade_media_kmh=velocidade_media_kmh,
                     )
                     if resultado_rota['excedeu']:
-                        refinamentos_branch = self._contar_refinamentos_branch(candidato['label'])
-                        if refinamentos_branch >= max_tentativas_refino_subcluster:
+                        depth_candidato = int(candidato.get('depth', depth))
+
+                        if depth_candidato >= max_tentativas_refino_subcluster:
                             if self.permitir_rotas_excedentes:
                                 self.logger.warning(
-                                    f"⚠️ Subcluster {candidato['label']} atingiu o limite fixo de refinamentos "
-                                    f"({refinamentos_branch}/{max_tentativas_refino_subcluster}). "
+                                    f"⚠️ Subcluster {candidato['label']} atingiu o limite por subcluster "
+                                    f"({depth_candidato}/{max_tentativas_refino_subcluster}). "
                                     "Aceitando excedente como fallback final."
                                 )
                                 resultado_excedente = self._montar_detalhes_rota(
@@ -704,30 +689,35 @@ class LastMileRoutingService:
 
                             msg = (
                                 f"❌ Falha ao encontrar subclusters viáveis no cluster {cluster_id}. "
-                                f"Subcluster {candidato['label']} atingiu o limite fixo de refinamentos "
-                                f"({max_tentativas_refino_subcluster})."
+                                f"Subcluster {candidato['label']} atingiu o limite por subcluster "
+                                f"({depth_candidato}/{max_tentativas_refino_subcluster})."
                             )
                             self._emitir_resumo_tentativas_cluster(cluster_id, status_final='falha')
                             self.logger.error(msg)
                             raise RuntimeError(msg)
 
                         refinado = False
-                        for split_size in range(2, min(len(candidato['df']), 4) + 1):
+                        for split_size in [2]:
+                            if split_size > len(candidato['df']):
+                                continue
+
                             filhos = dividir_subcluster_local(candidato['df'], split_size, logger=self.logger)
                             if not filhos:
                                 continue
+
                             pendentes = [
-                                (f"{candidato['label']}_r{split_size}_{child_idx}", df_filho)
+                                (f"{candidato['label']}_r{child_idx}", df_filho, depth_candidato + 1)
                                 for child_idx, (_, df_filho) in enumerate(filhos)
                             ] + pendentes
-                            refinamentos_realizados += 1
+
                             refinado = True
                             break
 
                         if not refinado:
                             if self.permitir_rotas_excedentes:
                                 self.logger.warning(
-                                    f"⚠️ Subcluster {candidato['label']} permaneceu acima do limite após tentar splits locais. Aceitando excedente como fallback final."
+                                    f"⚠️ Subcluster {candidato['label']} permaneceu acima do limite após tentar split local. "
+                                    "Aceitando excedente como fallback final."
                                 )
                                 resultado_excedente = self._montar_detalhes_rota(
                                     cluster_id=cluster_id,
@@ -748,6 +738,7 @@ class LastMileRoutingService:
                             self._emitir_resumo_tentativas_cluster(cluster_id, status_final='falha')
                             self.logger.error(msg)
                             raise RuntimeError(msg)
+
                         continue
 
                     detalhes_cluster.extend(resultado_rota['detalhes'])

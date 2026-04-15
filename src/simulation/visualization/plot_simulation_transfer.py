@@ -1,4 +1,4 @@
-# simulation/visualization/plot_simulation_transfer.py
+# hub_router_1.0.1/src/simulation/visualization/plot_simulation_transfer.py
 
 import os
 import folium
@@ -179,23 +179,28 @@ def plotar_mapa_transferencias(
             legenda_html += f'<span style="color:{cor};">⬤</span> Rota {rota_id}<br>'
 
             pontos = []
-            try:
-                rota_coords = row.get("rota_completa_json")
-                if isinstance(rota_coords, str):
-                    import json
-                    rota_coords = json.loads(rota_coords)
-                if isinstance(rota_coords, list):
-                    for p in rota_coords:
-                        if isinstance(p, dict) and "lat" in p and "lon" in p:
-                            pontos.append((p["lat"], p["lon"]))
-                        elif isinstance(p, (list, tuple)) and len(p) == 2:
-                            pontos.append((p[0], p[1]))
-            except Exception as e:
-                if logger:
-                    logger.warning(f"⚠️ Erro ao ler rota {rota_id}: {e}")
+
+            coords_str = row.get("coordenadas_seq")
+
+            if isinstance(coords_str, str) and coords_str.strip():
+                parts = coords_str.split(',')
+
+                for i in range(0, len(parts), 2):
+                    try:
+                        lat = float(parts[i])
+                        lon = float(parts[i + 1])
+                        pontos.append((lat, lon))
+                    except:
+                        continue
 
             if len(pontos) >= 2:
-                desenhar_rota(mapa, pontos, estilo, rota_id, logger)
+                folium.PolyLine(
+                    locations=pontos,
+                    color=estilo["cor"],
+                    weight=estilo["peso"],
+                    opacity=estilo["opacidade"],
+                    tooltip=f"🚚 Rota {rota_id}"
+                ).add_to(mapa)
 
         legenda_html += "</div>"
         mapa.get_root().html.add_child(folium.Element(legenda_html))

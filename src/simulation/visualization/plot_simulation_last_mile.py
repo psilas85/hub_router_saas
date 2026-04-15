@@ -84,12 +84,23 @@ def plotar_mapa_last_mile(
     # 🔥 FILTRO CORRETO (SEM DEPENDER DE FLAG)
     df_rotas_validas = df_rotas[
         df_rotas["rota_id"].notna() &
-        (df_rotas["rota_id"] != "")
+        (df_rotas["rota_id"] != "") &
+        (df_rotas["rota_id"] != "fallback_manual")
     ].copy()
 
     # 🔥 DEBUG CRÍTICO — NÃO PODE TER ROTA NULL
-    print("📊 TOTAL ROTAS:", len(df_rotas))
-    print("📊 VALIDAS:", len(df_rotas_validas))
+    # 🔥 CONTAGEM CORRETA
+    total_entregas = len(df_rotas)
+    total_rotas = df_rotas["rota_id"].nunique()
+
+    total_entregas_validas = len(df_rotas_validas)
+    total_rotas_validas = df_rotas_validas["rota_id"].nunique()
+
+    print(f"📊 ENTREGAS TOTAL: {total_entregas}")
+    print(f"📊 ROTAS TOTAL: {total_rotas}")
+
+    print(f"📊 ENTREGAS VALIDAS: {total_entregas_validas}")
+    print(f"📊 ROTAS VALIDAS: {total_rotas_validas}")
 
     removidas = df_rotas[~df_rotas.index.isin(df_rotas_validas.index)]
 

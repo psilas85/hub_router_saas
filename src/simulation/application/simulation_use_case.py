@@ -179,8 +179,6 @@ class SimulationUseCase:
     def _contar_especiais_na_rota(self, route, special_flags):
         total = 0
         for idx in route:
-            if idx == 0:
-                continue  # depot
             if 0 <= idx < len(special_flags) and special_flags[idx]:
                 total += 1
         return total
@@ -586,9 +584,13 @@ class SimulationUseCase:
         num_rotas_seed = max(min_rotas_por_especiais, rotas_por_volume)
 
         # --------------------------------------------------
-        # 🔹 Definição de veículos (ANTES DO SEED FINAL)
+        # 🔹 Definição de tempo máximo do cenário
         # --------------------------------------------------
-        tempo_max = self.params.tempo_max_roteirizacao
+        tempo_max = (
+            self.params.tempo_max_k0
+            if k_persistencia == 0
+            else self.params.tempo_max_roteirizacao
+        )
 
         min_veiculos_especial = (
             max(1, math.ceil(total_especiais / max_especiais_por_rota))
@@ -721,6 +723,7 @@ class SimulationUseCase:
             params=self.params,
             depot_location=depot_location,
             num_vehicles=num_vehicles,
+            route_time_limit_min=tempo_max,
         )
 
         # 🔥 PROTEÇÃO HARD CONTRA DROP

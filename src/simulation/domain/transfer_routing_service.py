@@ -71,12 +71,14 @@ class TransferRoutingService:
         return float(self.params.velocidade_kmh)
 
     def _calcular_tempo_servico_ponto(self, ponto):
-        tempo_atendimento = ponto.get("tempo_atendimento_min")
-        if tempo_atendimento is not None and pd.notna(tempo_atendimento):
-            return max(float(tempo_atendimento), 0.0)
-
+        """
+        Transferência NÃO usa cte_tempo_atendimento_min do df.
+        O tempo de serviço do ponto deve ser sempre estimado
+        pela regra operacional de transferência.
+        """
         peso = float(ponto.get("peso") or 0.0)
         volumes = float(ponto.get("volumes") or 0.0)
+
         tempo_parada = (
             self.params.tempo_parada_pesada
             if peso > self.params.limite_peso_parada
@@ -155,10 +157,8 @@ class TransferRoutingService:
             "cte_volumes": "sum",
             "cte_valor_nf": "sum",
             "cte_valor_frete": "sum",
-            "cte_numero": lambda x: list(x)
+            "cte_numero": lambda x: list(x),
         }
-        if "cte_tempo_atendimento_min" in df.columns:
-            agregacoes["cte_tempo_atendimento_min"] = lambda serie: serie.sum(min_count=1)
 
         agrupado = df.groupby(["cluster", "centro_lat", "centro_lon"]).agg(agregacoes).reset_index()
 
@@ -172,7 +172,6 @@ class TransferRoutingService:
                 "volumes": row["cte_volumes"],
                 "valor_nf": row["cte_valor_nf"],
                 "valor_frete": row["cte_valor_frete"],
-                "tempo_atendimento_min": row.get("cte_tempo_atendimento_min"),
             }
             for _, row in agrupado.iterrows()
         ]

@@ -53,7 +53,13 @@ def gerar_relatorio_simulacao(
     if base_dir is None:
         raise ValueError("base_dir deve ser informado no novo padrão!")
 
-    relatorio_dir = base_dir
+    relatorio_dir = os.path.join(
+        base_dir,
+        "relatorios",
+        tenant_id,
+        envio_data_local
+    )
+
     os.makedirs(relatorio_dir, exist_ok=True)
 
     relatorio_path = os.path.join(
@@ -110,7 +116,7 @@ def gerar_relatorio_simulacao(
                 ax.legend()
                 ax.grid(True)
 
-                grafico_dir = os.path.join(base_dir, "graphs", tenant_id)
+                grafico_dir = os.path.join(base_dir, "graphs", tenant_id, envio_data_local)
                 os.makedirs(grafico_dir, exist_ok=True)
 
                 grafico_custo_path = os.path.join(
