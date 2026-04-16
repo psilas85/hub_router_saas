@@ -13,6 +13,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
+from api_gateway.config import settings
+
+BASE_URL = settings.API_BASE_URL
+
+def ajustar_urls(data):
+    if isinstance(data, dict):
+        return {k: ajustar_urls(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [ajustar_urls(v) for v in data]
+    elif isinstance(data, str) and data.startswith("/exports"):
+        return f"{BASE_URL}{data}"
+    return data
+
 SIMULATION_URL = settings.SIMULATION_URL
 
 
@@ -93,14 +106,14 @@ async def visualizar_simulacao(
     if status_code == 404:
         return {
             "status": "processing",
-            "job_id": job_id,
-            "mensagem": "⏳ Inicializando simulação..."
+            "mensagem": "⏳ Simulação ainda não gerou artefatos"
         }
 
     if status_code >= 400:
+        detail = content if isinstance(content, str) else content or "Erro ao visualizar simulação."
         raise HTTPException(status_code=status_code, detail=detail)
 
-    return content
+    return ajustar_urls(content)
 
 
 @router.get("/distribuicao_k", summary="Distribuição de k_clusters ponto ótimo")

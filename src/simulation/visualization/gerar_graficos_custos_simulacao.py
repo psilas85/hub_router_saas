@@ -1,8 +1,12 @@
 # hub_router_1.0.1/src/simulation/visualization/gerar_graficos_custos_simulacao.py
 
+# hub_router_1.0.1/src/simulation/visualization/gerar_graficos_custos_simulacao.py
+
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+
+from simulation.utils.path_builder import build_output_path
 
 
 def _formatar_rotulo_cenario(k: int) -> str:
@@ -11,13 +15,16 @@ def _formatar_rotulo_cenario(k: int) -> str:
 
 def gerar_graficos_custos_por_envio(
     simulation_db,
-    tenant_id,
+    tenant_id: str,
     datas_filtradas,
-    modo_forcar=False
+    base_dir: str = "exports/simulation",
+    modo_forcar: bool = False
 ):
     """
     Gera gráficos de custo por envio_data.
-    Compatível com SimulationUseCase.
+
+    Estrutura final:
+    exports/simulation/{tenant_id}/{envio_data}/graphs/
     """
 
     for envio_data in datas_filtradas:
@@ -25,6 +32,9 @@ def gerar_graficos_custos_por_envio(
         envio_data_local = str(envio_data)
 
         try:
+            # =============================
+            # 🔹 Query
+            # =============================
             query = """
                 SELECT k_clusters, custo_transferencia, custo_last_mile, custo_cluster
                 FROM resultados_simulacao
@@ -32,23 +42,56 @@ def gerar_graficos_custos_por_envio(
                 ORDER BY k_clusters
             """
 
-            df = pd.read_sql(query, simulation_db, params=(tenant_id, envio_data_local))
+            df = pd.read_sql(
+                query,
+                simulation_db,
+                params=(tenant_id, envio_data_local)
+            )
 
             if df.empty:
-                print(f"⚠️ Sem dados para gráfico ({envio_data_local})")
+                print(f"⚠️ Sem dados ({envio_data_local})")
                 continue
 
-            # 🔹 custo total
+            # =============================
+            # 🔹 Cálculo custo total
+            # =============================
             df["custo_total"] = (
                 df["custo_transferencia"].fillna(0)
                 + df["custo_last_mile"].fillna(0)
                 + df["custo_cluster"].fillna(0)
             )
 
-            # 🔹 gráfico
+            # =============================
+            # 🔹 PATH PADRÃO
+            # =============================
+            graphs_dir = build_output_path(
+                base_dir,
+                tenant_id,
+                envio_data_local,
+                "graphs"
+            )
+
+            grafico_path = os.path.join(
+                graphs_dir,
+                f"grafico_simulacao_{envio_data_local}.png"
+            )
+
+            # 🔥 controle de sobrescrita
+            if not modo_forcar and os.path.exists(grafico_path):
+                print(f"🟡 Já existe: {grafico_path}")
+                continue
+
+            # =============================
+            # 🔹 Gráfico
+            # =============================
             fig, ax = plt.subplots(figsize=(8, 5))
 
-            ax.bar(df["k_clusters"], df["custo_transferencia"], label="Transferência")
+            # barras empilhadas
+            ax.bar(
+                df["k_clusters"],
+                df["custo_transferencia"],
+                label="Transferência"
+            )
 
             ax.bar(
                 df["k_clusters"],
@@ -64,6 +107,7 @@ def gerar_graficos_custos_por_envio(
                 label="Cluster"
             )
 
+            # linha custo total
             ax.plot(
                 df["k_clusters"],
                 df["custo_total"],
@@ -73,32 +117,24 @@ def gerar_graficos_custos_por_envio(
 
             ax.set_title(f"Custo Total por cenário — {envio_data_local}")
             ax.set_xticks(df["k_clusters"])
-            ax.set_xticklabels([_formatar_rotulo_cenario(k) for k in df["k_clusters"]])
+            ax.set_xticklabels([
+                _formatar_rotulo_cenario(k)
+                for k in df["k_clusters"]
+            ])
+
             ax.set_xlabel("Cenários")
             ax.set_ylabel("Custo (R$)")
             ax.legend()
             ax.grid(True)
 
-            # 🔹 salvar
-            output_dir = os.path.join(
-                "exports/simulation/graphs",
-                tenant_id,
-                envio_data_local
-            )
-
-            os.makedirs(output_dir, exist_ok=True)
-
-            grafico_path = os.path.join(
-                output_dir,
-                f"grafico_simulacao_{envio_data_local}.png"
-            )
-
-            if modo_forcar or not os.path.exists(grafico_path):
-                plt.tight_layout()
-                plt.savefig(grafico_path)
-                print(f"✅ Gráfico salvo: {grafico_path}")
-
+            # =============================
+            # 🔹 Salvar
+            # =============================
+            plt.tight_layout()
+            plt.savefig(grafico_path)
             plt.close()
 
+            print(f"✅ Gráfico salvo: {grafico_path}")
+
         except Exception as e:
-            print(f"❌ Erro ao gerar gráfico ({envio_data_local}): {e}")
+            print(f"❌ Erro ({envio_data_local}): {e}")

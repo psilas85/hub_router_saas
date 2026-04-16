@@ -176,170 +176,179 @@ def executar_simulacao(
         "tenant_id": tenant_id,
     }
 
-@router.get("/visualizar", summary="Visualizar artefatos da simulação")
+@router.get("/visualizar")
 def visualizar_simulacao(
-    data: date = Query(..., description="Data no formato YYYY-MM-DD"),
+    data: date = Query(...),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
     data_str = str(data)
-    response = {"data": data_str, "cenarios": {}}
 
-    logger.info(f"[VISUALIZAR] tenant={tenant_id} data={data_str}")
+    base_path = f"exports/simulation/{tenant_id}/{data_str}"
+    entregas_path = f"exports/entregas/{tenant_id}/{data_str}"
 
-    # ================================
-    # 🔥 GARANTE GERAÇÃO DO PDF
-    # ================================
-    try:
-        logger.info("📄 Gerando relatório final (se não existir)...")
-        executar_geracao_relatorio_final(
-            tenant_id=tenant_id,
-            envio_data=data_str,
-            simulation_id=None,
-            simulation_db=conectar_simulation_db(),
-            modo_forcar=False
-        )
-    except Exception as e:
-        logger.warning(f"⚠️ Falha ao gerar relatório: {e}")
+    if not os.path.isdir(base_path):
+        raise HTTPException(404, "Nenhum artefato encontrado")
 
-    # ================================
-    # 🔹 PDF
-    # ================================
-    pdf_path = f"./exports/simulation/relatorios/{tenant_id}/{data_str}/relatorio_simulation_{data_str}.pdf"
-    if os.path.exists(pdf_path):
-        response["relatorio_pdf"] = pdf_path.replace("./", "/")
-        logger.info(f"✅ PDF encontrado: {pdf_path}")
-    else:
-        logger.warning(f"❌ PDF NÃO encontrado: {pdf_path}")
+    response = {
+        "data": data_str,
+        "cenarios": {},
+        "graficos": [],
+        "relatorio_pdf": None,
+        "excel_entregas_rotas": None,
+    }
 
-    # ================================
-    # 🔹 EXCEL
-    # ================================
-    excel_path = f"./exports/simulation/entregas/{tenant_id}/{data_str}/entregas_simulacao_{data_str}.xlsx"
-    if os.path.exists(excel_path):
-        response["excel_entregas_rotas"] = excel_path.replace("./", "/")
-        logger.info(f"✅ Excel encontrado")
-
-    # ================================
-    # 🔹 GRÁFICOS
-    # ================================
-    graficos_dir = f"./exports/simulation/graphs/{tenant_id}/{data_str}"
-    if os.path.isdir(graficos_dir):
-        graficos = [
-            f"/exports/simulation/graphs/{tenant_id}/{data_str}/{f}"
-            for f in os.listdir(graficos_dir)
+    # ====================
+    # 📊 GRÁFICOS
+    # ====================
+    graphs_dir = os.path.join(base_path, "graphs")
+    if os.path.isdir(graphs_dir):
+        response["graficos"] = sorted([
+            f"/exports/simulation/{tenant_id}/{data_str}/graphs/{f}"
+            for f in os.listdir(graphs_dir)
             if f.endswith(".png")
-        ]
-        response["graficos"] = sorted(graficos)
-        logger.info(f"📊 {len(graficos)} gráficos encontrados")
+        ])
 
-    # ================================
-    # 🔹 K ÓTIMO
-    # ================================
-    import pandas as pd
+    # ====================
+    # 📄 PDF
+    # ====================
+    reports_dir = os.path.join(base_path, "reports")
+    if os.path.isdir(reports_dir):
+        pdfs = sorted([f for f in os.listdir(reports_dir) if f.endswith(".pdf")])
+        if pdfs:
+            response["relatorio_pdf"] = f"/exports/simulation/{tenant_id}/{data_str}/reports/{pdfs[-1]}"
 
-    try:
-        query = """
-            SELECT k_clusters
-            FROM resultados_simulacao
-            WHERE tenant_id = %s AND envio_data = %s AND is_ponto_otimo = TRUE
-            LIMIT 1
-        """
-        df = pd.read_sql(query, conectar_simulation_db(), params=(tenant_id, data_str))
-        otimo_k = int(df.iloc[0]["k_clusters"]) if not df.empty else None
-    except Exception:
-        otimo_k = None
+    # ====================
+    # 📦 EXCEL
+    # ====================
+    if os.path.isdir(entregas_path):
+        excels = sorted([
+            f for f in os.listdir(entregas_path)
+            if f.endswith(".xlsx")
+        ])
+        if excels:
+            response["excel_entregas_rotas"] = f"/exports/entregas/{tenant_id}/{data_str}/{excels[-1]}"
 
-    # ================================
-    # 🔹 AUXILIAR
-    # ================================
-    def add_file(tipo, k, path):
-        response["cenarios"].setdefault(
-            k,
-            {
+    # ====================
+    # 🗺️ MAPAS (POR K)
+    # ====================
+    maps_dir = os.path.join(base_path, "maps")
+
+    if os.path.isdir(maps_dir):
+        for f in sorted(os.listdir(maps_dir)):
+
+            nome = f.lower()
+
+            if not nome.endswith(".html"):
+                continue
+
+            if "_k" not in nome:
+                continue
+
+            k = nome.split("_k")[-1].split(".")[0]
+
+            response["cenarios"].setdefault(k, {
                 "mapas": [],
                 "tabelas_lastmile": [],
                 "tabelas_transferencias": [],
                 "tabelas_resumo": [],
-                "tabelas_detalhes": []
-            }
-        )
-        response["cenarios"][k][tipo].append(path)
+                "tabelas_detalhes": [],
+                "otimo": False
+            })
 
-    # ================================
-    # 🔹 MAPAS
-    # ================================
-    mapas_dir = f"./exports/simulation/maps/{tenant_id}/{data_str}"
-    if os.path.isdir(mapas_dir):
-        for f in os.listdir(mapas_dir):
-            if f.endswith((".html", ".png")) and "_k" in f:
-                k = f.split("_k")[-1].split(".")[0]
-                add_file("mapas", k, f"/exports/simulation/maps/{tenant_id}/{data_str}/{f}")
+            path = f"/exports/simulation/{tenant_id}/{data_str}/maps/{f}"
 
-    # ================================
-    # 🔹 LAST MILE
-    # ================================
-    lastmile_dir = f"./exports/simulation/tabelas_lastmile/{tenant_id}/{data_str}"
-    if os.path.isdir(lastmile_dir):
-        for f in os.listdir(lastmile_dir):
-            if f.endswith(".png") and "_k" in f:
-                k = f.split("_k")[-1].split(".")[0]
-                add_file("tabelas_lastmile", k, f"/exports/simulation/tabelas_lastmile/{tenant_id}/{data_str}/{f}")
+            if "mapa_clusterizacao" in nome:
+                tipo = "clusterizacao"
+            elif "mapa_transfer" in nome:
+                tipo = "transfer"
+            elif "mapa_lastmile" in nome:
+                tipo = "lastmile"
+            else:
+                continue
 
-    # ================================
-    # 🔹 TRANSFERÊNCIAS
-    # ================================
-    transf_dir = f"./exports/simulation/tabelas_transferencias/{tenant_id}/{data_str}"
-    if os.path.isdir(transf_dir):
-        for f in os.listdir(transf_dir):
-            if f.endswith(".png") and "_k" in f:
-                k = f.split("_k")[-1].split("_")[0]
-                add_file("tabelas_transferencias", k, f"/exports/simulation/tabelas_transferencias/{tenant_id}/{data_str}/{f}")
+            response["cenarios"][k].setdefault("mapas_dict", {})
+            response["cenarios"][k]["mapas_dict"][tipo] = path
 
-    # ================================
-    # 🔹 RESUMO
-    # ================================
-    resumo_dir = f"./exports/simulation/resumos/{tenant_id}/{data_str}"
-    if os.path.isdir(resumo_dir):
-        for f in os.listdir(resumo_dir):
-            if f.endswith(".csv") and "_k" in f:
-                k = f.split("_k")[-1].split(".")[0]
-                add_file("tabelas_resumo", k, f"/exports/simulation/resumos/{tenant_id}/{data_str}/{f}")
+    # ====================
+    # 📊 TABELAS (POR K)
+    # ====================
+    tables_dir = os.path.join(base_path, "tables")
 
-    # ================================
-    # 🔹 DETALHES
-    # ================================
-    detalhes_dir = f"./exports/simulation/detalhes/{tenant_id}/{data_str}"
-    if os.path.isdir(detalhes_dir):
-        for f in os.listdir(detalhes_dir):
-            if f.endswith(".csv") and "_k" in f:
-                k = f.split("_k")[-1].split(".")[0]
-                add_file("tabelas_detalhes", k, f"/exports/simulation/detalhes/{tenant_id}/{data_str}/{f}")
+    if os.path.isdir(tables_dir):
+        for f in sorted(os.listdir(tables_dir)):
 
-    # ================================
-    # 🔹 MARCAR ÓTIMO
-    # ================================
-    if otimo_k is not None and str(otimo_k) in response["cenarios"]:
-        response["cenarios"][str(otimo_k)]["otimo"] = True
+            nome = f.lower()
 
-    # ================================
-    # 🔴 VALIDAÇÃO FINAL CORRIGIDA
-    # ================================
-    possui_cenarios = any(
-        any(v.values()) for v in response.get("cenarios", {}).values()
-    )
+            if not nome.endswith(".csv") or "_k" not in nome:
+                continue
 
-    if not any([
-        response.get("relatorio_pdf"),
-        response.get("excel_entregas_rotas"),
-        response.get("graficos"),
-        possui_cenarios
-    ]):
-        logger.error("❌ Nenhum artefato encontrado")
-        raise HTTPException(status_code=404, detail="Nenhum artefato encontrado para esta data.")
+            k = nome.split("_k")[-1].split(".")[0]
 
-    logger.info("✅ Visualização pronta")
+            response["cenarios"].setdefault(k, {
+                "mapas": [],
+                "tabelas_lastmile": [],
+                "tabelas_transferencias": [],
+                "tabelas_resumo": [],
+                "tabelas_detalhes": [],
+                "otimo": False
+            })
+
+            path = f"/exports/simulation/{tenant_id}/{data_str}/tables/{f}"
+
+            if "lastmile" in nome:
+                response["cenarios"][k]["tabelas_lastmile"].append(path)
+            elif "transfer" in nome:
+                response["cenarios"][k]["tabelas_transferencias"].append(path)
+            elif "resumo" in nome:
+                response["cenarios"][k]["tabelas_resumo"].append(path)
+            elif "detalhe" in nome:
+                response["cenarios"][k]["tabelas_detalhes"].append(path)
+
+    # ====================
+    # 📌 ORDENAR MAPAS
+    # ====================
+    ordem = ["clusterizacao", "transfer", "lastmile"]
+
+    for k in response["cenarios"]:
+        mapas_dict = response["cenarios"][k].get("mapas_dict", {})
+
+        response["cenarios"][k]["mapas"] = [
+            mapas_dict[t] for t in ordem if t in mapas_dict
+        ]
+
+        if "mapas_dict" in response["cenarios"][k]:
+            del response["cenarios"][k]["mapas_dict"]
+
+    # ====================
+    # 🏆 MARCAR CENÁRIO ÓTIMO
+    # ====================
+    try:
+        conn = conectar_simulation_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT k_clusters
+            FROM resultados_simulacao
+            WHERE tenant_id = %s
+            AND envio_data = %s
+            AND is_ponto_otimo = TRUE
+            LIMIT 1
+        """, (tenant_id, data_str))
+
+        row = cur.fetchone()
+
+        if row:
+            k_otimo = str(row[0])
+            if k_otimo in response["cenarios"]:
+                response["cenarios"][k_otimo]["otimo"] = True
+
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        logger.warning(f"⚠️ Falha ao buscar ponto ótimo: {e}")
+
     return response
-
 
 @router.get("/distribuicao_k", summary="Distribuição de k_clusters ponto ótimo")
 def distribuicao_k(

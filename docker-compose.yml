@@ -137,7 +137,7 @@ services:
 
     volumes:
       - ./src:/app/src
-      - ./exports/simulation:/app/exports/simulation
+      - ./exports:/app/exports
     env_file:
       - ./src/simulation/.env
     environment:
@@ -433,6 +433,7 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./nginx/certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot
+      - ./exports:/app/exports
 
     # 🔥 CORREÇÃO AQUI
     depends_on:

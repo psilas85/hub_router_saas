@@ -5,6 +5,7 @@ import os
 import uuid
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from simulation.utils.path_builder import build_output_path
 
 from simulation.visualization.plot_simulation_cluster import \
     plotar_mapa_clusterizacao_simulation
@@ -98,7 +99,7 @@ class SimulationUseCase:
         self.simulation_id = simulation_id or str(uuid.uuid4())
         self.permitir_rotas_excedentes = permitir_rotas_excedentes
         self.hub_id = hub_id
-        self.output_dir = f"exports/simulation/entregas/{self.tenant_id}/{self.envio_data}"
+        self.output_dir = "exports/simulation"
 
         # cenários inválidos
         self.cenarios_invalidados = []
@@ -1246,20 +1247,40 @@ class SimulationUseCase:
         return k_total
 
     def _finalizar_melhor_resultado(self, melhor_k, menor_custo, melhor_resultado):
+
+        # 🔴 PROTEÇÃO CONTRA DUPLICAÇÃO
+        if getattr(self, "_finalizado", False):
+            self.logger.warning("⚠️ Finalização já executada — evitando duplicação")
+            return
+
+        self._finalizado = True
+
+        # --------------------------------------------------
+        # 🔹 Atualiza flag de ponto ótimo
+        # --------------------------------------------------
         self.logger.info(f"📝 Atualizando flag is_ponto_otimo=True para k={melhor_k}")
+
         cursor = self.simulation_db.cursor()
+
         for tabela in ["entregas_clusterizadas", "resumo_transferencias", "detalhes_transferencias"]:
             try:
                 cursor.execute(f"""
                     UPDATE {tabela}
                     SET is_ponto_otimo = TRUE
-                    WHERE tenant_id = %s AND envio_data = %s AND simulation_id = %s AND k_clusters = %s
+                    WHERE tenant_id = %s
+                    AND envio_data = %s
+                    AND simulation_id = %s
+                    AND k_clusters = %s
                 """, (self.tenant_id, self.envio_data, self.simulation_id, melhor_k))
             except Exception as e:
                 self.logger.debug(f"ℹ️ UPDATE {tabela} ponto ótimo: {e}")
+
         self.simulation_db.commit()
         cursor.close()
 
+        # --------------------------------------------------
+        # 🔹 Atualiza resultado final
+        # --------------------------------------------------
         self.result_service.salvar_resultado({
             **melhor_resultado,
             "tenant_id": self.tenant_id,
@@ -1268,6 +1289,9 @@ class SimulationUseCase:
             "is_ponto_otimo": True
         }, modo_forcar=self.modo_forcar)
 
+        # --------------------------------------------------
+        # 🔹 Gráfico de custos
+        # --------------------------------------------------
         gerar_graficos_custos_por_envio(
             simulation_db=self.simulation_db,
             tenant_id=self.tenant_id,
@@ -1275,6 +1299,9 @@ class SimulationUseCase:
             modo_forcar=self.modo_forcar
         )
 
+        # --------------------------------------------------
+        # 🔹 Relatório final
+        # --------------------------------------------------
         executar_geracao_relatorio_final(
             tenant_id=self.tenant_id,
             envio_data=self.envio_data,
@@ -1283,11 +1310,19 @@ class SimulationUseCase:
             modo_forcar=self.modo_forcar
         )
 
-        # Geração do Excel de entregas + rotas
+        # --------------------------------------------------
+        # 🔹 Excel de entregas + rotas (CORRIGIDO)
+        # --------------------------------------------------
         try:
-            # output_dir padronizado
-            output_dir = os.path.join("exports/simulation/entregas", self.tenant_id, str(self.envio_data))
-            os.makedirs(output_dir, exist_ok=True)
+            from simulation.utils.path_builder import build_output_path
+
+            output_dir = build_output_path(
+                "exports/simulation",
+                self.tenant_id,
+                self.envio_data,
+                "tables"
+            )
+
             excel_path = exportar_entregas_com_rotas_excel(
                 clusterization_db=self.clusterization_db,
                 simulation_db=self.simulation_db,
@@ -1295,10 +1330,15 @@ class SimulationUseCase:
                 envio_data=self.envio_data,
                 output_dir=output_dir
             )
+
             self.logger.info(f"✅ Excel de entregas+rotas exportado: {excel_path}")
+
         except Exception as e:
             self.logger.warning(f"⚠️ Falha ao exportar Excel de entregas+rotas: {e}")
 
+        # --------------------------------------------------
+        # 🔹 Log de cenários invalidados
+        # --------------------------------------------------
         if self.cenarios_invalidados:
             resumo = "; ".join(
                 f"k={item['k_clusters']}: {item['motivo']}"
@@ -1308,12 +1348,14 @@ class SimulationUseCase:
                 f"⚠️ Cenários invalidados durante a execução: {resumo}"
             )
 
+        # --------------------------------------------------
+        # 🔹 Retorno final
+        # --------------------------------------------------
         return {
             "k_clusters": melhor_k,
             "custo_total": menor_custo,
             "cenarios_invalidados": list(self.cenarios_invalidados),
         }
-
 
     def executar_simulacao_completa(self):
 
@@ -1584,11 +1626,11 @@ class SimulationUseCase:
         df_clusterizado,
         df_hub,
         df_outliers_geograficos=None,
-        df_cluster_puro=None  # 🔥 NOVO
     ):
         is_ponto_otimo = False
         df_clusterizado["simulation_id"] = self.simulation_id
         df_clusterizado["k_clusters"] = k_persistencia
+        df_base_cluster = df_clusterizado
 
         df_clusterizado = self.cluster_service.ajustar_centros_dos_clusters(df_clusterizado)
 
@@ -1690,11 +1732,13 @@ class SimulationUseCase:
 
         try:
             cluster_cost_cfg = carregar_cluster_costs(self.simulation_db, self.tenant_id)
-            df_base_cluster = df_cluster_puro if df_cluster_puro is not None else df_clusterizado
 
             df_resumo_clusters = (
-                df_base_cluster.groupby("cluster").agg(qde_ctes=("cte_numero", "nunique")).reset_index()
+                df_clusterizado.groupby("cluster")
+                .agg(qde_ctes=("cte_numero", "nunique"))
+                .reset_index()
             )
+
             custo_cluster = calcular_custo_clusters_por_scenario(
                 df_resumo_clusters=df_resumo_clusters,
                 entregas_minimas_por_cluster=cluster_cost_cfg["limite_qtd_entregas"],
@@ -1723,7 +1767,7 @@ class SimulationUseCase:
         }
 
         # 🔴 GARANTE SCHEMA DO DF PURO
-        df_para_persistir = df_cluster_puro.copy() if df_cluster_puro is not None else df_clusterizado.copy()
+        df_para_persistir = df_clusterizado.copy()
 
         df_para_persistir["simulation_id"] = self.simulation_id
         df_para_persistir["k_clusters"] = k_persistencia
@@ -1747,8 +1791,9 @@ class SimulationUseCase:
             return None
 
 
+
         # Padroniza output_dir para todos os artefatos
-        output_dir_maps = os.path.join("exports/simulation/maps", self.tenant_id, str(self.envio_data))
+        output_dir_maps = "exports/simulation/maps"
 
         try:
             plotar_mapa_clusterizacao_simulation(
@@ -1757,7 +1802,6 @@ class SimulationUseCase:
                 tenant_id=self.tenant_id,
                 envio_data=self.envio_data,
                 k_clusters=k_persistencia,
-                output_dir=output_dir_maps,
                 modo_forcar=self.modo_forcar,
                 logger=self.logger
             )
@@ -1767,11 +1811,9 @@ class SimulationUseCase:
         try:
             plotar_mapa_transferencias(
                 simulation_db=self.simulation_db,
-                clusterization_db=self.clusterization_db,
                 tenant_id=self.tenant_id,
                 envio_data=self.envio_data,
                 k_clusters=k_persistencia,
-                output_dir=output_dir_maps,
                 modo_forcar=self.modo_forcar,
                 logger=self.logger
             )
@@ -1780,18 +1822,16 @@ class SimulationUseCase:
 
         try:
             plotar_mapa_last_mile(
-            simulation_db=self.simulation_db,
-            clusterization_db=self.clusterization_db,
-            tenant_id=self.tenant_id,
-            envio_data=self.envio_data,
-            k_clusters=k_persistencia,
-            output_dir=output_dir_maps,
-            modo_forcar=self.modo_forcar,
-            logger=self.logger
-        )
+                simulation_db=self.simulation_db,
+                clusterization_db=self.clusterization_db,
+                tenant_id=self.tenant_id,
+                envio_data=self.envio_data,
+                k_clusters=k_persistencia,
+                modo_forcar=self.modo_forcar,
+                logger=self.logger
+            )
         except Exception as e:
             self.logger.warning(f"⚠️ Erro mapa last-mile: {e}")
-
         return {
             "k_clusters": k_persistencia,
             "custo_total": custo_total,
@@ -1839,15 +1879,13 @@ class SimulationUseCase:
         )
 
         # 🔴 SNAPSHOT LIMPO
-        df_cluster_puro = df_clusterizado.copy()
 
         return self._executar_simulacao_clusterizada(
             f"k={k}",
             k,
             df_clusterizado,
             df_hub,
-            df_outliers_geograficos,
-            df_cluster_puro  # 🔥 NOVO
+            df_outliers_geograficos
         )
 
     def _executar_simulacao_k0(self, df_entregas, df_hub=None):
@@ -1967,8 +2005,6 @@ class SimulationUseCase:
                 tenant_id=self.tenant_id,
                 envio_data=self.envio_data,
                 k_clusters=0,
-                simulation_id=self.simulation_id,
-                output_dir=output_dir_maps,
                 modo_forcar=self.modo_forcar,
                 logger=self.logger
             )

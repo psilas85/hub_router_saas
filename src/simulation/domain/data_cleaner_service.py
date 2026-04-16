@@ -1,89 +1,72 @@
 #hub_router_1.0.1/src/simulation/domain/data_cleaner_service.py
 
 import shutil
-import os
 from pathlib import Path
 
 class DataCleanerService:
-    def __init__(self, db_conn, tenant_id: str, envio_data: str, logger,
-                 output_dir="exports/simulation/maps", simulation_id: str = None):
+    def __init__(
+        self,
+        db_conn,
+        tenant_id: str,
+        envio_data: str,
+        logger,
+        output_dir="exports/simulation",
+        simulation_id: str = None
+    ):
         self.db_conn = db_conn
         self.tenant_id = tenant_id
         self.envio_data = envio_data
         self.simulation_id = simulation_id
         self.logger = logger
-        # garante caminho absoluto
         self.output_dir = Path(output_dir).resolve()
 
     def limpar_tabelas(self):
-        """
-        Executa limpeza em lote de todas as tabelas relacionadas à simulação.
-        """
-        sql = """
-        WITH del1 AS (
-            DELETE FROM detalhes_rotas WHERE tenant_id = %s AND envio_data = %s
-        ), del2 AS (
-            DELETE FROM detalhes_transferencias WHERE tenant_id = %s AND envio_data = %s
-        ), del3 AS (
-            DELETE FROM entregas_clusterizadas WHERE tenant_id = %s AND envio_data = %s
-        ), del4 AS (
-            DELETE FROM resultados_simulacao WHERE tenant_id = %s AND envio_data = %s
-        ), del5 AS (
-            DELETE FROM resumo_clusters WHERE tenant_id = %s AND envio_data = %s
-        ), del6 AS (
-            DELETE FROM resumo_rotas_last_mile WHERE tenant_id = %s AND envio_data = %s
-        ), del7 AS (
-            DELETE FROM resumo_transferencias WHERE tenant_id = %s AND envio_data = %s
-        ), del8 AS (
-            DELETE FROM rotas_last_mile WHERE tenant_id = %s AND envio_data = %s
-        )
-        DELETE FROM rotas_transferencias WHERE tenant_id = %s AND envio_data = %s;
-        """
         cursor = self.db_conn.cursor()
+
         try:
-            cursor.execute(sql, [self.tenant_id, self.envio_data] * 9)
+            sql = """
+            DELETE FROM detalhes_rotas WHERE tenant_id=%s AND envio_data=%s;
+            DELETE FROM detalhes_transferencias WHERE tenant_id=%s AND envio_data=%s;
+            DELETE FROM entregas_clusterizadas WHERE tenant_id=%s AND envio_data=%s;
+            DELETE FROM resultados_simulacao WHERE tenant_id=%s AND envio_data=%s;
+            DELETE FROM resumo_clusters WHERE tenant_id=%s AND envio_data=%s;
+            DELETE FROM resumo_rotas_last_mile WHERE tenant_id=%s AND envio_data=%s;
+            DELETE FROM resumo_transferencias WHERE tenant_id=%s AND envio_data=%s;
+            DELETE FROM rotas_last_mile WHERE tenant_id=%s AND envio_data=%s;
+            DELETE FROM rotas_transferencias WHERE tenant_id=%s AND envio_data=%s;
+            """
+
+            params = [self.tenant_id, self.envio_data] * 9
+
+            cursor.execute(sql, params)
             self.db_conn.commit()
-            self.logger.info(f"🗑️ Todas as tabelas limpas para envio_data={self.envio_data}, tenant={self.tenant_id}")
+
+            self.logger.info(
+                f"🗑️ Tabelas limpas: tenant={self.tenant_id} | data={self.envio_data}"
+            )
+
         except Exception as e:
             self.db_conn.rollback()
-            self.logger.error(f"❌ Erro ao limpar tabelas: {e}")
+            self.logger.error(f"❌ Erro ao limpar banco: {e}")
+
         finally:
             cursor.close()
 
     def limpar_artefatos(self):
-        """
-        Remove todos os arquivos exportados (maps, graphs, relatorios, csv, json, entregas)
-        relacionados ao tenant e envio_data.
-        """
-        subdirs = ["maps", "graphs", "relatorios", "csv", "json", "entregas"]
+        base_path = self.output_dir
+        target_path = base_path / str(self.tenant_id) / str(self.envio_data)
 
-        for sub in subdirs:
-            # Caminho do diretório: exports/simulation/<sub>/<tenant_id>
-            dir_path = self.output_dir.parent / sub / str(self.tenant_id)
-
-            if dir_path.exists():
-                arquivos = list(dir_path.glob(f"*{self.envio_data}*"))
-                if arquivos:
-                    for f in arquivos:
-                        try:
-                            if f.is_file():
-                                f.unlink()  # remove arquivo
-                                self.logger.info(f"🗑️ Artefato removido: {f}")
-                            elif f.is_dir():
-                                shutil.rmtree(f, ignore_errors=True)
-                                self.logger.info(f"🗑️ Diretório removido: {f}")
-                        except Exception as e:
-                            self.logger.error(f"❌ Erro ao remover {f}: {e}")
-                else:
-                    self.logger.info(
-                        f"ℹ️ Nenhum artefato encontrado em {dir_path} para envio_data={self.envio_data}"
-                    )
+        if target_path.exists():
+            try:
+                shutil.rmtree(target_path)
+                self.logger.info(f"🗑️ Artefatos removidos: {target_path}")
+            except Exception as e:
+                self.logger.error(f"❌ Erro ao remover artefatos: {e}")
+        else:
+            self.logger.info(f"ℹ️ Nenhum artefato encontrado: {target_path}")
 
     def limpar_completo(self):
-        """
-        Executa a limpeza total: tabelas + artefatos exportados.
-        """
-        self.logger.info(f"♻️ Limpando dados e artefatos de {self.envio_data} (tenant={self.tenant_id})...")
+        self.logger.info(f"♻️ Limpando tudo | tenant={self.tenant_id} | data={self.envio_data}")
         self.limpar_tabelas()
         self.limpar_artefatos()
-        self.logger.info("✅ Limpeza concluída.")
+        self.logger.info("✅ Limpeza concluída")

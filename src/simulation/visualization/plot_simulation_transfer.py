@@ -1,279 +1,240 @@
 # hub_router_1.0.1/src/simulation/visualization/plot_simulation_transfer.py
 
-import os
-import folium
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
+# hub_router_1.0.1/src/simulation/visualization/plot_simulation_transfer.py
 
-from folium.plugins import MarkerCluster
+import os
+import json
+import folium
+import requests
+import pandas as pd
+
+from folium import GeoJson, Tooltip
+from folium.plugins import Fullscreen
+import geojson
+
+from simulation.utils.path_builder import build_output_path
+
 from simulation.infrastructure.simulation_database_reader import (
-    carregar_resumo_clusters,
-    carregar_entregas_clusterizadas,
     carregar_rotas_transferencias,
+    carregar_resumo_clusters,
     carregar_hubs
 )
 
-# 🔹 Importando utilitários do transfer_routing
-from transfer_routing.infrastructure.database_connection import conectar_banco_routing, fechar_conexao
-from transfer_routing.infrastructure.cache import obter_rota_do_cache
+# ==============================
+# CONFIG
+# ==============================
+
+OSRM_BASE_URL = f"http://{os.getenv('OSRM_HOST')}:{os.getenv('OSRM_PORT')}"
 
 
-def decode_polyline(polyline_str):
-    """Decodifica polyline do Google/OSRM em lista de coordenadas (lat, lon)."""
-    index, lat, lng = 0, 0, 0
-    coordinates = []
-    while index < len(polyline_str):
-        for coord in (lat, lng):
-            shift, result = 0, 0
-            while True:
-                b = ord(polyline_str[index]) - 63
-                index += 1
-                result |= (b & 0x1f) << shift
-                shift += 5
-                if b < 0x20:
-                    break
-            dlat = ~(result >> 1) if result & 1 else (result >> 1)
-            if coord is lat:
-                lat += dlat
-            else:
-                lng += dlat
-        coordinates.append((lat / 1e5, lng / 1e5))
-    return coordinates
+# ==============================
+# UTILS
+# ==============================
 
+def parse_coords(coords):
+    pontos = []
 
-def desenhar_rota(mapa, pontos, estilo, rota_id, logger=None):
-    """Desenha uma rota no mapa usando cache. Fallback: linha reta se não houver polyline."""
-    conn = conectar_banco_routing()
+    if not isinstance(coords, list):
+        return pontos
 
-    for i in range(len(pontos) - 1):
+    for p in coords:
         try:
-            origem = (float(pontos[i][0]), float(pontos[i][1]))
-            destino = (float(pontos[i + 1][0]), float(pontos[i + 1][1]))
-        except (ValueError, TypeError) as e:
-            if logger:
-                logger.warning(f"⚠️ Coordenada inválida na rota {rota_id}, índice {i}: {e}")
+            if isinstance(p, dict):
+                pontos.append((float(p["lat"]), float(p["lon"])))
+            elif isinstance(p, (list, tuple)) and len(p) == 2:
+                pontos.append((float(p[0]), float(p[1])))
+        except:
             continue
 
-        origem_str = f"{round(origem[0], 6)},{round(origem[1], 6)}"
-        destino_str = f"{round(destino[0], 6)},{round(destino[1], 6)}"
+    return pontos
 
-        distancia, tempo, rota_json = obter_rota_do_cache(origem_str, destino_str, conn)
 
-        if rota_json:
-            polyline = rota_json.get("overview_polyline")
-            coords = []
-            if polyline:
-                coords = decode_polyline(polyline)
-            elif "coordenadas" in rota_json and rota_json["coordenadas"]:
-                for p in rota_json["coordenadas"]:
-                    if isinstance(p, (list, tuple)) and len(p) >= 2:
-                        coords.append((float(p[0]), float(p[1])))
-                    elif isinstance(p, dict) and "lat" in p and "lon" in p:
-                        coords.append((float(p["lat"]), float(p["lon"])))
+def consultar_osrm(origem, destino):
+    url = (
+        f"{OSRM_BASE_URL}/route/v1/driving/"
+        f"{origem[1]},{origem[0]};{destino[1]},{destino[0]}"
+        f"?overview=full&geometries=geojson"
+    )
 
-            if coords:
-                folium.PolyLine(
-                    locations=coords,
-                    color=estilo["cor"],
-                    weight=estilo["peso"],
-                    opacity=estilo["opacidade"],
-                    tooltip=f"🚚 Rota {rota_id}"
-                ).add_to(mapa)
-            else:
-                folium.PolyLine(
-                    locations=[origem, destino],
-                    color="gray",
-                    weight=1,
-                    opacity=0.5,
-                    tooltip="Linha Reta"
-                ).add_to(mapa)
-        else:
-            folium.PolyLine(
-                locations=[origem, destino],
-                color="gray",
-                weight=1,
-                opacity=0.5,
-                tooltip="Linha Reta"
-            ).add_to(mapa)
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
 
-    fechar_conexao(conn)
+        if data.get("code") != "Ok":
+            return []
 
+        return [(lat, lon) for lon, lat in data["routes"][0]["geometry"]["coordinates"]]
+
+    except:
+        return []
+
+
+def reconstruir_rota_osrm(hub, clusters):
+    rota = []
+    prev = hub
+
+    for c in clusters:
+        seg = consultar_osrm(prev, c)
+        if seg:
+            rota.extend(seg if not rota else seg[1:])
+        prev = c
+
+    seg = consultar_osrm(prev, hub)
+    if seg:
+        rota.extend(seg[1:])
+
+    return rota
+
+
+# ==============================
+# MAIN
+# ==============================
 
 def plotar_mapa_transferencias(
     simulation_db,
-    clusterization_db,
     tenant_id,
     envio_data,
     k_clusters,
-    output_dir="exports/simulation/entregas",
     modo_forcar=False,
     logger=None
 ):
-    try:
-        output_path = output_dir
-        os.makedirs(output_path, exist_ok=True)
 
-        mapa_path = os.path.join(output_path, f"{tenant_id}_mapa_transferencias_{envio_data}_k{k_clusters}.html")
-        png_path = mapa_path.replace(".html", ".png")
+    envio_data = str(envio_data)
 
-        if modo_forcar:
-            for path in [mapa_path, png_path]:
-                if path and os.path.exists(path):
-                    os.remove(path)
-        elif (mapa_path and os.path.exists(mapa_path)) or (png_path and os.path.exists(png_path)):
+    # 🔥 PADRÃO NOVO
+    maps_dir = build_output_path(
+        "exports/simulation",
+        tenant_id,
+        envio_data,
+        "maps"
+    )
+
+    mapa_path = os.path.join(
+        maps_dir,
+        f"{tenant_id}_mapa_transfer_{envio_data}_k{k_clusters}.html"
+    )
+
+    png_path = os.path.join(
+        maps_dir,
+        f"{tenant_id}_mapa_transfer_{envio_data}_k{k_clusters}.png"
+    )
+
+    # 🔥 controle overwrite
+    if not modo_forcar and os.path.exists(mapa_path):
+        if logger:
+            logger.info(f"🟡 Mapa já existe: {mapa_path}")
+        return
+
+    # =============================
+    # 🔹 dados
+    # =============================
+    df_rotas = carregar_rotas_transferencias(
+        simulation_db, tenant_id, envio_data, k_clusters
+    )
+
+    df_clusters = carregar_resumo_clusters(
+        simulation_db, tenant_id, envio_data, k_clusters
+    )
+
+    hubs = carregar_hubs(simulation_db, tenant_id)
+
+    if df_clusters.empty or not hubs:
+        if logger:
+            logger.warning("⚠️ Dados insuficientes")
+        return
+
+    # 🔥 remove cluster HUB fake
+    df_clusters = df_clusters[
+        ~df_clusters["cluster"].astype(str).str.startswith("9999")
+    ]
+
+    hub = (
+        float(hubs[0]["latitude"]),
+        float(hubs[0]["longitude"])
+    )
+
+    # =============================
+    # 🔹 mapa base
+    # =============================
+    all_lats = list(df_clusters["centro_lat"]) + [hub[0]]
+    all_lons = list(df_clusters["centro_lon"]) + [hub[1]]
+
+    mapa = folium.Map(
+        location=[sum(all_lats)/len(all_lats), sum(all_lons)/len(all_lons)],
+        zoom_start=10
+    )
+
+    Fullscreen().add_to(mapa)
+
+    # HUB
+    folium.Marker(
+        location=hub,
+        icon=folium.Icon(color="red", icon="home"),
+        popup="Hub"
+    ).add_to(mapa)
+
+    # CLUSTERS
+    for _, row in df_clusters.iterrows():
+        folium.Marker(
+            location=[row["centro_lat"], row["centro_lon"]],
+            icon=folium.Icon(color="green"),
+            popup=f"Cluster {row['cluster']}"
+        ).add_to(mapa)
+
+    cores = ["red", "blue", "green", "purple", "orange"]
+
+    # =============================
+    # 🔹 rotas
+    # =============================
+    rotas_ids = df_rotas["rota_id"].unique() if not df_rotas.empty else [None]
+
+    for idx, rota_id in enumerate(rotas_ids):
+
+        cor = cores[idx % len(cores)]
+        rota_coords = []
+
+        if rota_id:
+            df_rota = df_rotas[df_rotas["rota_id"] == rota_id]
+
+            try:
+                raw = df_rota["rota_completa_json"].iloc[0]
+                coords = json.loads(raw) if isinstance(raw, str) else raw
+                rota_coords = parse_coords(coords)
+            except:
+                rota_coords = []
+
+        # 🔥 fallback OSRM
+        if len(rota_coords) <= 1:
             if logger:
-                logger.info(f"🟡 Mapas já existem ({envio_data}, k={k_clusters}). Use --modo_forcar para sobrescrever.")
-            return
+                logger.warning(f"Fallback OSRM rota {rota_id}")
 
-        df_entregas = carregar_entregas_clusterizadas(simulation_db, clusterization_db, tenant_id, envio_data, k_clusters)
-        df_clusters = carregar_resumo_clusters(simulation_db, tenant_id, envio_data, k_clusters)
-        df_rotas = carregar_rotas_transferencias(simulation_db, tenant_id, envio_data, k_clusters)
-        hubs = carregar_hubs(simulation_db, tenant_id)
+            clusters_coords = [
+                (row["centro_lat"], row["centro_lon"])
+                for _, row in df_clusters.iterrows()
+            ]
 
-        if df_entregas.empty or df_clusters.empty or df_rotas.empty or not hubs:
-            raise ValueError("❌ Dados ausentes para plotagem: entregas, clusters, rotas ou hubs.")
+            rota_coords = reconstruir_rota_osrm(hub, clusters_coords)
 
-        # mapa inicial
-        # Junta todas as coordenadas relevantes para ajustar o zoom
-        all_lats = list(df_entregas["centro_lat"].dropna()) + [h["latitude"] for h in hubs] + list(df_clusters["centro_lat"].dropna())
-        all_lons = list(df_entregas["centro_lon"].dropna()) + [h["longitude"] for h in hubs] + list(df_clusters["centro_lon"].dropna())
-        if all_lats and all_lons:
-            min_lat, max_lat = min(all_lats), max(all_lats)
-            min_lon, max_lon = min(all_lons), max(all_lons)
-            center_lat = (min_lat + max_lat) / 2
-            center_lon = (min_lon + max_lon) / 2
-            mapa = folium.Map(location=[center_lat, center_lon], zoom_start=7)
-        else:
-            mapa = folium.Map(location=[hubs[0]["latitude"], hubs[0]["longitude"]], zoom_start=7)
+        # 🔥 fallback final
+        if len(rota_coords) <= 1:
+            rota_coords = [hub] + [
+                (row["centro_lat"], row["centro_lon"])
+                for _, row in df_clusters.iterrows()
+            ] + [hub]
 
-        # Hubs
-        for hub in hubs:
-            folium.Marker(
-                location=[hub["latitude"], hub["longitude"]],
-                popup=f"Hub: {hub['nome']}",
-                icon=folium.Icon(color="red", icon="truck", prefix="fa")
-            ).add_to(mapa)
+        # 🔹 desenhar linha
+        gj = geojson.LineString([(lon, lat) for lat, lon in rota_coords])
 
-        # Clusters
-        for _, row in df_clusters.iterrows():
-            folium.Marker(
-                location=[row["centro_lat"], row["centro_lon"]],
-                popup=f"Cluster {row['cluster']} - {row['cluster_cidade']}",
-                icon=folium.Icon(color="green", icon="building", prefix="fa")
-            ).add_to(mapa)
+        GeoJson(
+            data=gj,
+            style_function=lambda x, cor=cor: {
+                "color": cor,
+                "weight": 4
+            },
+            tooltip=Tooltip(f"Rota {rota_id}")
+        ).add_to(mapa)
 
-        # Rotas com paleta variada
-        cores_disponiveis = list(mcolors.TABLEAU_COLORS.values()) + list(mcolors.CSS4_COLORS.values())[:40]
-        legenda_html = """<div style="position: fixed;
-                                     bottom: 20px; left: 20px; width: 180px;
-                                     background-color: white; border:2px solid grey;
-                                     z-index:9999; font-size:12px;
-                                     padding: 8px; border-radius:8px;">
-                          <b>🗺️ Legenda das Rotas</b><br>"""
+    mapa.save(mapa_path)
 
-        for idx, row in df_rotas.iterrows():
-            rota_id = row.get("rota_id", f"linha_{idx}")
-            cor = cores_disponiveis[idx % len(cores_disponiveis)]
-            estilo = {"cor": cor, "peso": 4, "opacidade": 0.85}
-
-            legenda_html += f'<span style="color:{cor};">⬤</span> Rota {rota_id}<br>'
-
-            pontos = []
-
-            coords_str = row.get("coordenadas_seq")
-
-            if isinstance(coords_str, str) and coords_str.strip():
-                parts = coords_str.split(',')
-
-                for i in range(0, len(parts), 2):
-                    try:
-                        lat = float(parts[i])
-                        lon = float(parts[i + 1])
-                        pontos.append((lat, lon))
-                    except:
-                        continue
-
-            if len(pontos) >= 2:
-                folium.PolyLine(
-                    locations=pontos,
-                    color=estilo["cor"],
-                    weight=estilo["peso"],
-                    opacity=estilo["opacidade"],
-                    tooltip=f"🚚 Rota {rota_id}"
-                ).add_to(mapa)
-
-        legenda_html += "</div>"
-        mapa.get_root().html.add_child(folium.Element(legenda_html))
-
-        # Entregas
-        marker_cluster = MarkerCluster().add_to(mapa)
-        for _, row in df_entregas.iterrows():
-            folium.CircleMarker(
-                location=[row["centro_lat"], row["centro_lon"]],
-                radius=3,
-                color="gray",
-                fill=True,
-                fill_opacity=0.5,
-                popup=row["cte_numero"]
-            ).add_to(marker_cluster)
-
-        # Ajusta o zoom para englobar todos os pontos
-        if all_lats and all_lons:
-            mapa.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
-        mapa.save(mapa_path)
-
-        # === PNG com Matplotlib ===
-        plt.figure(figsize=(10, 8))
-
-        cores_matplotlib = [
-            "red", "green", "blue", "orange", "purple",
-            "#8B0000",  # darkred
-            "#4682B4",  # cadetblue
-            "#006400",  # darkgreen
-            "pink", "cyan", "lime", "black", "beige",
-            "#800080",  # darkpurple
-            "#FF6347",  # tomato (lightred)
-            "gray", "navy", "lightgray"
-        ]
-
-        for idx, row in df_rotas.iterrows():
-            rota_id = row.get("rota_id", f"rota_{idx}")
-            cor = cores_matplotlib[idx % len(cores_matplotlib)]
-
-            rota_coords = []
-            rota_raw = row.get("rota_completa_json")
-            if isinstance(rota_raw, str):
-                try:
-                    import json
-                    rota_coords = json.loads(rota_raw)
-                except:
-                    rota_coords = []
-            elif isinstance(rota_raw, (list, tuple)):
-                rota_coords = rota_raw
-
-            if isinstance(rota_coords, list) and all(isinstance(p, dict) for p in rota_coords):
-                rota_coords = [(p["lat"], p["lon"]) for p in rota_coords]
-
-            if len(rota_coords) > 1:
-                lats, lons = zip(*rota_coords)
-                plt.plot(lons, lats, marker="o", color=cor, linewidth=1.5, label=f"Rota {rota_id}")
-
-        # Centros dos clusters
-        plt.scatter(df_clusters["centro_lon"], df_clusters["centro_lat"], c="black", marker="x", s=80, label="Centros")
-        plt.xlabel("Longitude")
-        plt.ylabel("Latitude")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(png_path, dpi=150)
-        plt.close()
-
-
-        if logger:
-            logger.info(f"✅ Mapas de transferências salvos: {mapa_path}, {png_path}")
-
-    except Exception as erro:
-        if logger:
-            logger.exception(f"❌ Erro geral: {erro}")
-        else:
-            print(f"❌ Erro geral: {erro}")
+    if logger:
+        logger.info(f"✅ Mapa transfer salvo: {mapa_path}")

@@ -199,8 +199,12 @@ class ClusterizationService:
         # 🔥 ajuste inteligente baseado na regra de negócio
         k_original = k
 
-        if len(df_validas) > 0:
-            k = min(k, max(1, int(len(df_validas) / entregas_por_rota)))
+        if len(df_validas) < k:
+            raise ValueError(
+                f"❌ Entregas insuficientes para k={k}: total={len(df_validas)}"
+            )
+
+        self.logger.info(f"📊 Clusterização com k FIXO = {k}")
 
         if k != k_original:
             self.logger.warning(

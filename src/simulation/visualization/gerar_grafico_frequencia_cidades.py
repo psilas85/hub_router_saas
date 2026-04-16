@@ -1,25 +1,30 @@
-# simulation/visualization/gerar_grafico_frequencia_cidades.py
+#hub_router_1.0.1/src/simulation/visualization/gerar_grafico_frequencia_cidades.py
+
+# hub_router_1.0.1/src/simulation/visualization/gerar_grafico_frequencia_cidades.py
 
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+
 from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
-from simulation.utils.artefatos_cleaner_frequencia import limpar_artefatos_frequencia
+from simulation.utils.path_builder import build_output_path
+
 
 def gerar_grafico_frequencia_cidades(
     tenant_id: str,
     data_inicial: str,
     data_final: str,
-    output_dir="exports/simulation/graphs"
+    base_dir: str = "exports/simulation",
+    modo_forcar: bool = False
 ):
     """
-        Gera gráfico de barras com a frequência das cidades centro (cluster_cidade)
-        que aparecem em simulações ponto ótimo no período informado.
-        - Contagem é feita por DIA (DISTINCT envio_data), evitando inflar
-            cidades quando o cenário Hub único centraliza todas as entregas no hub.
-        - Hub Fortaleza = cenário vencedor Hub único.
-        - HUB CENTRAL = hub central em cenários k>1 (compartilhado).
+    Gera gráfico de barras com a frequência das cidades centro (cluster_cidade)
+    que aparecem em simulações ponto ótimo no período informado.
+
+    - Contagem por DIA (DISTINCT envio_data)
+    - Evita inflar cidades no cenário hub único
     """
+
     conn = conectar_simulation_db()
 
     query = """
@@ -37,6 +42,7 @@ def gerar_grafico_frequencia_cidades(
         ORDER BY qtd DESC
         LIMIT 30
     """
+
     df = pd.read_sql(query, conn, params=(tenant_id, data_inicial, data_final))
     conn.close()
 
@@ -50,42 +56,77 @@ def gerar_grafico_frequencia_cidades(
             "dados": []
         }
 
-    os.makedirs(f"{output_dir}/{tenant_id}", exist_ok=True)
+    # 🔥 PADRÃO NOVO
+    periodo = f"{data_inicial}_{data_final}"
 
-    # 🔄 Limpar artefatos antigos
-    limpar_artefatos_frequencia(output_dir, tenant_id, data_inicial, data_final)
+    graphs_dir = build_output_path(
+        base_dir,
+        tenant_id,
+        periodo,
+        "graphs"
+    )
 
-    # Arquivos de saída
     filename_png = os.path.join(
-        output_dir, tenant_id, f"frequencia_cidades_{data_inicial}_{data_final}.png"
-    )
-    filename_csv = os.path.join(
-        output_dir, tenant_id, f"frequencia_cidades_{data_inicial}_{data_final}.csv"
+        graphs_dir,
+        f"frequencia_cidades_{periodo}.png"
     )
 
-    # Gráfico
+    filename_csv = os.path.join(
+        graphs_dir,
+        f"frequencia_cidades_{periodo}.csv"
+    )
+
+    # 🔥 controle de sobrescrita
+    if not modo_forcar and os.path.exists(filename_png):
+        return {
+            "status": "ok",
+            "data_inicial": data_inicial,
+            "data_final": data_final,
+            "grafico": filename_png,
+            "csv": filename_csv if os.path.exists(filename_csv) else None,
+            "dados": df.to_dict(orient="records")
+        }
+
+    # =========================
+    # 🔹 GRÁFICO
+    # =========================
+
     plt.figure(figsize=(10, 6))
-    plt.barh(df["cluster_cidade"], df["qtd"], color="steelblue")
+
+    plt.barh(
+        df["cluster_cidade"],
+        df["qtd"]
+    )
+
     plt.xlabel("Frequência de dias como Centro (ponto ótimo)")
     plt.ylabel("Cidade")
+
     plt.title(
-        f"Frequência de Cidades em Pontos Ótimos ({data_inicial} → {data_final})\n"
-        "Legenda: Hub Fortaleza = cenário Hub único | HUB CENTRAL = hub central em cenários k>1"
+        f"Frequência de Cidades em Pontos Ótimos ({data_inicial} → {data_final})"
     )
+
     plt.gca().invert_yaxis()
+
     plt.grid(axis="x", linestyle="--", alpha=0.7)
+
     plt.tight_layout()
     plt.savefig(filename_png, bbox_inches="tight")
     plt.close()
 
-    # CSV
+    # =========================
+    # 🔹 CSV
+    # =========================
+
     df.to_csv(filename_csv, index=False, encoding="utf-8-sig")
+
+    print(f"✅ Gráfico salvo: {filename_png}")
+    print(f"✅ CSV salvo: {filename_csv}")
 
     return {
         "status": "ok",
         "data_inicial": data_inicial,
         "data_final": data_final,
-        "grafico": filename_png.replace("./", "/"),
-        "csv": filename_csv.replace("./", "/"),
+        "grafico": filename_png,
+        "csv": filename_csv,
         "dados": df.to_dict(orient="records")
     }

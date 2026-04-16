@@ -300,11 +300,17 @@ class TransferRoutingService:
 
             # ✅ Limpeza dos NaNs antes de gerar rota_completa_json
             # 🧹 Remove coordenadas com NaN antes de converter para JSON
+            # 🧹 Remove coordenadas com NaN
             sequencia_coord = [
                 (lat, lon) for lat, lon in sequencia_coord if pd.notna(lat) and pd.notna(lon)
             ]
 
-            # 🆕 Corrigido: NaN gerava erro de JSON inválido
+            # 🔴 CORREÇÃO CRÍTICA (AQUI)
+            if len(sequencia_coord) < 2:
+                self.logger.warning(f"⚠️ Rota {rota_id} sem geometria válida — descartada")
+                continue
+
+            # ✅ só agora gera JSON
             rota_completa_json = json.dumps([
                 {"lat": float(lat), "lon": float(lon)} for lat, lon in sequencia_coord
             ])
@@ -371,7 +377,7 @@ class TransferRoutingService:
                 "envio_data": envio_data,
                 "tipo_veiculo": tipo_veiculo,
                 "cte_peso": float(peso),
-                "coordenadas_seq": ";".join([f"{lat:.6f},{lon:.6f}" for lat, lon in sequencia_coord]),
+                "coordenadas_seq": rota_completa_json,
                 "distancia_ida_km": dist_real - dist_back,
                 "distancia_total_km": dist_real,
                 "tempo_total_min": tempo_total_completo,
