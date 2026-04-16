@@ -184,7 +184,7 @@ def visualizar_simulacao(
     data_str = str(data)
 
     base_path = f"exports/simulation/{tenant_id}/{data_str}"
-    entregas_path = f"exports/entregas/{tenant_id}/{data_str}"
+    entregas_path = os.path.join(base_path, "tables")
 
     if not os.path.isdir(base_path):
         raise HTTPException(404, "Nenhum artefato encontrado")
@@ -220,13 +220,15 @@ def visualizar_simulacao(
     # ====================
     # 📦 EXCEL
     # ====================
-    if os.path.isdir(entregas_path):
+    tables_dir = os.path.join(base_path, "tables")
+
+    if os.path.isdir(tables_dir):
         excels = sorted([
-            f for f in os.listdir(entregas_path)
+            f for f in os.listdir(tables_dir)
             if f.endswith(".xlsx")
         ])
         if excels:
-            response["excel_entregas_rotas"] = f"/exports/entregas/{tenant_id}/{data_str}/{excels[-1]}"
+            response["excel_entregas_rotas"] = f"/exports/simulation/{tenant_id}/{data_str}/tables/{excels[-1]}"
 
     # ====================
     # 🗺️ MAPAS (POR K)

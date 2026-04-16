@@ -1,16 +1,12 @@
-#hub_router_1.0.1/src/simulation/visualization/plot_simulation_last_mile.py
-
 # hub_router_1.0.1/src/simulation/visualization/plot_simulation_last_mile.py
 
 import os
 import json
 import folium
-import pandas as pd
 import matplotlib.pyplot as plt
 
 from folium.plugins import Fullscreen
-from folium import FeatureGroup, GeoJson, Tooltip, Popup
-import geojson
+from folium import FeatureGroup
 
 from simulation.utils.path_builder import build_output_path
 
@@ -20,7 +16,6 @@ from simulation.infrastructure.simulation_database_reader import (
 )
 
 
-# 🔥 parse robusto
 def parse_coords(coords):
     pontos = []
 
@@ -31,10 +26,8 @@ def parse_coords(coords):
         try:
             if isinstance(p, dict) and "lat" in p and "lon" in p:
                 pontos.append((float(p["lat"]), float(p["lon"])))
-
             elif isinstance(p, (list, tuple)) and len(p) == 2:
                 pontos.append((float(p[0]), float(p[1])))
-
         except Exception:
             continue
 
@@ -51,10 +44,8 @@ def plotar_mapa_last_mile(
     modo_forcar=False,
     logger=None
 ):
-
     envio_data = str(envio_data)
 
-    # 🔥 PADRÃO NOVO
     maps_dir = build_output_path(
         "exports/simulation",
         tenant_id,
@@ -72,7 +63,6 @@ def plotar_mapa_last_mile(
         f"{tenant_id}_mapa_lastmile_{envio_data}_k{k_clusters}.png"
     )
 
-    # 🔥 controle overwrite
     if not modo_forcar and (
         os.path.exists(mapa_path) or os.path.exists(png_path)
     ):
@@ -80,9 +70,6 @@ def plotar_mapa_last_mile(
             logger.info(f"🟡 Mapa já existe: {mapa_path}")
         return
 
-    # =============================
-    # 🔹 dados
-    # =============================
     df_rotas = carregar_rotas_last_mile(
         simulation_db,
         tenant_id,
@@ -103,16 +90,17 @@ def plotar_mapa_last_mile(
         k_clusters
     )
 
-    # 🔥 filtro robusto
     df_rotas_validas = df_rotas[
         df_rotas["rota_id"].notna() &
         (df_rotas["rota_id"] != "") &
         (df_rotas["rota_id"] != "fallback_manual")
     ].copy()
 
-    # =============================
-    # 🔹 centro mapa
-    # =============================
+    if df_rotas_validas.empty:
+        if logger:
+            logger.warning(f"⚠️ Sem rotas last-mile válidas (k={k_clusters})")
+        return
+
     all_lats = (
         list(df_rotas_validas["latitude"].dropna()) +
         list(df_clusters["centro_lat"].dropna())
@@ -132,26 +120,71 @@ def plotar_mapa_last_mile(
     mapa = folium.Map(location=[center_lat, center_lon], zoom_start=10)
     Fullscreen().add_to(mapa)
 
-    # =============================
-    # 🔹 centros
-    # =============================
+    # JS global
+    mapa.get_root().html.add_child(folium.Element("""
+    <script>
+    window.rotasLayers = [];
+
+    function destacarRota(layerSelecionada) {
+        window.rotasLayers.forEach(function(l) {
+            if (l === layerSelecionada) {
+                l.setStyle({
+                    weight: 8,
+                    opacity: 1.0
+                });
+            } else {
+                l.setStyle({
+                    weight: 2,
+                    opacity: 0.20
+                });
+            }
+        });
+    }
+
+    function resetarRotas() {
+        window.rotasLayers.forEach(function(l) {
+            l.setStyle({
+                weight: 4,
+                opacity: 0.80
+            });
+        });
+    }
+    </script>
+
+    <button onclick="resetarRotas()"
+        style="
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 9999;
+            padding: 8px 12px;
+            background: white;
+            border: 1px solid black;
+            cursor: pointer;
+            border-radius: 4px;
+        ">
+        Reset
+    </button>
+    """))
+
+    # centros
     for _, row in df_clusters.iterrows():
-        folium.Marker(
-            location=[row["centro_lat"], row["centro_lon"]],
-            icon=folium.Icon(color="black", icon="home"),
-            popup=f"Cluster {row['cluster']}"
-        ).add_to(mapa)
+        try:
+            folium.Marker(
+                location=[row["centro_lat"], row["centro_lon"]],
+                icon=folium.Icon(color="black", icon="home"),
+                popup=f"Cluster {row['cluster']}"
+            ).add_to(mapa)
+        except Exception:
+            continue
 
     cores = [
         "red", "green", "blue", "orange",
         "purple", "darkred", "cadetblue"
     ]
 
-    # =============================
-    # 🔹 rotas
-    # =============================
+    # rotas
     for idx, rota_id in enumerate(df_rotas_validas["rota_id"].unique()):
-
         cor = cores[idx % len(cores)]
 
         df_rota = df_rotas_validas[
@@ -160,14 +193,14 @@ def plotar_mapa_last_mile(
 
         fg = FeatureGroup(name=f"Rota {rota_id}")
 
-        # 🔹 linha
+        # linha da rota
         try:
             raw_coords = df_rota["coordenadas_seq"].dropna().iloc[0]
 
             if isinstance(raw_coords, str):
                 try:
                     coords = json.loads(raw_coords)
-                except:
+                except Exception:
                     coords = []
             else:
                 coords = raw_coords
@@ -175,23 +208,31 @@ def plotar_mapa_last_mile(
             rota_coords = parse_coords(coords)
 
             if len(rota_coords) > 1:
-                gj = geojson.LineString(
-                    [(lon, lat) for lat, lon in rota_coords]
+                poly = folium.PolyLine(
+                    locations=rota_coords,
+                    color=cor,
+                    weight=4,
+                    opacity=0.8,
+                    tooltip=f"Rota {rota_id}"
                 )
+                poly.add_to(fg)
 
-                GeoJson(
-                    data=gj,
-                    style_function=lambda x, cor=cor: {
-                        "color": cor,
-                        "weight": 4
-                    },
-                    tooltip=Tooltip(f"Rota {rota_id}")
-                ).add_to(fg)
+                poly_name = poly.get_name()
 
-        except Exception:
-            pass
+                mapa.get_root().html.add_child(folium.Element(f"""
+                <script>
+                {poly_name}.on('click', function(e) {{
+                    destacarRota({poly_name});
+                }});
+                window.rotasLayers.push({poly_name});
+                </script>
+                """))
 
-        # 🔹 pontos
+        except Exception as e:
+            if logger:
+                logger.debug(f"⚠️ Erro ao desenhar linha da rota {rota_id}: {e}")
+
+        # pontos
         for _, row in df_rota.iterrows():
             try:
                 lat = float(row["latitude"])
@@ -204,10 +245,10 @@ def plotar_mapa_last_mile(
                     fill=True,
                     fill_color=cor,
                     fill_opacity=0.7,
-                    popup=f"{rota_id} - {row.get('cte_numero','')}"
+                    popup=f"{rota_id} - {row.get('cte_numero', '')}"
                 ).add_to(fg)
 
-            except:
+            except Exception:
                 continue
 
         fg.add_to(mapa)
@@ -215,13 +256,10 @@ def plotar_mapa_last_mile(
     folium.LayerControl().add_to(mapa)
     mapa.save(mapa_path)
 
-    # =============================
-    # 🔹 PNG
-    # =============================
+    # PNG
     plt.figure(figsize=(10, 8))
 
     for idx, rota_id in enumerate(df_rotas_validas["rota_id"].unique()):
-
         cor = cores[idx % len(cores)]
 
         df_rota = df_rotas_validas[
@@ -234,7 +272,7 @@ def plotar_mapa_last_mile(
             if isinstance(raw_coords, str):
                 try:
                     coords = json.loads(raw_coords)
-                except:
+                except Exception:
                     coords = []
             else:
                 coords = raw_coords
@@ -245,14 +283,18 @@ def plotar_mapa_last_mile(
                 lats, lons = zip(*rota_coords)
                 plt.plot(lons, lats, color=cor)
 
-        except:
+        except Exception:
             pass
 
-    plt.scatter(
-        df_clusters["centro_lon"],
-        df_clusters["centro_lat"],
-        c="black"
-    )
+    if not df_clusters.empty:
+        try:
+            plt.scatter(
+                df_clusters["centro_lon"],
+                df_clusters["centro_lat"],
+                c="black"
+            )
+        except Exception:
+            pass
 
     plt.grid(True)
     plt.savefig(png_path, dpi=150)
