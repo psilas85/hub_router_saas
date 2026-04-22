@@ -9,6 +9,7 @@ from pathlib import Path
 from functools import lru_cache
 
 from shapely.geometry import shape, Point
+from shapely.prepared import prep
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -69,6 +70,32 @@ def _load_polygons():
     return polygons
 
 
+@lru_cache(maxsize=None)
+def _get_polygon_context(cidade, uf):
+
+    cidade = _norm(cidade)
+    uf = _norm(uf)
+
+    if not cidade or not uf:
+        return None
+
+    poly = _load_polygons().get((cidade, uf))
+
+    if poly is None:
+        return None
+
+    try:
+        buffered_poly = poly.buffer(BUFFER_GRAUS)
+        return {
+            "poly": poly,
+            "buffered_poly": buffered_poly,
+            "prepared_poly": prep(poly),
+            "prepared_buffered_poly": prep(buffered_poly),
+        }
+    except Exception:
+        return None
+
+
 def ponto_dentro_municipio(lat, lon, cidade, uf):
     print(f"[DEBUG][POLYGON] lat={lat} lon={lon} cidade={cidade} uf={uf}")
 
@@ -93,18 +120,17 @@ def ponto_dentro_municipio(lat, lon, cidade, uf):
         print(f"[DEBUG][POLYGON] NORM_FAIL cidade_orig='{cidade_orig}' uf_orig='{uf_orig}' cidade='{cidade}' uf='{uf}'")
         return None
 
-    polygons = _load_polygons()
-    poly = polygons.get((cidade, uf))
+    polygon_context = _get_polygon_context(cidade, uf)
 
-    if poly is None:
+    if polygon_context is None:
         logger.warning(f"[POLYGON][NOT_FOUND] cidade='{cidade}' uf='{uf}' (orig: '{cidade_orig}'/'{uf_orig}')")
         print(f"[DEBUG][POLYGON] NOT_FOUND cidade='{cidade}' uf='{uf}' (orig: '{cidade_orig}'/'{uf_orig}')")
         return None
 
     ponto = Point(lon, lat)
 
-    inside_strict = poly.contains(ponto)
-    inside_buffer = poly.buffer(BUFFER_GRAUS).contains(ponto)
+    inside_strict = polygon_context["prepared_poly"].contains(ponto)
+    inside_buffer = polygon_context["prepared_buffered_poly"].contains(ponto)
 
     logger.info(f"[POLYGON][CHECK] cidade='{cidade}' uf='{uf}' lat={lat} lon={lon} inside_strict={inside_strict} inside_buffer={inside_buffer} buffer={BUFFER_GRAUS}")
     print(f"[DEBUG][POLYGON] CHECK cidade='{cidade}' uf='{uf}' lat={lat} lon={lon} inside_strict={inside_strict} inside_buffer={inside_buffer} buffer={BUFFER_GRAUS}")

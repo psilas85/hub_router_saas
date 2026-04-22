@@ -8,11 +8,15 @@ from functools import lru_cache
 import unicodedata
 import re
 import logging
+import time
+
+from shapely.geometry import Point
 
 from data_input.config.config import UF_BOUNDS
 from data_input.domain.municipio_polygon_validator import (
     ponto_dentro_municipio,
     _load_polygons,
+    _get_polygon_context,
     _norm
 )
 
@@ -200,54 +204,64 @@ class ValidationService:
         df_invalid = df[df["motivo_invalidade"].notna()].copy()
 
         if not df_valid.empty:
+            municipio_validation_start = time.perf_counter()
 
-            # ⚡ PRÉ-CARREGAR POLÍGONOS UMA ÚNICA VEZ
-            polygons = _load_polygons()
+            df_valid["cidade_norm"] = df_valid["cte_cidade"].apply(_norm)
+            df_valid["uf_norm"] = df_valid["cte_uf"].apply(_norm)
+            df_valid["valido_municipio"] = False
 
-            # Criar função que usa polygons pré-carregados
-            def validar_municipio_otimizado(row):
-                lat = row.get("destino_latitude")
-                lon = row.get("destino_longitude")
-                cidade = row.get("cte_cidade")
-                uf = row.get("cte_uf")
+            grupos_municipio = df_valid.groupby(["cidade_norm", "uf_norm"], sort=False)
 
-                if lat is None or lon is None:
-                    return None
+            for (cidade_norm, uf_norm), group in grupos_municipio:
+                if not cidade_norm or not uf_norm:
+                    continue
 
-                cidade = _norm(cidade)
-                uf = _norm(uf)
+                polygon_context = _get_polygon_context(cidade_norm, uf_norm)
 
-                if not cidade or not uf:
-                    return None
+                if polygon_context is None:
+                    logger.debug(f"[POLYGON][NOT_FOUND] {cidade_norm}-{uf_norm}")
+                    continue
 
-                poly = polygons.get((cidade, uf))
+                prepared_poly = polygon_context["prepared_poly"]
+                prepared_buffered_poly = polygon_context["prepared_buffered_poly"]
 
-                if poly is None:
-                    logger.debug(f"[POLYGON][NOT_FOUND] {cidade}-{uf}")
-                    return None
+                group_valid_indexes = []
 
-                from shapely.geometry import Point
-                BUFFER_GRAUS = float(os.getenv("MUNICIPIO_BUFFER_GRAUS", "0.005"))
+                for row in group.itertuples():
+                    lat = row.destino_latitude
+                    lon = row.destino_longitude
 
-                ponto = Point(lon, lat)
-                inside_strict = poly.contains(ponto)
-                inside_buffer = poly.buffer(BUFFER_GRAUS).contains(ponto)
+                    if lat is None or lon is None or pd.isna(lat) or pd.isna(lon):
+                        continue
 
-                if inside_strict:
-                    return True
-                elif inside_buffer:
-                    logger.info(f"[POLYGON][BUFFER] {cidade}-{uf} lat={lat} lon={lon}")
-                    return True
-                else:
-                    return False
+                    point_lon = float(lon)
+                    point_lat = float(lat)
+                    ponto = Point(point_lon, point_lat)
+                    inside_strict = prepared_poly.contains(ponto)
+                    inside_buffer = prepared_buffered_poly.contains(ponto)
 
-            # Aplicar validação em lote, mas com polygons pré-carregados
-            mask_municipio = df_valid.apply(validar_municipio_otimizado, axis=1)
+                    if inside_strict:
+                        group_valid_indexes.append(row.Index)
+                        continue
 
-            df_valid["valido_municipio"] = mask_municipio
+                    if inside_buffer:
+                        logger.info(
+                            f"[POLYGON][BUFFER] {cidade_norm}-{uf_norm} "
+                            f"lat={lat} lon={lon}"
+                        )
+                        group_valid_indexes.append(row.Index)
+
+                if group_valid_indexes:
+                    df_valid.loc[group_valid_indexes, "valido_municipio"] = True
 
             df_invalid_municipio = df_valid[~df_valid["valido_municipio"]].copy()
             df_valid = df_valid[df_valid["valido_municipio"]].copy()
+
+            logger.info(
+                "[POLYGON][VALIDATION_DONE] "
+                f"validos={len(df_valid)} invalidos={len(df_invalid_municipio)} "
+                f"tempo={time.perf_counter() - municipio_validation_start:.2f}s"
+            )
 
             df_invalid_municipio["motivo_invalidade"] = "fora_municipio"
 

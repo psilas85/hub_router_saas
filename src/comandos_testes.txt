@@ -123,3 +123,5 @@ res = executar_routing_master_job({
     "dias_uteis": 21,
     "frequencia_visita": 3
 })
+
+docker logs hub_router_101-data_input_worker-1 > /home/ubuntu/hub_router_1.0.1/last_data_input_worker_run.log 2>&1
