@@ -540,20 +540,6 @@ def processar_data_input(
             mensagem="Processamento concluído",
         )
 
-        if job:
-            job.meta["progress"] = 100
-            job.meta["step"] = "Concluído"
-            job.meta["total_processados"] = total
-            job.meta["validos"] = total_valid
-            job.meta["invalidos"] = total_invalid
-
-            job.meta["result"] = {
-                "total_processados": total,
-                "validos": total_valid,
-                "invalidos": total_invalid,
-            }
-
-            job.save_meta()
 
         logger.info("✅ Data Input distribuído concluído com sucesso")
 
@@ -583,14 +569,72 @@ def processar_data_input(
 
         logger.info(f"📁 OUTPUT COMPLETO salvo em: {output_path}")
 
+        # -----------------------------------------
+        # 🔥 PREPARA PONTOS PARA MAPA (FRONTEND)
+        # -----------------------------------------
+        df_map = df_valid.copy()
+
+        # garante numérico
+        df_map["destino_latitude"] = pd.to_numeric(df_map["destino_latitude"], errors="coerce")
+        df_map["destino_longitude"] = pd.to_numeric(df_map["destino_longitude"], errors="coerce")
+
+        # filtra válidos
+        df_map = df_map[
+            df_map["destino_latitude"].notna() &
+            df_map["destino_longitude"].notna()
+        ]
+
+        # 🔒 limite de segurança (evita travar front)
+        MAX_PONTOS = 3000
+        if len(df_map) > MAX_PONTOS:
+            df_map = df_map.sample(MAX_PONTOS, random_state=42)
+
+        pontos_mapa = []
+
+        for row in df_map.itertuples():
+            pontos_mapa.append({
+                "lat": float(row.destino_latitude),
+                "lon": float(row.destino_longitude),
+                "cidade": None if pd.isna(getattr(row, "cte_cidade", None)) else getattr(row, "cte_cidade", None),
+                "setor": None if pd.isna(getattr(row, "setor", None)) else getattr(row, "setor", None),
+                "endereco": None if pd.isna(getattr(row, "endereco_completo", None)) else getattr(row, "endereco_completo", None),
+                "cte": None if pd.isna(getattr(row, "cte_numero", None)) else getattr(row, "cte_numero", None),
+            })
+
+        logger.info(f"🗺️ Pontos para mapa preparados: {len(pontos_mapa)}")
+
+        # -----------------------------------------
+        # 🔥 RESULT PAYLOAD FINAL (COM MAPA)
+        # -----------------------------------------
+        result_payload = {
+            "total_processados": total,
+            "validos": total_valid,
+            "invalidos": total_invalid,
+            "pontos_mapa": pontos_mapa,
+        }
+
+        # -----------------------------------------
+        # 🔥 JOB META FINAL (CORRETO)
+        # -----------------------------------------
+        if job:
+            job.meta["progress"] = 100
+            job.meta["step"] = "Concluído"
+            job.meta["total_processados"] = total
+            job.meta["validos"] = total_valid
+            job.meta["invalidos"] = total_invalid
+
+            job.meta["result"] = result_payload
+            job.save_meta()
+
+        # -----------------------------------------
+        # 🔥 RETURN FINAL
+        # -----------------------------------------
         return {
             "status": "done",
             "tenant_id": tenant_id,
             "job_id": job.id,
             "mensagem": "Processamento concluído",
-            "total_processados": total,
-            "validos": total_valid,
-            "invalidos": total_invalid,
+            **result_payload
         }
 
     except Exception as e:

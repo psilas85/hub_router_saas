@@ -241,7 +241,8 @@ def job_status(job_id: str):
         job = Job.fetch(job_id, connection=redis_conn)
 
         if job.is_finished:
-            result = job.result or {}
+            result = job.meta.get("result") or job.result or {}
+
             return {
                 "status": "done",
                 "job_id": job.id,

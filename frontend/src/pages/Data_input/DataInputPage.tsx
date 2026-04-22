@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
+import GeocodeResultMap from "@/components/maps/GeocodeResultMap";
 import {
     Loader2,
     FileSpreadsheet,
@@ -15,6 +16,15 @@ import {
 } from "lucide-react";
 import { useProcessing } from "@/context/ProcessingContext";
 
+type PontoMapa = {
+    lat: number;
+    lon: number;
+    cidade?: string | null;
+    setor?: string | null;
+    endereco?: string | null;
+    cte?: string | null;
+};
+
 type Resultado = {
     status: string;
     tenant_id?: string;
@@ -26,6 +36,10 @@ type Resultado = {
     progress?: number;
     step?: string;
     error?: string;
+
+    // 🔥 AQUI (NÍVEL CORRETO)
+    pontos_mapa?: PontoMapa[];
+
     result?: {
         status?: string;
         tenant_id?: string;
@@ -34,6 +48,8 @@ type Resultado = {
         total_processados?: number;
         validos?: number;
         invalidos?: number;
+        // (opcional manter também aqui se quiser compatibilidade futura)
+        pontos_mapa?: PontoMapa[];
     };
 };
 
@@ -117,6 +133,7 @@ export default function DataInputPage() {
                 total_processados: data.result.total_processados ?? 0,
                 validos: data.result.validos ?? 0,
                 invalidos: data.result.invalidos ?? 0,
+                pontos_mapa: data.result.pontos_mapa ?? data.pontos_mapa ?? [],
                 progress: 100,
                 step: "Concluído",
             };
@@ -130,6 +147,7 @@ export default function DataInputPage() {
             total_processados: data.total_processados ?? 0,
             validos: data.validos ?? 0,
             invalidos: data.invalidos ?? 0,
+            pontos_mapa: data.pontos_mapa ?? [],
             progress: data.progress ?? (data.status === "done" ? 100 : 0),
             step: data.step ?? (data.status === "done" ? "Concluído" : "Em andamento"),
             error: data.error,
@@ -730,6 +748,27 @@ export default function DataInputPage() {
                             </span>
                         </div>
                     </div>
+
+                    {/* 🔥 MAPA */}
+                    {resultado.status === "done" &&
+                        resultado?.pontos_mapa &&
+                        resultado.pontos_mapa.length > 0 && (
+                            <div className="mt-6">
+                                <h4 className="font-semibold text-gray-900 mb-2">
+                                    Mapa de Endereços Geocodificados
+                                </h4>
+
+                                <GeocodeResultMap
+                                    pontos={(resultado.pontos_mapa || []).map(p => ({
+                                        ...p,
+                                        cidade: p.cidade ?? undefined,
+                                        setor: p.setor ?? undefined,
+                                        endereco: p.endereco ?? undefined,
+                                        cte: p.cte ?? undefined,
+                                    }))}
+                                />
+                            </div>
+                        )}
 
                     {resultado.status === "done" && resultado.job_id && (
                         <div className="pt-2">

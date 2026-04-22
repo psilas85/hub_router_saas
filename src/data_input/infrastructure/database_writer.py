@@ -316,7 +316,11 @@ class DatabaseWriter:
 
     def atualizar_data_processamento_lote(self, entregas):
 
-        ctes = [e.cte_numero for e in entregas if e.cte_numero]
+        ctes = [
+            str(e.cte_numero).strip()
+            for e in entregas
+            if e.cte_numero is not None and str(e.cte_numero).strip()
+        ]
 
         if not ctes:
             return
@@ -324,7 +328,7 @@ class DatabaseWriter:
         query = """
         UPDATE entregas
         SET data_processamento = NOW()
-        WHERE cte_numero = ANY(%s)
+        WHERE cte_numero = ANY(%s::text[])
         """
 
         with self.conexao.cursor() as cursor:
