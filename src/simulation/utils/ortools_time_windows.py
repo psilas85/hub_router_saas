@@ -13,6 +13,9 @@ def solve_time_windows_vrp(
     depot_location=None,
     num_vehicles=None,
     route_time_limit_min=None,
+    delivery_debug_rows=None,
+    retry_depth=0,
+    max_retry_depth=1,
 ):
     """
     Retorna rotas como lista de listas de índices DAS ENTREGAS ORIGINAIS.
@@ -306,9 +309,58 @@ def solve_time_windows_vrp(
     print(f"📊 FALTANTES: {len(faltantes)}")
 
     if permitir_rotas_excedentes and faltantes:
-        raise Exception(
-            f"🚨 ERRO GRAVE: {len(faltantes)} entregas não roteirizadas "
-            f"{list(faltantes)[:10]}"
+        faltantes_ordenadas = sorted(faltantes)
+
+        if retry_depth < max_retry_depth:
+            num_vehicles_retry = min(
+                len(locations),
+                int(num_vehicles) + len(faltantes_ordenadas),
+            )
+            if num_vehicles_retry > int(num_vehicles):
+                print(
+                    "⚠️ TW retry: aumentando veículos de "
+                    f"{num_vehicles} para {num_vehicles_retry} "
+                    "antes do fallback"
+                )
+                return solve_time_windows_vrp(
+                    locations=locations,
+                    special_flags=special_flags,
+                    time_windows=time_windows,
+                    service_times=service_times,
+                    params=params,
+                    depot_location=depot_location,
+                    num_vehicles=num_vehicles_retry,
+                    route_time_limit_min=route_time_limit_min,
+                    delivery_debug_rows=delivery_debug_rows,
+                    retry_depth=retry_depth + 1,
+                    max_retry_depth=max_retry_depth,
+                )
+
+        print(
+            "⚠️ TW fallback: adicionando "
+            f"{len(faltantes_ordenadas)} rotas unitárias "
+            f"para entregas não roteirizadas {faltantes_ordenadas[:10]}"
         )
+        if delivery_debug_rows:
+            faltantes_detalhes = []
+            for original_idx in faltantes_ordenadas:
+                if 0 <= original_idx < len(delivery_debug_rows):
+                    detalhe = dict(delivery_debug_rows[original_idx])
+                    detalhe["solver_idx"] = original_idx
+                    node_idx = original_idx + 1
+                    tempo_unitario = (
+                        time_matrix[0][node_idx]
+                        + all_service_times[node_idx]
+                        + time_matrix[node_idx][0]
+                    )
+                    detalhe["tempo_unitario_estimado_min"] = tempo_unitario
+                    detalhe["excede_tempo_limite"] = (
+                        tempo_unitario > int(route_time_limit_min)
+                    )
+                    faltantes_detalhes.append(detalhe)
+            if faltantes_detalhes:
+                print(f"🚨 TW DROPPED DETALHES: {faltantes_detalhes}")
+        for original_idx in faltantes_ordenadas:
+            routes.append([original_idx])
 
     return routes
