@@ -129,8 +129,6 @@ def executar_geracao_relatorio_final(
                 plt.savefig(grafico_custo_path)
                 plt.close()
 
-                print(f"✅ Gráfico salvo: {grafico_custo_path}")
-
         except Exception as e:
             print(f"❌ Erro ao gerar gráfico: {e}")
             grafico_custo_path = None
@@ -147,7 +145,5 @@ def executar_geracao_relatorio_final(
         base_dir=base_dir,
         grafico_custo_path=grafico_custo_path,
     )
-
-    print(f"✅ Relatório gerado: {relatorio_path}")
 
     return relatorio_path

@@ -324,6 +324,14 @@ class LastMileRoutingService:
         )
         tempo_estimado = float(diagnostico['tempo_estimado'])
 
+        if not diagnostico.get('veiculo_compativel', True):
+            self.logger.error(
+                f"❌ Subcluster {branch_label} permanece sem veículo compatível após refinamento. "
+                "Falhando o processamento em vez de aceitar custo zerado. "
+                f"motivo={motivo} | depth={depth}"
+            )
+            return None
+
         if tempo_estimado > float(tempo_maximo):
             self.logger.warning(
                 f"⚠️ Aceitando subcluster {branch_label} com excedente porque permitir_rotas_excedentes=True. "

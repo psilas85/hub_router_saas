@@ -31,6 +31,30 @@ def _json_log(payload):
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
+def _formatar_k_clusters(valor):
+    texto = str(valor).strip()
+    if not texto:
+        return "k=?"
+    if texto.startswith("k="):
+        return texto
+    return f"k={texto}"
+
+
+def _extrair_mensagem_execucao(exc_info, fallback="Erro não identificado"):
+    texto = str(exc_info or "").strip()
+    if not texto:
+        return fallback
+
+    linhas = [linha.strip() for linha in texto.splitlines() if linha.strip()]
+    if not linhas:
+        return fallback
+
+    ultima = linhas[-1]
+    if ":" in ultima:
+        return ultima.split(":", 1)[1].strip() or fallback
+    return ultima
+
+
 def _extrair_motivo_curto_invalidacao(resultado_ignorado):
     payload = resultado_ignorado[2] if len(resultado_ignorado) > 2 else None
     cenarios = (
@@ -67,6 +91,22 @@ def _montar_mensagem_ignoradas(data_inicial, data_final, ignoradas):
     return (
         f"Simulação de {data_inicial} a {data_final} falhou. "
         f"Datas afetadas: {datas_ignoradas}. {motivo_curto}"
+    )
+
+
+def _montar_mensagem_falha_data(envio_data, cenarios_invalidados):
+    if not cenarios_invalidados:
+        return f"Simulação da data {envio_data} falhou sem detalhes de cenário."
+
+    partes = []
+    for cenario in cenarios_invalidados:
+        k_clusters = cenario.get("k_clusters")
+        motivo = cenario.get("motivo") or "motivo não informado"
+        partes.append(f"{_formatar_k_clusters(k_clusters)}: {motivo}")
+
+    return (
+        f"Simulação da data {envio_data} falhou: nenhum cenário viável. "
+        + " | ".join(partes)
     )
 
 
@@ -120,6 +160,14 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
         if isinstance(ponto, dict):
             cenarios_invalidados = ponto.get("cenarios_invalidados", [])
 
+        if isinstance(ponto, dict) and ponto.get("k_clusters") is None and cenarios_invalidados:
+            mensagem_falha = _montar_mensagem_falha_data(
+                envio_data,
+                cenarios_invalidados,
+            )
+            logger.error(f"❌ {mensagem_falha}")
+            raise RuntimeError(mensagem_falha)
+
         if ponto and ponto.get("k_clusters") is not None:
             logger.info(f"✅ Simulação concluída para {envio_data}")
             return (
@@ -142,7 +190,7 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
 
     except Exception as e:
         logger.error(f"❌ Erro inesperado na simulação {envio_data}: {e}")
-        return ("erro", envio_data, str(e))
+        raise
     finally:
         clusterization_db.close()
         simulation_db.close()
@@ -226,9 +274,12 @@ def _aguardar_subjobs_simulacao(
                         results_by_data[str(resultado[1])] = resultado
 
             elif child_job.is_failed:
+                mensagem_child = _extrair_mensagem_execucao(
+                    child_job.exc_info,
+                    fallback=f"Subjob {child_job_id} falhou sem detalhes.",
+                )
                 raise RuntimeError(
-                    f"Subjob da simulation falhou: {child_job_id} | "
-                    f"{child_job.exc_info or 'sem detalhes'}"
+                    f"Subjob da simulation falhou: {child_job_id}. {mensagem_child}"
                 )
 
         if job:
@@ -350,7 +401,7 @@ def processar_simulacao(
                     partes_invalidacoes = []
                     for item in invalidacoes:
                         cenarios = ", ".join(
-                            f"k={cenario['k_clusters']} ({cenario['motivo']})"
+                            f"{_formatar_k_clusters(cenario['k_clusters'])} ({cenario['motivo']})"
                             for cenario in item["cenarios"]
                         )
                         partes_invalidacoes.append(
@@ -435,6 +486,11 @@ def processar_simulacao(
             job.meta["progress"] = 100
             job.save_meta()
 
+        mensagem_curta = _extrair_mensagem_execucao(
+            str(e),
+            fallback="Erro na simulação",
+        )
+
         # ❌ Atualiza histórico como falhado
         conn = conectar_simulation_db()
         try:
@@ -445,7 +501,7 @@ def processar_simulacao(
                 WHERE job_id = %s AND tenant_id = %s
             """, (
                 "failed",
-                f"Erro na simulação: {str(e)}",
+                f"Erro na simulação: {mensagem_curta}",
                 job_id,
                 tenant_id
             ))

@@ -617,6 +617,13 @@ def estimar_viabilidade_subcluster(
                     logger=logger,
                 )
 
+    veiculo_compativel = str(tipo_veiculo).strip().upper() != "DESCONHECIDO"
+    if not veiculo_compativel and logger:
+        logger.warning(
+            f"⛔ Subcluster sem veículo compatível para {peso_total:.2f}kg. "
+            "Tentará novo refinamento antes de aceitar a rota."
+        )
+
     tempo_servico_estimado = 0.0
 
     for _, row in df_subcluster.iterrows():
@@ -653,10 +660,11 @@ def estimar_viabilidade_subcluster(
             tempo_transito_minimo = (2 * max(distancias_ao_centro) / velocidade_media_kmh) * 60
 
     tempo_estimado = tempo_servico_estimado + tempo_transito_minimo
-    viavel = tempo_estimado <= tempo_maximo
+    viavel = veiculo_compativel and tempo_estimado <= tempo_maximo
 
     return {
         "viavel": viavel,
+        "veiculo_compativel": veiculo_compativel,
         "tipo_veiculo": tipo_veiculo,
         "tempo_estimado": tempo_estimado,
         "tempo_servico_estimado": tempo_servico_estimado,
@@ -743,6 +751,12 @@ def subdividir_subcluster_por_veiculo(
             cidades_entregas=cidades_entregas or df_subcluster['cte_cidade'].tolist(),
             logger=logger,
         )
+        if str(tipo_veiculo).strip().upper() == "DESCONHECIDO":
+            logger.error(
+                "❌ Subcluster unitário sem veículo compatível. "
+                "Rota deve falhar em vez de seguir com custo zerado."
+            )
+            return []
         return [(df_subcluster, tipo_veiculo, 0.0, 0.0)]
     k_subveic = 1
     MAX_K_SUBVEIC = 6
@@ -778,6 +792,7 @@ def subdividir_subcluster_por_veiculo(
             )
 
         violou_restricao = False
+        motivo_refino = None
         rotas_do_subcluster = []
 
         for _, df_sub in df_trabalho.groupby('subveic'):
@@ -793,11 +808,19 @@ def subdividir_subcluster_por_veiculo(
 
             if not diagnostico['viavel']:
                 violou_restricao = True
-                logger.info(
-                    f"⛔ Tempo estimado {diagnostico['tempo_estimado']:.2f} min excede limite ({tempo_maximo} min). "
-                    f"servico={diagnostico['tempo_servico_estimado']:.2f} min, "
-                    f"transito_min={diagnostico['tempo_transito_minimo']:.2f} min."
-                )
+                if not diagnostico.get('veiculo_compativel', True):
+                    motivo_refino = 'incompatibilidade de veículo'
+                    logger.info(
+                        f"⛔ Subcluster sem veículo compatível para {df_sub['cte_peso'].sum():.2f}kg. "
+                        f"Tentando nova divisão (k_subveic atual={k_subveic})."
+                    )
+                else:
+                    motivo_refino = 'tempo excedido'
+                    logger.info(
+                        f"⛔ Tempo estimado {diagnostico['tempo_estimado']:.2f} min excede limite ({tempo_maximo} min). "
+                        f"servico={diagnostico['tempo_servico_estimado']:.2f} min, "
+                        f"transito_min={diagnostico['tempo_transito_minimo']:.2f} min."
+                    )
                 break
 
             df_sub = ordenar_entregas_subcluster(df_sub)
@@ -810,7 +833,9 @@ def subdividir_subcluster_por_veiculo(
             break
 
         k_subveic += 1
-        logger.info(f"🔁 Subindo k_subveic para {k_subveic} devido à violação de tempo.")
+        logger.info(
+            f"🔁 Subindo k_subveic para {k_subveic} devido a {motivo_refino or 'restrição de roteirização'}."
+        )
 
     if not subclusters_validos:
         logger.error(

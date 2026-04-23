@@ -625,6 +625,20 @@ def status_simulacao(job_id: str, tenant_id: str = Depends(obter_tenant_id_do_to
     Retorna o status atual de um job de simulação, padronizado no mesmo formato do Data Input.
     """
 
+    def extrair_mensagem_execucao(exc_info, fallback="Erro não identificado"):
+        texto = str(exc_info or "").strip()
+        if not texto:
+            return fallback
+
+        linhas = [linha.strip() for linha in texto.splitlines() if linha.strip()]
+        if not linhas:
+            return fallback
+
+        ultima = linhas[-1]
+        if ":" in ultima:
+            return ultima.split(":", 1)[1].strip() or fallback
+        return ultima
+
     # 1. Primeiro tenta buscar no Redis
     try:
         job = Job.fetch(job_id, connection=redis_conn)
@@ -652,7 +666,7 @@ def status_simulacao(job_id: str, tenant_id: str = Depends(obter_tenant_id_do_to
                 "status": "error",  # ✅ padronizado
                 "job_id": job.get_id(),
                 "tenant_id": tenant_id,
-                "error": str(job.exc_info),
+                "error": extrair_mensagem_execucao(job.exc_info),
             }
         else:
             return {

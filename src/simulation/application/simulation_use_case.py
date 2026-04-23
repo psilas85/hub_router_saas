@@ -184,6 +184,15 @@ class SimulationUseCase:
                 total += 1
         return total
 
+    @staticmethod
+    def _formatar_k_clusters(valor):
+        texto = str(valor).strip()
+        if not texto:
+            return "k=?"
+        if texto.startswith("k="):
+            return texto
+        return f"k={texto}"
+
     def _registrar_cenario_invalidado(self, k, motivo, detalhes=None):
         registro = {
             "k_clusters": k,
@@ -204,7 +213,7 @@ class SimulationUseCase:
                     f" | primeiro_motivo={motivo_detalhe}"
                 )
         self.logger.warning(
-            f"🚫 Cenário k={k} invalidado: {motivo}{sufixo_detalhes}"
+            f"🚫 Cenário {self._formatar_k_clusters(k)} invalidado: {motivo}{sufixo_detalhes}"
         )
 
     @staticmethod
@@ -1347,7 +1356,7 @@ class SimulationUseCase:
         # --------------------------------------------------
         if self.cenarios_invalidados:
             resumo = "; ".join(
-                f"k={item['k_clusters']}: {item['motivo']}"
+                f"{self._formatar_k_clusters(item['k_clusters'])}: {item['motivo']}"
                 for item in self.cenarios_invalidados
             )
             self.logger.warning(
@@ -1614,7 +1623,7 @@ class SimulationUseCase:
 
         if self.cenarios_invalidados:
             resumo = "; ".join(
-                f"k={item['k_clusters']}: {item['motivo']}"
+                f"{self._formatar_k_clusters(item['k_clusters'])}: {item['motivo']}"
                 for item in self.cenarios_invalidados
             )
             self.logger.warning(f"⚠️ Cenários inválidos: {resumo}")
