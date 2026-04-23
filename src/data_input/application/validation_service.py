@@ -86,11 +86,15 @@ class ValidationService:
 
         df["motivo_invalidade"] = None
 
+        def marcar_motivo(mask, motivo):
+            mask_final = mask & df["motivo_invalidade"].isna()
+            df.loc[mask_final, "motivo_invalidade"] = motivo
+
         # ---------------------------
         # 1. CAMPOS OBRIGATÓRIOS
         # ---------------------------
         mask_required = df[self.REQUIRED].isnull().any(axis=1)
-        df.loc[mask_required, "motivo_invalidade"] = "dado_faltante"
+        marcar_motivo(mask_required, "dado_faltante")
 
         # ---------------------------
         # 1.5 DIVERGÊNCIA CIDADE x UF (HARD FAIL) - LOTE VETORIZADO
@@ -115,20 +119,23 @@ class ValidationService:
 
             # Aplicar resultado ao dataframe original
             mask_cidade_uf_invalido = ~df_check["cidade_uf_valido"]
-            df.loc[df[mask_need_check].index[mask_cidade_uf_invalido], "motivo_invalidade"] = "cidade_uf_divergencia"
+            df.loc[
+                df[mask_need_check].index[mask_cidade_uf_invalido],
+                "motivo_invalidade",
+            ] = "cidade_uf_divergencia"
 
         # ---------------------------
         # 2. PESO / VOLUME
 
         mask_peso = df["cte_peso"].fillna(0) <= 0
         # Volume agora realmente opcional: não invalida se vazio ou zero
-        df.loc[mask_peso, "motivo_invalidade"] = "peso_invalido"
+        marcar_motivo(mask_peso, "peso_invalido")
 
         # ---------------------------
         # 3. DUPLICIDADE CTE
         # ---------------------------
         duplicados = df.duplicated(subset=["cte_numero"], keep=False)
-        df.loc[duplicados, "motivo_invalidade"] = "cte_duplicado"
+        marcar_motivo(duplicados, "cte_duplicado")
         # Log detalhado dos duplicados
         if duplicados.any():
             cte_duplicados = df.loc[duplicados, "cte_numero"]
@@ -144,7 +151,7 @@ class ValidationService:
             df["destino_latitude"].isnull() |
             df["destino_longitude"].isnull()
         )
-        df.loc[mask_geo, "motivo_invalidade"] = "geocode_falha"
+        marcar_motivo(mask_geo, "geocode_falha")
 
         if "cte_numero_endereco" not in df.columns:
             df["cte_numero_endereco"] = None
@@ -170,7 +177,7 @@ class ValidationService:
                 | uf_text.eq("")
             )
         )
-        df.loc[mask_numero_invalido, "motivo_invalidade"] = "dado_faltante_endereco"
+        marcar_motivo(mask_numero_invalido, "dado_faltante_endereco")
 
         # ---------------------------
         # 5. UF BOUNDING BOX
@@ -194,7 +201,7 @@ class ValidationService:
             )
 
         mask_uf = ~df.apply(validar_uf, axis=1)
-        df.loc[mask_uf, "motivo_invalidade"] = "fora_uf"
+        marcar_motivo(mask_uf, "fora_uf")
 
         # =========================================================
         # 🔥 6. MUNICÍPIO (VETORIZADO) - PRÉ-CARREGAR POLÍGONOS

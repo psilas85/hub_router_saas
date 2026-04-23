@@ -5,11 +5,21 @@ import logging
 import requests
 import os
 
-from data_input.application.geo_validator import GeoValidator
-from data_input.domain.municipio_polygon_validator import ponto_dentro_municipio
-from data_input.utils.address_normalizer import normalize_address
+from data_input.domain.municipio_polygon_validator import (
+    get_municipio_centroid,
+    ponto_dentro_municipio,
+)
 
 logger = logging.getLogger(__name__)
+
+
+REPROCESS_GOOGLE_SOURCES = {"cache", "nominatim", "nominatim_structured"}
+DIRECT_FALLBACK_SOURCES = {"google", "google_override"}
+
+
+def _validar_por_poligono(lat, lon, cidade, uf):
+    inside = ponto_dentro_municipio(lat, lon, cidade, uf)
+    return "ok" if inside is True else "falha"
 
 
 # =========================================================
@@ -70,11 +80,12 @@ class ReprocessInvalidsService:
 
     def execute(self, df_invalid: pd.DataFrame):
         """
-        Reprocessa com 2 estratégias em cascata:
-        1. Google (full address)
-        2. City-level (só cidade+UF)
+        Reprocessa em cascata:
+        1. cache/nominatim -> Google full address -> polígono
+        2. google ou falha do passo 1 -> centroide do município -> polígono
         """
-        logger.info(f"[REPROCESS_START] total={len(df_invalid) if df_invalid is not None else 0}")
+        total_invalid = len(df_invalid) if df_invalid is not None else 0
+        logger.info(f"[REPROCESS_START] total={total_invalid}")
 
         if df_invalid is None or df_invalid.empty:
             logger.warning("[REPROCESS] DataFrame vazio")
@@ -101,8 +112,16 @@ class ReprocessInvalidsService:
                 continue
 
             source = str(row.get("geocode_source") or "").strip().lower()
-            if source not in ["cache", "nominatim", "nominatim_structured"]:
-                logger.warning(f"[REPROCESS][SKIP_SOURCE] idx={idx} source={source}")
+            run_google_full = source in REPROCESS_GOOGLE_SOURCES
+            fallback_sources = REPROCESS_GOOGLE_SOURCES.union(
+                DIRECT_FALLBACK_SOURCES
+            )
+            run_centroid_fallback = source in fallback_sources
+
+            if not run_centroid_fallback:
+                logger.warning(
+                    f"[REPROCESS][SKIP_SOURCE] idx={idx} source={source}"
+                )
                 reprocessados_invalidos.append(row)
                 continue
 
@@ -116,35 +135,53 @@ class ReprocessInvalidsService:
                 continue
 
             # ⭐ ESTRATÉGIA 1: Google full address
+            if run_google_full:
+                logger.info(
+                    f"[FALLBACK][ESTRATEGIA_1] google_full idx={idx} "
+                    f"endereco='{endereco}'"
+                )
+                lat_g, lon_g = geocode_google_direto(endereco)
+                logger.info(
+                    f"[FALLBACK][GOOGLE_RESPONSE] idx={idx} "
+                    f"lat={lat_g} lon={lon_g}"
+                )
 
-            logger.info(f"[FALLBACK][ESTRATEGIA_1] google_full idx={idx} endereco='{endereco}'")
-            lat_g, lon_g = geocode_google_direto(endereco)
-            logger.info(f"[FALLBACK][GOOGLE_RESPONSE] idx={idx} lat={lat_g} lon={lon_g}")
+                if lat_g is not None and lon_g is not None:
+                    status = _validar_por_poligono(lat_g, lon_g, cidade, uf)
+                    logger.info(
+                        f"[FALLBACK][GOOGLE_VALIDATION] idx={idx} "
+                        f"status={status}"
+                    )
+                    if status == "ok":
+                        row["destino_latitude"] = lat_g
+                        row["destino_longitude"] = lon_g
+                        row["geocode_source"] = "google_override"
+                        row["motivo_invalidade"] = None
+                        row["valido_municipio"] = True
+                        logger.info(f"[FALLBACK][SUCCESS_1] idx={idx}")
+                        reprocessados_validos.append(row)
+                        continue
+                    logger.warning(
+                        f"[FALLBACK][POLY_FAIL_1] idx={idx} status={status}"
+                    )
 
-            if lat_g is not None and lon_g is not None:
-                status = GeoValidator.validar_ponto(lat_g, lon_g, cidade, uf)
-                logger.info(f"[FALLBACK][GOOGLE_VALIDATION] idx={idx} status={status}")
-                if status == "ok":
-                    row["destino_latitude"] = lat_g
-                    row["destino_longitude"] = lon_g
-                    row["geocode_source"] = "google_override"
-                    row["motivo_invalidade"] = None
-                    row["valido_municipio"] = True
-                    logger.info(f"[FALLBACK][SUCCESS_1] idx={idx}")
-                    reprocessados_validos.append(row)
-                    continue
-                logger.warning(f"[FALLBACK][POLY_FAIL_1] idx={idx} status={status}")
-
-            # ⭐ ESTRATÉGIA 2: City-level (só cidade+UF)
-
-            endereco_cidade_uf = f"{cidade}, {uf}, Brasil"
-            logger.info(f"[FALLBACK][ESTRATEGIA_2] city_uf idx={idx} endereco='{endereco_cidade_uf}'")
-            lat_c, lon_c = geocode_google_direto(endereco_cidade_uf)
-            logger.info(f"[FALLBACK][CITY_UF_RESPONSE] idx={idx} lat={lat_c} lon={lon_c}")
+            # ⭐ ESTRATÉGIA 2: centroide do município
+            logger.info(
+                f"[FALLBACK][ESTRATEGIA_2] municipio_centroid idx={idx} "
+                f"cidade='{cidade}' uf='{uf}'"
+            )
+            lat_c, lon_c = get_municipio_centroid(cidade, uf)
+            logger.info(
+                f"[FALLBACK][CITY_UF_RESPONSE] idx={idx} "
+                f"lat={lat_c} lon={lon_c}"
+            )
 
             if lat_c is not None and lon_c is not None:
-                status = GeoValidator.validar_ponto(lat_c, lon_c, cidade, uf)
-                logger.info(f"[FALLBACK][CITY_UF_VALIDATION] idx={idx} status={status}")
+                status = _validar_por_poligono(lat_c, lon_c, cidade, uf)
+                logger.info(
+                    f"[FALLBACK][CITY_UF_VALIDATION] idx={idx} "
+                    f"status={status}"
+                )
                 if status == "ok":
                     row["destino_latitude"] = lat_c
                     row["destino_longitude"] = lon_c
@@ -155,17 +192,22 @@ class ReprocessInvalidsService:
                     logger.info(f"[FALLBACK][SUCCESS_2] idx={idx}")
                     reprocessados_validos.append(row)
                     continue
-                logger.warning(f"[FALLBACK][POLY_FAIL_2] idx={idx} status={status}")
+                logger.warning(
+                    f"[FALLBACK][POLY_FAIL_2] idx={idx} status={status}"
+                )
 
-            logger.error(f"[FALLBACK][FAILED_ALL] idx={idx} cidade={cidade} uf={uf}")
+            logger.error(
+                f"[FALLBACK][FAILED_ALL] idx={idx} cidade={cidade} uf={uf}"
+            )
             reprocessados_invalidos.append(row)
 
         df_recuperados = pd.DataFrame(reprocessados_validos)
         df_invalid_final = pd.DataFrame(reprocessados_invalidos)
 
+        recovered_pct = len(df_recuperados) / max(len(df_invalid), 1) * 100
         logger.info(
             f"[REPROCESS_END] "
-            f"recuperados={len(df_recuperados)} ({len(df_recuperados)/max(len(df_invalid),1)*100:.1f}%) | "
+            f"recuperados={len(df_recuperados)} ({recovered_pct:.1f}%) | "
             f"mantidos_invalidos={len(df_invalid_final)}"
         )
 

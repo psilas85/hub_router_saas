@@ -148,3 +148,29 @@ def ponto_dentro_municipio(lat, lon, cidade, uf):
     logger.warning(f"[POLYGON][OUTSIDE] cidade='{cidade}' uf='{uf}' lat={lat} lon={lon}")
     print(f"[DEBUG][POLYGON] OUTSIDE cidade='{cidade}' uf='{uf}' lat={lat} lon={lon}")
     return False
+
+
+def get_municipio_centroid(cidade, uf):
+    cidade = _norm(cidade)
+    uf = _norm(uf)
+
+    if not cidade or not uf:
+        return None, None
+
+    polygon_context = _get_polygon_context(cidade, uf)
+
+    if polygon_context is None:
+        logger.warning(
+            f"[POLYGON][CENTROID_NOT_FOUND] cidade='{cidade}' uf='{uf}'"
+        )
+        return None, None
+
+    try:
+        centroid = polygon_context["poly"].centroid
+        return float(centroid.y), float(centroid.x)
+    except Exception as exc:
+        logger.warning(
+            f"[POLYGON][CENTROID_ERROR] cidade='{cidade}' uf='{uf}' "
+            f"err={exc}"
+        )
+        return None, None
