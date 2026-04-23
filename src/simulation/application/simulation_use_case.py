@@ -412,7 +412,13 @@ class SimulationUseCase:
         k_persistencia,
     ):
         resultados_clusters = []
-        max_workers = min(8, os.cpu_count() or 4)
+        max_workers = max(
+            1,
+            min(
+                int(os.getenv("SIMULATION_INTERNAL_MAX_WORKERS", "2")),
+                os.cpu_count() or 1,
+            ),
+        )
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(

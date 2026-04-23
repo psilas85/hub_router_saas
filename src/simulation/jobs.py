@@ -1,12 +1,13 @@
 #hub_router_1.0.1/src/simulation/jobs.py
 
-import os
 import uuid
 import traceback
 import json
+import time
 from datetime import datetime, timedelta
-from rq import get_current_job
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from redis import Redis
+from rq import Queue, get_current_job
+from rq.job import Job
 
 from simulation.application.simulation_use_case import SimulationUseCase
 from simulation.infrastructure.simulation_database_connection import (
@@ -15,7 +16,14 @@ from simulation.infrastructure.simulation_database_connection import (
 )
 from simulation.logs.simulation_logger import configurar_logger
 
+
+
+
 from simulation.domain.entities import SimulationParams
+
+
+SIMULATION_JOBS_QUEUE = "simulation_jobs"
+SIMULATION_DATE_JOBS_QUEUE = "simulation_date_jobs"
 
 
 
@@ -25,7 +33,11 @@ def _json_log(payload):
 
 def _extrair_motivo_curto_invalidacao(resultado_ignorado):
     payload = resultado_ignorado[2] if len(resultado_ignorado) > 2 else None
-    cenarios = (payload or {}).get("cenarios_invalidados", []) if isinstance(payload, dict) else []
+    cenarios = (
+        (payload or {}).get("cenarios_invalidados", [])
+        if isinstance(payload, dict)
+        else []
+    )
 
     for cenario in cenarios:
         motivo = str(cenario.get("motivo") or "").lower()
@@ -70,7 +82,10 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
     try:
         logger.info(f"🚀 Iniciando simulação para {envio_data}")
         logger.info(
-            "[simulation.worker] envio_data=%s tenant_id=%s parametros_recebidos=%s",
+            (
+                "[simulation.worker] envio_data=%s tenant_id=%s "
+                "parametros_recebidos=%s"
+            ),
             envio_data,
             tenant_id,
             _json_log(params),
@@ -133,6 +148,111 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
         simulation_db.close()
 
 
+def _enfileirar_subjobs_simulacao(
+    job_id,
+    lista_datas,
+    tenant_id,
+    hub_id,
+    params,
+    modo_forcar,
+):
+    redis_conn = Redis(host="redis", port=6379)
+    queue = Queue(SIMULATION_DATE_JOBS_QUEUE, connection=redis_conn)
+    timeout_subjob = 7200 if modo_forcar else 3600
+    subjobs = []
+
+    for envio_data in lista_datas:
+        subjob = queue.enqueue(
+            _processar_data_envio,
+            str(envio_data),
+            tenant_id,
+            hub_id,
+            params,
+            modo_forcar,
+            job_id=f"{job_id}:{envio_data}",
+            job_timeout=timeout_subjob,
+            result_ttl=86400,
+            failure_ttl=86400,
+        )
+        subjobs.append(subjob.id)
+
+    return redis_conn, subjobs
+
+
+def _aguardar_subjobs_simulacao(
+    job,
+    redis_conn,
+    subjobs,
+    lista_datas,
+    modo_forcar,
+):
+    timeout_segundos = max(
+        7200,
+        len(subjobs) * (2400 if modo_forcar else 1200),
+    )
+    start_time = time.time()
+    processed_jobs = set()
+    results_by_data = {}
+    last_status = {}
+
+    while True:
+        if time.time() - start_time > timeout_segundos:
+            raise TimeoutError(
+                "Timeout aguardando subjobs da simulation | "
+                f"timeout={timeout_segundos}s"
+            )
+
+        finished = 0
+        jobs = Job.fetch_many(subjobs, connection=redis_conn)
+
+        for child_job in jobs:
+            if child_job is None:
+                continue
+
+            child_job_id = child_job.id
+            status = child_job.get_status(refresh=True)
+
+            if last_status.get(child_job_id) != status:
+                last_status[child_job_id] = status
+
+            if child_job.is_finished:
+                finished += 1
+
+                if child_job_id not in processed_jobs:
+                    processed_jobs.add(child_job_id)
+                    resultado = child_job.result
+
+                    if isinstance(resultado, tuple) and len(resultado) >= 2:
+                        results_by_data[str(resultado[1])] = resultado
+
+            elif child_job.is_failed:
+                raise RuntimeError(
+                    f"Subjob da simulation falhou: {child_job_id} | "
+                    f"{child_job.exc_info or 'sem detalhes'}"
+                )
+
+        if job:
+            job.meta["datas_processadas"] = sorted(results_by_data.keys())
+            job.meta["step"] = (
+                f"Aguardando subjobs ({finished}/{len(subjobs)})"
+            )
+            job.meta["progress"] = (
+                int((finished / len(subjobs)) * 100) if subjobs else 100
+            )
+            job.save_meta()
+
+        if finished == len(subjobs):
+            break
+
+        time.sleep(0.5)
+
+    return [
+        results_by_data[str(envio_data)]
+        for envio_data in lista_datas
+        if str(envio_data) in results_by_data
+    ]
+
+
 def processar_simulacao(
     job_id: str,
     tenant_id: str,
@@ -143,8 +263,7 @@ def processar_simulacao(
     modo_forcar: bool = False,
 ):
     """
-    Executa simulação completa para um intervalo de datas (executado no worker RQ).
-    Usa ProcessPoolExecutor para rodar múltiplas datas em paralelo.
+    Executa a simulação como job coordenador e distribui uma data por subjob.
     """
 
     job = get_current_job()
@@ -156,27 +275,33 @@ def processar_simulacao(
 
     data_inicial_dt = datetime.strptime(data_inicial, "%Y-%m-%d").date()
     data_final_dt = datetime.strptime(data_final, "%Y-%m-%d").date()
-    lista_datas = [data_inicial_dt + timedelta(days=i) for i in range((data_final_dt - data_inicial_dt).days + 1)]
+    lista_datas = [
+        data_inicial_dt + timedelta(days=i)
+        for i in range((data_final_dt - data_inicial_dt).days + 1)
+    ]
 
-    results = []
     try:
+        redis_conn, subjobs = _enfileirar_subjobs_simulacao(
+            job_id=job_id,
+            lista_datas=lista_datas,
+            tenant_id=tenant_id,
+            hub_id=hub_id,
+            params=params,
+            modo_forcar=modo_forcar,
+        )
 
+        if job:
+            job.meta["step"] = f"Subjobs enfileirados ({len(subjobs)})"
+            job.meta["subjobs"] = subjobs
+            job.save_meta()
 
-        max_workers = min(4, os.cpu_count() or 2)
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(_processar_data_envio, str(d), tenant_id, hub_id, params, modo_forcar): d
-                for d in lista_datas
-            }
-            for idx, future in enumerate(as_completed(futures), 1):
-                result = future.result()
-                results.append(result)
-
-                if job:
-                    job.meta["datas_processadas"].append(str(result[1]))
-                    job.meta["step"] = f"Processando {result[1]}"
-                    job.meta["progress"] = int((idx / len(lista_datas)) * 100)
-                    job.save_meta()
+        results = _aguardar_subjobs_simulacao(
+            job=job,
+            redis_conn=redis_conn,
+            subjobs=subjobs,
+            lista_datas=lista_datas,
+            modo_forcar=modo_forcar,
+        )
 
         erros = [resultado for resultado in results if resultado[0] == "erro"]
         ignoradas = [resultado for resultado in results if resultado[0] == "ignorada"]

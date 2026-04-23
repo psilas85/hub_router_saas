@@ -133,7 +133,7 @@ services:
       context: .
       dockerfile: src/simulation/Dockerfile.simulation
     image: psilas85/hub_router-simulation:latest
-    command: rq worker -u redis://redis:6379 simulation
+    command: rq worker -u redis://redis:6379 simulation_jobs
 
     volumes:
       - ./src:/app/src
@@ -150,6 +150,34 @@ services:
     restart: always
 
     # 🔥 ADICIONA ISSO
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  simulation_date_worker:
+    build:
+      context: .
+      dockerfile: src/simulation/Dockerfile.simulation
+    image: psilas85/hub_router-simulation:latest
+    command: rq worker -u redis://redis:6379 simulation_date_jobs
+
+    volumes:
+      - ./src:/app/src
+      - ./exports:/app/exports
+    env_file:
+      - ./src/simulation/.env
+    environment:
+      - PYTHONPATH=/app/src
+      - SIMULATION_INTERNAL_MAX_WORKERS=1
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - hub_router_network
+    restart: always
+
     logging:
       driver: "json-file"
       options:

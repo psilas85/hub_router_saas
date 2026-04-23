@@ -1,7 +1,7 @@
 #hub_router_1.0.1/src/simulation/api/routes.py
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from datetime import date, timedelta
+from datetime import date
 import logging
 import uuid
 import os
@@ -11,10 +11,9 @@ from typing import List
 from rq import Queue
 from redis import Redis
 from rq.job import Job
-from rq import get_current_job
 import json
 
-from simulation.jobs import processar_simulacao
+from simulation.jobs import SIMULATION_JOBS_QUEUE, processar_simulacao
 from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
 from simulation.infrastructure.simulation_database_reader import carregar_historico_simulation
 from authentication.utils.dependencies import obter_tenant_id_do_token
@@ -38,7 +37,7 @@ router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 # 🔌 Conexão com Redis para fila de jobs
 redis_conn = Redis(host="redis", port=6379, decode_responses=True)
-q = Queue("simulation", connection=redis_conn)
+q = Queue(SIMULATION_JOBS_QUEUE, connection=redis_conn)
 
 logger = logging.getLogger("simulation_service")
 logger.setLevel(logging.INFO)
@@ -61,6 +60,12 @@ def _parse_optional_float(value: str | float | None, field_name: str) -> float |
         return float(value)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"{field_name} deve ser numérico.") from exc
+
+
+def _calcular_timeout_simulacao(data_inicial: date, data_final: date, modo_forcar: bool) -> int:
+    total_dias = (data_final - data_inicial).days + 1
+    timeout_por_data = 7200 if modo_forcar else 3600
+    return max(timeout_por_data, total_dias * timeout_por_data)
 
 # ================================
 # MODELOS Pydantic
@@ -127,9 +132,13 @@ def executar_simulacao(
         _serializar_log(params.dict()),
     )
 
-    timeout = 7200 if params.modo_forcar else 3600
+    timeout = _calcular_timeout_simulacao(
+        params.data_inicial,
+        params.data_final,
+        params.modo_forcar,
+    )
 
-    job = q.enqueue(
+    q.enqueue(
         processar_simulacao,
         job_id,
         tenant_id,
