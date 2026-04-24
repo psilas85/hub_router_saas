@@ -70,8 +70,8 @@ class SimulationParams(BaseModel):
 
     modo_simulacao: ModoSimulacao = "padrao"
 
-    algoritmo_clusterizacao: Literal["kmeans", "balanced_kmeans"] = "kmeans"
-    algoritmo_roteirizacao: Literal["heuristico", "time_windows"] = "heuristico"
+    algoritmo_clusterizacao: Optional[Literal["kmeans", "balanced_kmeans"]] = None
+    algoritmo_roteirizacao: Optional[Literal["heuristico", "time_windows"]] = None
     modo_forcar: bool = False
 
     # ==========================================================

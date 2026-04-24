@@ -248,8 +248,6 @@ export default function SimulationPage() {
     // 🔧 Estado centralizado
     const [params, setParams] = useState<ParamState>({
         modo_simulacao: "padrao",
-        algoritmo_clusterizacao: "kmeans",
-        algoritmo_roteirizacao: "heuristico",
 
         min_entregas_por_cluster_alvo: 10,
         max_entregas_por_cluster_alvo: 100,
@@ -317,6 +315,25 @@ export default function SimulationPage() {
         setParams((prev) => ({ ...prev, [key]: value }));
     };
 
+    const handleModoSimulacaoChange = (
+        modo: NonNullable<ParamState["modo_simulacao"]>
+    ) => {
+        setParams((prev) => {
+            const nextParams: ParamState = {
+                ...prev,
+                modo_simulacao: modo,
+            };
+
+            if (modo === "time_windows") {
+                nextParams.tempo_especial_min = prev.tempo_especial_min ?? 180;
+                nextParams.tempo_especial_max = prev.tempo_especial_max ?? 300;
+                nextParams.max_especiais_por_rota = prev.max_especiais_por_rota ?? 1;
+            }
+
+            return nextParams;
+        });
+    };
+
     const updateNumericParam = (key: keyof ParamState, rawValue: string) => {
         const trimmed = rawValue.trim();
 
@@ -353,12 +370,16 @@ export default function SimulationPage() {
         setLoading(true);
 
         try {
+            const modoSelecionado = params.modo_simulacao ?? "padrao";
             const simParams: any = {
                 data_inicial: dataInicial,
                 hub_id: hubId,
                 ...params,
                 data_final: dataFinal && dataFinal.trim() !== "" ? dataFinal : dataInicial,
             };
+
+            delete simParams.algoritmo_clusterizacao;
+            delete simParams.algoritmo_roteirizacao;
 
             Object.keys(simParams).forEach((key) => {
                 if (simParams[key] === undefined) {
@@ -368,12 +389,10 @@ export default function SimulationPage() {
 
             console.log("🚀 PAYLOAD FINAL:", simParams);
 
-            if (params.algoritmo_roteirizacao !== "time_windows") {
+            if (modoSelecionado !== "time_windows") {
                 delete simParams.tempo_especial_min;
                 delete simParams.tempo_especial_max;
                 delete simParams.max_especiais_por_rota;
-            } else {
-                simParams.algoritmo_clusterizacao = "balanced_kmeans";
             }
 
             const response = await runSimulation(simParams);
@@ -645,6 +664,7 @@ export default function SimulationPage() {
     const [frotaCsvLastmile, setFrotaCsvLastmile] = useState<string | null>(null);
     const [frotaCsvTransfer, setFrotaCsvTransfer] = useState<string | null>(null);
     const [loadingFrota, setLoadingFrota] = useState(false);
+    const modoSelecionado = params.modo_simulacao ?? "padrao";
 
     const periodoFrotaDefault = useMemo(() => {
         const end =
@@ -763,7 +783,9 @@ export default function SimulationPage() {
                                     <select
                                         value={params.modo_simulacao}
                                         onChange={(e) =>
-                                            updateParam("modo_simulacao", e.target.value as any)
+                                            handleModoSimulacaoChange(
+                                                e.target.value as NonNullable<ParamState["modo_simulacao"]>
+                                            )
                                         }
                                         className="input"
                                     >
@@ -771,20 +793,9 @@ export default function SimulationPage() {
                                         <option value="balanceado">Balanceado</option>
                                         <option value="time_windows">Time Windows</option>
                                     </select>
-                                </div>
-
-                                <div>
-                                    <FieldLabel title="Algoritmo de clusterização" />
-                                    <select
-                                        value={params.algoritmo_clusterizacao}
-                                        onChange={e =>
-                                            updateParam("algoritmo_clusterizacao", e.target.value as "kmeans" | "balanced_kmeans")
-                                        }
-                                        className="input"
-                                    >
-                                        <option value="kmeans">K-Means</option>
-                                        <option value="balanced_kmeans">Balanced K-Means</option>
-                                    </select>
+                                    <p className="mt-2 text-xs text-slate-500">
+                                        O modo define automaticamente a clusterização e a roteirização last-mile.
+                                    </p>
                                 </div>
 
                                 <div>
@@ -807,36 +818,9 @@ export default function SimulationPage() {
                                     />
                                 </div>
 
-                                <div>
-                                    <FieldLabel title="Algoritmo de roteirização" />
-                                    <select
-                                        value={params.algoritmo_roteirizacao}
-                                        onChange={(e) => {
-                                            const value = e.target.value as "heuristico" | "time_windows";
-
-                                            updateParam("algoritmo_roteirizacao", value);
-
-                                            if (value === "time_windows") {
-                                                // 🔥 sincroniza modo
-                                                updateParam("modo_simulacao", "time_windows");
-
-                                                // 🔥 defaults TW
-                                                updateParam("tempo_especial_min", 180);
-                                                updateParam("tempo_especial_max", 300);
-                                                updateParam("max_especiais_por_rota", 1);
-
-                                                toast.success("Time Windows ativado (OR-Tools)");
-                                            }
-                                        }}
-                                        className="input"
-                                    >
-                                        <option value="heuristico">Heurístico</option>
-                                        <option value="time_windows">Time Windows</option>
-                                    </select>
-                                </div>
                             </Accordion>
 
-                            {params.algoritmo_roteirizacao === "time_windows" && (
+                            {modoSelecionado === "time_windows" && (
                                 <Accordion title="Time Windows" subtitle="restrições especiais">
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                         <div>

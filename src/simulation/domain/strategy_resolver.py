@@ -29,10 +29,10 @@ def resolver_estrategia(params: SimulationParams) -> EstrategiaResolvida:
         raise ValueError(f"Modo inválido: {params.modo_simulacao}")
 
     # 🔥 override (se vier do front)
-    if params.algoritmo_clusterizacao:
+    if params.algoritmo_clusterizacao is not None:
         cluster = params.algoritmo_clusterizacao
 
-    if params.algoritmo_roteirizacao:
+    if params.algoritmo_roteirizacao is not None:
         routing = params.algoritmo_roteirizacao
 
     # 🔥 validação crítica

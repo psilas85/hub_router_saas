@@ -722,18 +722,6 @@ class SimulationUseCase:
             time_windows = [(0, tempo_max)] * len(locations)
 
         special_flags = df["is_especial"].tolist()
-        delivery_debug_rows = df[
-            [
-                "cte_numero",
-                "cluster",
-                "is_especial",
-                "cte_tempo_atendimento_min",
-                "cte_peso",
-                "cte_volumes",
-                "latitude",
-                "longitude",
-            ]
-        ].to_dict(orient="records")
 
         self.logger.info(
             f"[TW INPUT] locations={len(locations)} | "
@@ -752,7 +740,6 @@ class SimulationUseCase:
             depot_location=depot_location,
             num_vehicles=num_vehicles,
             route_time_limit_min=tempo_max,
-            delivery_debug_rows=delivery_debug_rows,
         )
 
         # 🔥 PROTEÇÃO HARD CONTRA DROP
@@ -763,36 +750,6 @@ class SimulationUseCase:
             self.logger.error(
                 f"🚨 TW DROPPED NODE | input={total_input} vs output={total_output}"
             )
-
-            atendidos_idx = {
-                idx
-                for route in routes
-                for idx in route
-                if 0 <= idx < len(df)
-            }
-            faltantes_idx = sorted(set(range(total_input)) - atendidos_idx)
-
-            if faltantes_idx:
-                df_faltantes = (
-                    df.iloc[faltantes_idx][
-                        [
-                            "cte_numero",
-                            "cluster",
-                            "is_especial",
-                            "cte_tempo_atendimento_min",
-                            "cte_peso",
-                            "cte_volumes",
-                            "latitude",
-                            "longitude",
-                        ]
-                    ]
-                    .copy()
-                )
-                df_faltantes.insert(0, "solver_idx", faltantes_idx)
-                self.logger.error(
-                    "🚨 TW DROPPED DETALHES: %s",
-                    df_faltantes.to_dict(orient="records"),
-                )
 
             if not self.permitir_rotas_excedentes:
                 raise Exception("TW DROPPED NODE — solução inválida")

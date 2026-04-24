@@ -557,7 +557,14 @@ class SimulationService:
                 "tipo": "k_numero",
                 "identificador": f"k={k}",
                 "k_clusters": k,
-                "algoritmo": getattr(params, "algoritmo_clusterizacao", "kmeans"),
+                "algoritmo": (
+                    getattr(params, "algoritmo_clusterizacao", None)
+                    or (
+                        "balanced_kmeans"
+                        if getattr(params, "modo_simulacao", "padrao") in {"balanceado", "time_windows"}
+                        else "kmeans"
+                    )
+                ),
             }
             for k in lista_k
         ]

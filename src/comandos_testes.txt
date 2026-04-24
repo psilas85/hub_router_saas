@@ -125,3 +125,6 @@ res = executar_routing_master_job({
 })
 
 docker logs hub_router_101-data_input_worker-1 > /home/ubuntu/hub_router_1.0.1/last_data_input_worker_run.log 2>&1
+docker logs --since 10m hub_router_101-simulation_worker-1 > /home/ubuntu/hub_router_1.0.1/simulation_worker-1_last10m.log 2>&1
+docker logs --since 10m hub_router_101-simulation_date_worker-1 > /home/ubuntu/hub_router_1.0.1/simulation_date_worker-1_last10m.log 2>&1
+docker logs --since 10m hub_router_101-simulation_date_worker-2 > /home/ubuntu/hub_router_1.0.1/simulation_date_worker-2_last10m.log 2>&1
