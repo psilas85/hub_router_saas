@@ -33,6 +33,12 @@ api.interceptors.response.use(
         const status = err.response?.status;
         const requestUrl = err.config?.url ?? "";
         const isSimulationStatusPolling = requestUrl.includes("/simulation/status/");
+        const isSimulationAnalyticsEmptyState = [
+            "/simulation/distribuicao_k",
+            "/simulation/frequencia_cidades",
+            "/simulation/k_fixo",
+            "/simulation/frota_k_fixo",
+        ].some((path) => requestUrl.includes(path));
 
         if (status === 401) {
             console.warn("⚠️ 401 recebido:", err.config?.url);
@@ -46,7 +52,7 @@ api.interceptors.response.use(
             alert("🚫 Você não tem permissão.");
 
         } else if (status === 404) {
-            if (!isSimulationStatusPolling) {
+            if (!isSimulationStatusPolling && !isSimulationAnalyticsEmptyState) {
                 alert("❌ Recurso não encontrado.");
             }
 

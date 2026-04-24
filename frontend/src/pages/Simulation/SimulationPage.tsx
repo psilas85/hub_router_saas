@@ -69,6 +69,39 @@ const resolveUrl = (path: string) => {
     return `${import.meta.env.VITE_API_URL}${path.startsWith("/") ? path : `/${path}`}`;
 };
 
+function extractApiErrorMessage(err: any, fallback: string) {
+    const detail = err?.response?.data?.detail ?? err?.response?.data ?? err?.message;
+
+    if (typeof detail === "string") {
+        const nestedDetailMatch = detail.match(/["']detail["']\s*:\s*["']([^"']+)["']/i);
+        if (nestedDetailMatch?.[1]) {
+            return nestedDetailMatch[1];
+        }
+
+        const noDataMatch = detail.match(/Nenhum[^.]+\./i);
+        if (noDataMatch?.[0]) {
+            return noDataMatch[0];
+        }
+
+        return detail;
+    }
+
+    if (detail && typeof detail === "object") {
+        if (typeof detail.detail === "string") {
+            return detail.detail;
+        }
+        return fallback;
+    }
+
+    return fallback;
+}
+
+function isNoDataResponse(err: any) {
+    const status = err?.response?.status;
+    const message = extractApiErrorMessage(err, "");
+    return status === 404 && /nenhum|não há dados/i.test(message);
+}
+
 type ParamState = Omit<
     RunSimulationParams,
     "data_inicial" | "data_final" | "hub_id"
@@ -533,11 +566,17 @@ export default function SimulationPage() {
             });
             setDistKData(result.dados || []);
             setDistKGraficoUrl(result.grafico ? resolveUrl(result.grafico) : null);
+            setDistKEmptyMessage(null);
             toast.success("Distribuição de k carregada!");
         } catch (err: any) {
-            toast.error(
-                err?.response?.data?.detail || "Erro ao carregar distribuição de k."
-            );
+            setDistKData([]);
+            setDistKGraficoUrl(null);
+            if (isNoDataResponse(err)) {
+                setDistKEmptyMessage("Nenhum cenário vencedor foi encontrado para o período selecionado.");
+            } else {
+                setDistKEmptyMessage(null);
+                toast.error(extractApiErrorMessage(err, "Erro ao carregar distribuição de k."));
+            }
         } finally {
             setLoadingDistK(false);
         }
@@ -548,11 +587,17 @@ export default function SimulationPage() {
     // =========================
     const [freqCidadesData, setFreqCidadesData] =
         useState<FrequenciaCidadesResponse["dados"]>([]);
+    const [freqCidadesContexto, setFreqCidadesContexto] =
+        useState<FrequenciaCidadesResponse["contexto"] | null>(null);
     const [freqCidadesGraficoUrl, setFreqCidadesGraficoUrl] = useState<string | null>(
         null
     );
     const [freqCidadesCsvUrl, setFreqCidadesCsvUrl] = useState<string | null>(null); // 👈 NOVO
     const [loadingFreqCidades, setLoadingFreqCidades] = useState(false);
+    const [distKEmptyMessage, setDistKEmptyMessage] = useState<string | null>(null);
+    const [freqCidadesEmptyMessage, setFreqCidadesEmptyMessage] = useState<string | null>(null);
+    const [kFixoEmptyMessage, setKFixoEmptyMessage] = useState<string | null>(null);
+    const [frotaEmptyMessage, setFrotaEmptyMessage] = useState<string | null>(null);
 
     const periodoCidadesDefault = useMemo(() => {
         const end =
@@ -587,18 +632,26 @@ export default function SimulationPage() {
                 data_final: df,
             });
             setFreqCidadesData(result.dados || []);
+            setFreqCidadesContexto(result.contexto || null);
             setFreqCidadesGraficoUrl(
                 result.grafico ? resolveUrl(result.grafico) : null
             );
             setFreqCidadesCsvUrl( // 👈 salva também o CSV
                 result.csv ? resolveUrl(result.csv) : null
             );
+            setFreqCidadesEmptyMessage(null);
             toast.success("Frequência de cidades carregada!");
         } catch (err: any) {
-            toast.error(
-                err?.response?.data?.detail ||
-                "Erro ao carregar frequência de cidades."
-            );
+            setFreqCidadesData([]);
+            setFreqCidadesContexto(null);
+            setFreqCidadesGraficoUrl(null);
+            setFreqCidadesCsvUrl(null);
+            if (isNoDataResponse(err)) {
+                setFreqCidadesEmptyMessage("Nenhum hub ou centro vencedor foi encontrado para o período selecionado.");
+            } else {
+                setFreqCidadesEmptyMessage(null);
+                toast.error(extractApiErrorMessage(err, "Erro ao carregar frequência de cidades."));
+            }
         } finally {
             setLoadingFreqCidades(false);
         }
@@ -606,7 +659,7 @@ export default function SimulationPage() {
 
 
     // =========================
-    // ABA: k Fixo (custos consolidados)
+    // ABA: comparativo de custos por cenário
     // =========================
     const [kFixoData, setKFixoData] = useState<KFixoResponse["cenarios"]>([]);
     const [kFixoGraficoUrl, setKFixoGraficoUrl] = useState<string | null>(null);
@@ -632,7 +685,7 @@ export default function SimulationPage() {
         const df = periodoKFixoDefault.data_final;
 
         if (!di || !df || df < di) {
-            toast.error("Informe um intervalo de datas válido para k fixo.");
+            toast.error("Informe um intervalo de datas válido para o comparativo de cenários.");
             return;
         }
 
@@ -646,9 +699,17 @@ export default function SimulationPage() {
 
             setKFixoData(result.cenarios || []); // ✅ agora usa cenarios
             setKFixoGraficoUrl(result.grafico ? resolveUrl(result.grafico) : null);
+            setKFixoEmptyMessage(null);
             toast.success("Custos por k carregados!");
         } catch (err: any) {
-            toast.error(err?.response?.data?.detail || "Erro ao carregar custos por k.");
+            setKFixoData([]);
+            setKFixoGraficoUrl(null);
+            if (isNoDataResponse(err)) {
+                setKFixoEmptyMessage("Nenhum cenário com dados de simulação foi encontrado para o período selecionado.");
+            } else {
+                setKFixoEmptyMessage(null);
+                toast.error(extractApiErrorMessage(err, "Erro ao carregar custos por k."));
+            }
         } finally {
             setLoadingKFixo(false);
         }
@@ -663,6 +724,10 @@ export default function SimulationPage() {
     const [frotaTransfer, setFrotaTransfer] = useState<FrotaKFixoResponse["transfer"]>([]);
     const [frotaCsvLastmile, setFrotaCsvLastmile] = useState<string | null>(null);
     const [frotaCsvTransfer, setFrotaCsvTransfer] = useState<string | null>(null);
+    const [frotaResumo, setFrotaResumo] = useState<Pick<
+        FrotaKFixoResponse,
+        "k_consultado" | "escopo" | "transfer_aplicavel" | "mensagem_transfer"
+    > | null>(null);
     const [loadingFrota, setLoadingFrota] = useState(false);
     const modoSelecionado = params.modo_simulacao ?? "padrao";
 
@@ -686,7 +751,7 @@ export default function SimulationPage() {
         const df = periodoFrotaDefault.data_final;
 
         if (!frotaK && frotaK !== 0) {
-            toast.error("Informe um valor de k (ex.: 8 ou 0 para todos)");
+            toast.error("Informe um valor de k (ex.: 0 para Hub único ou 8)");
             return;
         }
         if (!di || !df || df < di) {
@@ -708,10 +773,27 @@ export default function SimulationPage() {
             setFrotaTransfer(result.transfer || []);
             setFrotaCsvLastmile(result.csv_lastmile || null);
             setFrotaCsvTransfer(result.csv_transfer || null);
+            setFrotaResumo({
+                k_consultado: result.k_consultado,
+                escopo: result.escopo,
+                transfer_aplicavel: result.transfer_aplicavel,
+                mensagem_transfer: result.mensagem_transfer,
+            });
+            setFrotaEmptyMessage(null);
 
             toast.success("Frota sugerida carregada!");
         } catch (err: any) {
-            toast.error(err?.response?.data?.detail || "Erro ao carregar frota sugerida.");
+            setFrotaLastmile([]);
+            setFrotaTransfer([]);
+            setFrotaCsvLastmile(null);
+            setFrotaCsvTransfer(null);
+            setFrotaResumo(null);
+            if (isNoDataResponse(err)) {
+                setFrotaEmptyMessage("Nenhuma frota sugerida foi encontrada para o período e k informados.");
+            } else {
+                setFrotaEmptyMessage(null);
+                toast.error(extractApiErrorMessage(err, "Erro ao carregar frota sugerida."));
+            }
         } finally {
             setLoadingFrota(false);
         }
@@ -1323,7 +1405,7 @@ export default function SimulationPage() {
 
                         {/* Resultado */}
                         {distKData.length === 0 && !loadingDistK && (
-                            <div className="text-sm text-gray-500">Defina o período para carregar a distribuição.</div>
+                            <div className="text-sm text-gray-500">{distKEmptyMessage || "Defina o período para carregar a distribuição."}</div>
                         )}
 
                         {distKData.length > 0 && (
@@ -1386,7 +1468,9 @@ export default function SimulationPage() {
                     <div className="bg-white rounded-2xl shadow p-4">
                         <h2 className="font-semibold mb-4 flex items-center gap-2">
                             <Building2 className="w-5 h-5 text-emerald-600" />
-                            Frequência das cidades centro nos pontos ótimos
+                            {freqCidadesContexto?.somente_hub_unico
+                                ? "Hub vencedor no período"
+                                : "Frequência das cidades centro nos pontos ótimos"}
                         </h2>
 
                         {/* Filtros */}
@@ -1430,11 +1514,21 @@ export default function SimulationPage() {
 
                         {/* Resultado */}
                         {freqCidadesData.length === 0 && !loadingFreqCidades && (
-                            <div className="text-sm text-gray-500">Defina o período para carregar as cidades.</div>
+                            <div className="text-sm text-gray-500">{freqCidadesEmptyMessage || "Defina o período para carregar as cidades."}</div>
                         )}
 
                         {freqCidadesData.length > 0 && (
                             <>
+                                {freqCidadesContexto && (
+                                    <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                                        {freqCidadesContexto.somente_hub_unico
+                                            ? `Os pontos ótimos do período foram Hub único em ${freqCidadesContexto.dias_hub_unico}/${freqCidadesContexto.total_dias_otimos} dias. O gráfico abaixo representa o hub vencedor${freqCidadesContexto.hub_cidade ? `: ${freqCidadesContexto.hub_cidade}` : ""}.`
+                                            : freqCidadesContexto.dias_hub_unico > 0
+                                                ? `O período mistura ${freqCidadesContexto.dias_hub_unico} dia(s) de Hub único e ${freqCidadesContexto.dias_clusterizados} dia(s) com clusterização vencedora.`
+                                                : `O período possui ${freqCidadesContexto.dias_clusterizados} dia(s) com clusterização vencedora.`}
+                                    </div>
+                                )}
+
                                 {/* Gráfico Top 20 */}
                                 <div className="w-full h-[420px] border rounded-lg p-2 mb-4 bg-white">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -1495,7 +1589,7 @@ export default function SimulationPage() {
                                         <thead>
                                             <tr className="text-left border-b">
                                                 <th className="py-2 pr-4 w-12">#</th>
-                                                <th className="py-2 pr-4">Cidade</th>
+                                                <th className="py-2 pr-4">{freqCidadesContexto?.somente_hub_unico ? "Hub" : "Cidade"}</th>
                                                 <th className="py-2 pr-4">Frequência</th>
                                             </tr>
                                         </thead>
@@ -1517,13 +1611,13 @@ export default function SimulationPage() {
             }
 
 
-            {/* ===================== ABA: k Fixo (custos) =====================*/}
+            {/* ===================== ABA: comparativo de custos por cenário =====================*/}
             {
                 activeTab === "custos" && (
                     <div className="bg-white rounded-2xl shadow p-4">
                         <h2 className="font-semibold mb-4 flex items-center gap-2">
                             <BarChart3 className="w-5 h-5 text-emerald-600" />
-                            Custos consolidados para k fixo
+                            Comparativo de custos por cenário
                         </h2>
 
                         <div className="grid md:grid-cols-4 gap-4 mb-4">
@@ -1579,7 +1673,7 @@ export default function SimulationPage() {
                         </div>
 
                         {kFixoData.length === 0 && !loadingKFixo && (
-                            <div className="text-sm text-gray-500">Defina o período para carregar os custos.</div>
+                            <div className="text-sm text-gray-500">{kFixoEmptyMessage || "Defina o período para carregar os custos."}</div>
                         )}
 
                         {kFixoData.length > 0 && (
@@ -1714,13 +1808,13 @@ export default function SimulationPage() {
                                 />
                             </div>
                             <div>
-                                <FieldLabel title="Valor de k" hint="use 0 para considerar todos os cenários; informe um número para filtrar" />
+                                <FieldLabel title="Valor de k" hint="use 0 para Hub único; informe outro número para um cenário clusterizado específico" />
                                 <input
                                     type="number"
                                     value={frotaK ?? ""}
                                     onChange={(e) => setFrotaK(Number(e.target.value))}
                                     className="input"
-                                    placeholder="Ex.: 8 ou 0"
+                                    placeholder="Ex.: 0 ou 8"
                                 />
                             </div>
 
@@ -1743,7 +1837,13 @@ export default function SimulationPage() {
 
                         {/* Sem dados */}
                         {!loadingFrota && !frotaLastmile.length && !frotaTransfer.length && (
-                            <div className="text-sm text-gray-500">Defina período e k para carregar a frota.</div>
+                            <div className="text-sm text-gray-500">{frotaEmptyMessage || "Defina período e k para carregar a frota."}</div>
+                        )}
+
+                        {frotaResumo?.mensagem_transfer && (
+                            <div className="mb-4 rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                                {frotaResumo.mensagem_transfer}
+                            </div>
                         )}
 
                         {/* Bloco Last-mile */}
@@ -1784,6 +1884,10 @@ export default function SimulationPage() {
                                     </div>
                                 )}
                             </div>
+                        )}
+
+                        {!frotaTransfer.length && frotaResumo?.transfer_aplicavel && !loadingFrota && (
+                            <div className="text-sm text-gray-500">Nenhuma frota de transferências encontrada para o período e k informado.</div>
                         )}
                     </div>
                 )

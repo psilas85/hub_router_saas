@@ -412,7 +412,11 @@ def frequencia_cidades(
     # Retorna o próprio dicionário já no formato esperado
     return result
 
-@router.get("/k_fixo", summary="Comparativo de custos consolidados por k fixo")
+
+@router.get(
+    "/k_fixo",
+    summary="Comparativo de custos consolidados por cenário",
+)
 def k_fixo(
     data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
     data_final: date = Query(..., description="Data final YYYY-MM-DD"),
@@ -471,11 +475,19 @@ def frota_k_fixo(
             detail="Nenhuma frota encontrada para este período e k informado."
         )
 
+    escopo = "hub_unico" if k == 0 else "k_fixo"
+    transfer_aplicavel = k != 0
+    mensagem_transfer = None if transfer_aplicavel else "Transferências não se aplicam ao cenário Hub único."
+
     return {
         "status": "ok",
         "tenant_id": tenant_id,
         "data_inicial": str(data_inicial),
         "data_final": str(data_final),
+        "k_consultado": k,
+        "escopo": escopo,
+        "transfer_aplicavel": transfer_aplicavel,
+        "mensagem_transfer": mensagem_transfer,
         "csv_lastmile": csv_lastmile.replace("./", "/") if csv_lastmile else None,
         "csv_transfer": csv_transfer.replace("./", "/") if csv_transfer else None,
         "lastmile": lastmile,

@@ -38,7 +38,7 @@ def _gerar_grafico(df_frota, png_path, data_inicial, data_final, k_fixo, cobertu
     plt.grid(axis="y", linestyle="--", alpha=0.3)
 
     total_frota = df_frota["frota_sugerida"].sum()
-    titulo_k = "todos os cenários" if k_fixo == 0 else f"k={k_fixo}"
+    titulo_k = "Hub único" if k_fixo == 0 else f"k={k_fixo}"
 
     plt.title(
         f"Frota Média • {titulo_k} • {data_inicial} → {data_final}\n"
@@ -118,11 +118,12 @@ def gerar_grafico_frota_k_fixo(
         # =============================
         if k_fixo == 0:
             q_last = """
-                SELECT envio_data, tipo_veiculo, k_clusters, COUNT(*) AS qtd_veiculos
+                                SELECT envio_data, tipo_veiculo, COUNT(*) AS qtd_veiculos
                 FROM resumo_rotas_last_mile
                 WHERE tenant_id = %s
                   AND envio_data BETWEEN %s AND %s
-                GROUP BY envio_data, tipo_veiculo, k_clusters
+                                    AND k_clusters = 0
+                                GROUP BY envio_data, tipo_veiculo
             """
             df_last = pd.read_sql(q_last, conn, params=(tenant_id, data_inicial, data_final))
         else:
@@ -152,6 +153,12 @@ def gerar_grafico_frota_k_fixo(
                 .rename(columns={"qtd_veiculos": "frota_sugerida"})
             )
 
+            df_frota["k_clusters"] = k_fixo
+            df_frota["dias_presentes"] = dias_presentes
+            df_frota["total_dias"] = total_dias
+            df_frota["cobertura_pct"] = cobertura_pct
+            df_frota["modo"] = "Hub único" if k_fixo == 0 else f"k={k_fixo}"
+
             resultados_last.append(df_frota)
 
             png_path = os.path.join(
@@ -159,7 +166,7 @@ def gerar_grafico_frota_k_fixo(
                 f"frota_lastmile_{periodo}_k{k_fixo}.png"
             )
 
-            if modo_forcar or not os.path.exists(png_path):
+            if modo_forcar or k_fixo == 0 or not os.path.exists(png_path):
                 _gerar_grafico(df_frota, png_path, data_inicial, data_final, k_fixo, cobertura_pct, "Last-mile")
 
             csv_lastmile = os.path.join(
@@ -196,6 +203,12 @@ def gerar_grafico_frota_k_fixo(
                     .reset_index()
                     .rename(columns={"qtd_veiculos": "frota_sugerida"})
                 )
+
+                df_frota["k_clusters"] = k_fixo
+                df_frota["dias_presentes"] = dias_presentes
+                df_frota["total_dias"] = total_dias
+                df_frota["cobertura_pct"] = cobertura_pct
+                df_frota["modo"] = f"k={k_fixo}"
 
                 resultados_transf.append(df_frota)
 

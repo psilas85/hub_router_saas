@@ -27,6 +27,23 @@ def gerar_grafico_frequencia_cidades(
 
     conn = conectar_simulation_db()
 
+    query_contexto = """
+        SELECT
+            COUNT(DISTINCT r.envio_data) AS total_dias_otimos,
+            COUNT(DISTINCT CASE WHEN r.k_clusters = 0 THEN r.envio_data END) AS dias_hub_unico,
+            COUNT(DISTINCT CASE WHEN r.k_clusters <> 0 THEN r.envio_data END) AS dias_clusterizados
+        FROM resultados_simulacao r
+        WHERE r.tenant_id = %s
+          AND r.envio_data BETWEEN %s AND %s
+          AND r.is_ponto_otimo = TRUE
+    """
+
+    df_contexto = pd.read_sql(query_contexto, conn, params=(tenant_id, data_inicial, data_final))
+    total_dias_otimos = int(df_contexto["total_dias_otimos"].iat[0] or 0)
+    dias_hub_unico = int(df_contexto["dias_hub_unico"].iat[0] or 0)
+    dias_clusterizados = int(df_contexto["dias_clusterizados"].iat[0] or 0)
+    somente_hub_unico = total_dias_otimos > 0 and dias_hub_unico == total_dias_otimos
+
     query = """
         SELECT ec.cluster_cidade, COUNT(DISTINCT ec.envio_data) AS qtd
         FROM entregas_clusterizadas ec
@@ -46,6 +63,18 @@ def gerar_grafico_frequencia_cidades(
     df = pd.read_sql(query, conn, params=(tenant_id, data_inicial, data_final))
     conn.close()
 
+    hub_cidade = None
+    if somente_hub_unico and not df.empty:
+        hub_cidade = str(df.iloc[0]["cluster_cidade"])
+
+    contexto = {
+        "total_dias_otimos": total_dias_otimos,
+        "dias_hub_unico": dias_hub_unico,
+        "dias_clusterizados": dias_clusterizados,
+        "somente_hub_unico": somente_hub_unico,
+        "hub_cidade": hub_cidade,
+    }
+
     if df.empty:
         return {
             "status": "vazio",
@@ -53,7 +82,8 @@ def gerar_grafico_frequencia_cidades(
             "data_final": data_final,
             "grafico": None,
             "csv": None,
-            "dados": []
+            "dados": [],
+            "contexto": contexto,
         }
 
     # 🔥 PADRÃO NOVO
@@ -77,14 +107,15 @@ def gerar_grafico_frequencia_cidades(
     )
 
     # 🔥 controle de sobrescrita
-    if not modo_forcar and os.path.exists(filename_png):
+    if not modo_forcar and not somente_hub_unico and os.path.exists(filename_png):
         return {
             "status": "ok",
             "data_inicial": data_inicial,
             "data_final": data_final,
             "grafico": filename_png,
             "csv": filename_csv if os.path.exists(filename_csv) else None,
-            "dados": df.to_dict(orient="records")
+            "dados": df.to_dict(orient="records"),
+            "contexto": contexto,
         }
 
     # =========================
@@ -98,12 +129,18 @@ def gerar_grafico_frequencia_cidades(
         df["qtd"]
     )
 
-    plt.xlabel("Frequência de dias como Centro (ponto ótimo)")
-    plt.ylabel("Cidade")
-
-    plt.title(
-        f"Frequência de Cidades em Pontos Ótimos ({data_inicial} → {data_final})"
-    )
+    if somente_hub_unico:
+        plt.xlabel("Frequência de dias como Hub vencedor")
+        plt.ylabel("Hub")
+        plt.title(
+            f"Hub Vencedor no Período ({data_inicial} → {data_final})"
+        )
+    else:
+        plt.xlabel("Frequência de dias como Centro (ponto ótimo)")
+        plt.ylabel("Cidade")
+        plt.title(
+            f"Frequência de Cidades em Pontos Ótimos ({data_inicial} → {data_final})"
+        )
 
     plt.gca().invert_yaxis()
 
@@ -128,5 +165,6 @@ def gerar_grafico_frequencia_cidades(
         "data_final": data_final,
         "grafico": filename_png,
         "csv": filename_csv,
-        "dados": df.to_dict(orient="records")
+        "dados": df.to_dict(orient="records"),
+        "contexto": contexto,
     }

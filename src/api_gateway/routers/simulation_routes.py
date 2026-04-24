@@ -174,7 +174,7 @@ async def frequencia_cidades(
     return content
 
 
-@router.get("/k_fixo", summary="Custos consolidados para k fixo")
+@router.get("/k_fixo", summary="Comparativo de custos por cenário")
 async def k_fixo(
     request: Request,
     data_inicial: date = Query(..., description="Data inicial YYYY-MM-DD"),
@@ -185,7 +185,7 @@ async def k_fixo(
     usuario: UsuarioToken = Depends(obter_tenant_id_do_token),
 ):
     """
-    Encaminha requisição do API Gateway → Simulation Service para obter cenários k fixo.
+    Encaminha requisição do API Gateway → Simulation Service para obter comparativo de cenários.
     """
     headers = {"authorization": request.headers.get("authorization")}
 

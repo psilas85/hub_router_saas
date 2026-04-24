@@ -162,6 +162,13 @@ export type FrequenciaCidadesResponse = {
     data_final: string;
     grafico: string;
     csv: string;
+    contexto: {
+        total_dias_otimos: number;
+        dias_hub_unico: number;
+        dias_clusterizados: number;
+        somente_hub_unico: boolean;
+        hub_cidade: string | null;
+    };
     dados: { cluster_cidade: string; qtd: number }[];
 };
 
@@ -173,7 +180,7 @@ export async function getFrequenciaCidades(params: {
     return resp.data as FrequenciaCidadesResponse;
 }
 
-// ===== Custos consolidados para k fixo =====
+// ===== Comparativo de custos por cenário =====
 export type KFixoResponse = {
     status: string;
     tenant_id: string;
@@ -207,6 +214,10 @@ export type FrotaKFixoResponse = {
     tenant_id: string;
     data_inicial: string;
     data_final: string;
+    k_consultado: number;
+    escopo: "hub_unico" | "k_fixo";
+    transfer_aplicavel: boolean;
+    mensagem_transfer: string | null;
     csv_lastmile?: string | null;
     csv_transfer?: string | null;
     lastmile: {
