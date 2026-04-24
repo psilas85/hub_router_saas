@@ -35,6 +35,7 @@ def gerar_grafico_k_fixo(
 
     # 🔧 normalização
     min_cobertura_parcial = max(0.01, min(1.0, min_cobertura_parcial))
+    cobertura_tag = f"cov{int(round(min_cobertura_parcial * 100)):03d}"
 
     periodo = f"{data_inicial}_{data_final}"
 
@@ -45,8 +46,8 @@ def gerar_grafico_k_fixo(
         "graphs"
     )
 
-    png_path = os.path.join(graphs_dir, f"k_fixo_{periodo}.png")
-    csv_path = os.path.join(graphs_dir, f"k_fixo_{periodo}.csv")
+    png_path = os.path.join(graphs_dir, f"k_fixo_{periodo}_{cobertura_tag}.png")
+    csv_path = os.path.join(graphs_dir, f"k_fixo_{periodo}_{cobertura_tag}.csv")
 
     # 🔥 controle overwrite
     if not modo_forcar and os.path.exists(png_path) and os.path.exists(csv_path):

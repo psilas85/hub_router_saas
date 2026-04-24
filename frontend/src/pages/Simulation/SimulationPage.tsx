@@ -51,11 +51,137 @@ function formatKLabel(k: string | number) {
     return String(k) === "0" ? "Hub único" : String(k);
 }
 
+function formatScenarioAxisLabel(k: string | number) {
+    return String(k) === "0" ? "Hub único" : `k=${k}`;
+}
+
 function formatScenarioLabel(k: string | number) {
     if (String(k) === "0") {
         return "Cenário Hub único";
     }
     return `Cenário k=${k}`;
+}
+
+function formatCostScenarioName(k: string | number) {
+    return String(k) === "0" ? "Hub único" : `${k} clusters`;
+}
+
+function formatCostScenarioAxisLabel(k: string | number) {
+    return String(k) === "0" ? "Hub único" : `k=${k}`;
+}
+
+function isHubCenterLabel(value: string | null | undefined) {
+    return String(value || "").trim().toUpperCase() === "HUB CENTRAL";
+}
+
+function isUnknownCenterLabel(value: string | null | undefined) {
+    return String(value || "").trim().toLowerCase() === "desconhecido";
+}
+
+function formatCenterLabel(value: string | null | undefined) {
+    if (isHubCenterLabel(value)) {
+        return "Hub central";
+    }
+    if (isUnknownCenterLabel(value)) {
+        return "Centro sem cidade identificada";
+    }
+    return String(value || "-");
+}
+
+function CenterWinnerTooltip({ active, payload }: any) {
+    if (!active || !payload?.length) return null;
+
+    const row = payload[0]?.payload;
+    if (!row) return null;
+
+    return (
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-lg">
+            <div className="font-semibold text-slate-900">{row.label}</div>
+            <div className="text-slate-600">Presente em {row.qtd} dia(s) com cenário vencedor</div>
+            {!row.isHub && (
+                <div className="text-slate-500">A cidade apareceu como centro de algum cluster do cenário ótimo.</div>
+            )}
+        </div>
+    );
+}
+
+type CenterFrequencyRow = {
+    cluster_cidade: string;
+    qtd: number;
+    label: string;
+    isHub: boolean;
+    isUnknown: boolean;
+};
+
+type CostScenarioRow = KFixoResponse["cenarios"][0] & {
+    isBest: boolean;
+    hasPartialCoverage: boolean;
+};
+
+function formatVehicleTypeLabel(value: string | null | undefined) {
+    const normalized = String(value || "").trim().toLowerCase();
+
+    if (normalized === "vuc") return "VUC";
+    if (normalized === "3/4") return "Caminhão 3/4";
+    if (normalized === "fiorino") return "Fiorino";
+    if (normalized === "toco") return "Toco";
+    if (normalized === "truck") return "Truck";
+    if (normalized === "carreta") return "Carreta";
+
+    return String(value || "-");
+}
+
+function formatCoverageMode(value: string | null | undefined) {
+    const normalized = String(value || "").trim().toUpperCase();
+
+    if (normalized === "FULL" || normalized === "F") return "Cobertura total";
+    if (normalized === "PARTIAL" || normalized === "P") return "Cobertura parcial";
+
+    return String(value || "-");
+}
+
+function DistributionKTooltip({ active, payload, label }: any) {
+    if (!active || !payload?.length) return null;
+
+    const value = Number(payload[0]?.value || 0);
+    const total = Number(payload[0]?.payload?.total_qtd || 0);
+    const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+
+    return (
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-lg">
+            <div className="font-semibold text-slate-900">{formatScenarioLabel(label)}</div>
+            <div className="text-slate-600">Venceu em {value} dia(s)</div>
+            <div className="text-slate-500">{pct}% dos dias com cenário vencedor</div>
+        </div>
+    );
+}
+
+function formatCurrencyBRL(value: number | null | undefined) {
+    return new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: "BRL",
+    }).format(Number(value || 0));
+}
+
+function formatPercent(value: number | null | undefined, digits = 1) {
+    return `${(Number(value || 0) * 100).toFixed(digits)}%`;
+}
+
+function CostsScenarioTooltip({ active, payload, label }: any) {
+    if (!active || !payload?.length) return null;
+
+    const row = payload[0]?.payload;
+    if (!row) return null;
+
+    return (
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-lg">
+            <div className="font-semibold text-slate-900">{formatCostScenarioName(label)}</div>
+            <div className="text-slate-600">Custo projetado: {formatCurrencyBRL(row.custo_alvo)}</div>
+            <div className="text-slate-600">Cobertura do período: {formatPercent(row.cobertura_pct)}</div>
+            <div className="text-slate-600">Dias com dados: {row.dias_presentes}/{row.total_dias}</div>
+            <div className="text-slate-500">Diferença vs. ótimo: {formatPercent(row.regret_relativo, 2)}</div>
+        </div>
+    );
 }
 
 function todayISO() {
@@ -201,11 +327,11 @@ function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
             .slice()
             .sort((a, b) => b.frota_sugerida - a.frota_sugerida)
             .map((r) => ({
-                tipo: r.tipo_veiculo,
+                tipo: formatVehicleTypeLabel(r.tipo_veiculo),
                 frota: r.frota_sugerida,
                 k_clusters: r.k_clusters,
                 cobertura_pct: r.cobertura_pct,
-                modo: r.modo,
+                modo: formatCoverageMode(r.modo),
             }));
     }, [data]);
 
@@ -272,7 +398,7 @@ export default function SimulationPage() {
     const [banner, setBanner] = useState<BannerState | null>(null);
     const [pendingJobId, setPendingJobId] = useState<string | null>(null);
     const [artefatos, setArtefatos] = useState<VisualizeSimulationResponse | null>(null);
-    const [minCobertura, setMinCobertura] = useState(70);
+    const [minCobertura, setMinCobertura] = useState(100);
     const [historico, setHistorico] = useState<HistoricoSimulation[]>([]);
     const [loadingHistorico, setLoadingHistorico] = useState(false);
 
@@ -531,6 +657,24 @@ export default function SimulationPage() {
     const [distKGraficoUrl, setDistKGraficoUrl] = useState<string | null>(null);
     const [loadingDistK, setLoadingDistK] = useState(false);
 
+    const distKResumo = useMemo(() => {
+        if (!distKData.length) return null;
+
+        const totalDiasComVencedor = distKData.reduce((acc, item) => acc + Number(item.qtd || 0), 0);
+        const top = [...distKData].sort((a, b) => Number(b.qtd || 0) - Number(a.qtd || 0))[0];
+        const topQtd = Number(top?.qtd || 0);
+        const topPct = totalDiasComVencedor > 0 ? Math.round((topQtd / totalDiasComVencedor) * 100) : 0;
+
+        return {
+            totalDiasComVencedor,
+            topK: top?.k_clusters,
+            topQtd,
+            topPct,
+            cenarios: distKData.length,
+            data: distKData.map((item) => ({ ...item, total_qtd: totalDiasComVencedor })),
+        };
+    }, [distKData]);
+
     const periodoDistribuicaoDefault = useMemo(() => {
         // padrão: últimos 90 dias (limitado a 12 meses no backend)
         const end =
@@ -599,6 +743,29 @@ export default function SimulationPage() {
     const [kFixoEmptyMessage, setKFixoEmptyMessage] = useState<string | null>(null);
     const [frotaEmptyMessage, setFrotaEmptyMessage] = useState<string | null>(null);
 
+    const freqCidadesResumo = useMemo(() => {
+        if (!freqCidadesData.length) return null;
+
+        const normalized: CenterFrequencyRow[] = freqCidadesData.map((item) => ({
+            ...item,
+            label: formatCenterLabel(item.cluster_cidade),
+            isHub: isHubCenterLabel(item.cluster_cidade),
+            isUnknown: isUnknownCenterLabel(item.cluster_cidade),
+        }));
+
+        const hub = normalized.find((item) => item.isHub) || null;
+        const nonHub = normalized.filter((item) => !item.isHub);
+        const topCity = [...nonHub].sort((a, b) => b.qtd - a.qtd)[0] || null;
+        const chartData = nonHub.length > 0 && !freqCidadesContexto?.somente_hub_unico ? nonHub : normalized;
+
+        return {
+            hub,
+            topCity,
+            chartData,
+            unknownCount: normalized.find((item) => item.isUnknown)?.qtd || 0,
+        };
+    }, [freqCidadesContexto?.somente_hub_unico, freqCidadesData]);
+
     const periodoCidadesDefault = useMemo(() => {
         const end =
             dataFinal && dataFinal >= (dataInicial || "")
@@ -664,6 +831,26 @@ export default function SimulationPage() {
     const [kFixoData, setKFixoData] = useState<KFixoResponse["cenarios"]>([]);
     const [kFixoGraficoUrl, setKFixoGraficoUrl] = useState<string | null>(null);
     const [loadingKFixo, setLoadingKFixo] = useState(false);
+
+    const kFixoResumo = useMemo(() => {
+        if (!kFixoData.length) return null;
+
+        const sortedByCost = [...kFixoData].sort((a, b) => a.custo_alvo - b.custo_alvo);
+        const best = sortedByCost[0];
+        const maxCoverage = Math.max(...kFixoData.map((item) => Number(item.cobertura_pct || 0)));
+        const fullCoverageCount = kFixoData.filter((item) => Number(item.cobertura_pct || 0) >= 0.999999).length;
+
+        return {
+            best,
+            fullCoverageCount,
+            maxCoverage,
+            data: kFixoData.map((item): CostScenarioRow => ({
+                ...item,
+                isBest: item.k_clusters === best.k_clusters,
+                hasPartialCoverage: Number(item.cobertura_pct || 0) < 0.999999,
+            })),
+        };
+    }, [kFixoData]);
 
     const periodoKFixoDefault = useMemo(() => {
         const end =
@@ -771,8 +958,8 @@ export default function SimulationPage() {
 
             setFrotaLastmile(result.lastmile || []);
             setFrotaTransfer(result.transfer || []);
-            setFrotaCsvLastmile(result.csv_lastmile || null);
-            setFrotaCsvTransfer(result.csv_transfer || null);
+            setFrotaCsvLastmile(result.csv_lastmile ? resolveUrl(result.csv_lastmile) : null);
+            setFrotaCsvTransfer(result.csv_transfer ? resolveUrl(result.csv_transfer) : null);
             setFrotaResumo({
                 k_consultado: result.k_consultado,
                 escopo: result.escopo,
@@ -1361,8 +1548,11 @@ export default function SimulationPage() {
                     <div className="bg-white rounded-2xl shadow p-4">
                         <h2 className="font-semibold mb-4 flex items-center gap-2">
                             <BarChart2 className="w-5 h-5 text-emerald-600" />
-                            Distribuição de k (ponto ótimo) em um período
+                            Cenários vencedores no período
                         </h2>
+                        <p className="mb-4 text-sm text-slate-600">
+                            Mostra quantas vezes cada cenário venceu no período selecionado. Aqui, <span className="font-medium text-slate-800">k</span> representa a quantidade de clusters principais do cenário; o hub central não entra nessa contagem.
+                        </p>
 
                         {/* Filtros */}
                         <div className="grid md:grid-cols-3 gap-4 mb-4">
@@ -1397,7 +1587,7 @@ export default function SimulationPage() {
                                             <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
                                         </>
                                     ) : (
-                                        "Gerar gráfico de distribuição"
+                                        "Analisar cenários vencedores"
                                     )}
                                 </button>
                             </div>
@@ -1405,37 +1595,43 @@ export default function SimulationPage() {
 
                         {/* Resultado */}
                         {distKData.length === 0 && !loadingDistK && (
-                            <div className="text-sm text-gray-500">{distKEmptyMessage || "Defina o período para carregar a distribuição."}</div>
+                            <div className="text-sm text-gray-500">{distKEmptyMessage || "Defina o período para analisar os cenários vencedores."}</div>
                         )}
 
                         {distKData.length > 0 && (
                             <>
+                                {distKResumo && (
+                                    <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                                        Foram identificados <span className="font-semibold">{distKResumo.totalDiasComVencedor} dia(s)</span> com cenário vencedor no período. O cenário mais frequente foi <span className="font-semibold">{formatScenarioLabel(distKResumo.topK)}</span>, vencedor em <span className="font-semibold">{distKResumo.topQtd} dia(s)</span> ({distKResumo.topPct}% do período), entre <span className="font-semibold">{distKResumo.cenarios}</span> cenário(s) observado(s).
+                                    </div>
+                                )}
+
                                 <div className="w-full h-[420px] border rounded-lg p-2">
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <RBarChart data={distKData}>
+                                        <RBarChart data={distKResumo?.data || distKData}>
                                             <CartesianGrid strokeDasharray="3 3" />
-                                            <XAxis dataKey="k_clusters" tickMargin={8} tickFormatter={formatKLabel}>
+                                            <XAxis dataKey="k_clusters" tickMargin={8} tickFormatter={formatScenarioAxisLabel}>
                                                 <Label
-                                                    value="Cenários"
+                                                    value="Cenários vencedores"
                                                     offset={-5}
                                                     position="insideBottom"
                                                 />
                                             </XAxis>
                                             <YAxis
                                                 label={{
-                                                    value: "Frequência",
+                                                    value: "Dias em que o cenário venceu",
                                                     angle: -90,
                                                     position: "insideLeft",
                                                 }}
                                                 allowDecimals={false}
                                                 tickMargin={6}
                                             />
-                                            <Tooltip />
+                                            <Tooltip content={<DistributionKTooltip />} />
                                             <Bar dataKey="qtd" fill="#4682B4" radius={[4, 4, 0, 0]}>
-                                                {distKData.map((_, index) => (
+                                                {(distKResumo?.data || distKData).map((item, index) => (
                                                     <Cell
                                                         key={`cell-${index}`}
-                                                        fill="#4682B4"
+                                                        fill={index === 0 && distKResumo?.topK === item.k_clusters ? "#2563eb" : "#4682B4"}
                                                     />
                                                 ))}
                                             </Bar>
@@ -1470,8 +1666,13 @@ export default function SimulationPage() {
                             <Building2 className="w-5 h-5 text-emerald-600" />
                             {freqCidadesContexto?.somente_hub_unico
                                 ? "Hub vencedor no período"
-                                : "Frequência das cidades centro nos pontos ótimos"}
+                                : "Centros presentes nos cenários vencedores"}
                         </h2>
+                        <p className="mb-4 text-sm text-slate-600">
+                            {freqCidadesContexto?.somente_hub_unico
+                                ? "Quando todo o período é Hub único, esta visão mostra qual hub apareceu como vencedor nos dias analisados."
+                                : "Cada barra mostra em quantos dias a cidade apareceu como centro de algum cluster dentro do cenário vencedor. O hub central é destacado separadamente quando coexistir com outros centros."}
+                        </p>
 
                         {/* Filtros */}
                         <div className="grid md:grid-cols-3 gap-4 mb-4">
@@ -1506,7 +1707,7 @@ export default function SimulationPage() {
                                             <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
                                         </>
                                     ) : (
-                                        "Gerar gráfico de cidades"
+                                        "Analisar centros vencedores"
                                     )}
                                 </button>
                             </div>
@@ -1514,7 +1715,7 @@ export default function SimulationPage() {
 
                         {/* Resultado */}
                         {freqCidadesData.length === 0 && !loadingFreqCidades && (
-                            <div className="text-sm text-gray-500">{freqCidadesEmptyMessage || "Defina o período para carregar as cidades."}</div>
+                            <div className="text-sm text-gray-500">{freqCidadesEmptyMessage || "Defina o período para analisar os centros vencedores."}</div>
                         )}
 
                         {freqCidadesData.length > 0 && (
@@ -1529,11 +1730,38 @@ export default function SimulationPage() {
                                     </div>
                                 )}
 
+                                {freqCidadesResumo && !freqCidadesContexto?.somente_hub_unico && (
+                                    <div className="mb-4 grid gap-3 md:grid-cols-2">
+                                        {freqCidadesResumo.hub && (
+                                            <div className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                                                <div className="font-semibold">Hub central no período</div>
+                                                <div>
+                                                    {freqCidadesResumo.hub.label} apareceu em <span className="font-semibold">{freqCidadesResumo.hub.qtd} dia(s)</span> com cenário vencedor.
+                                                </div>
+                                            </div>
+                                        )}
+                                        {freqCidadesResumo.topCity && (
+                                            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                                                <div className="font-semibold">Cidade-centro mais recorrente</div>
+                                                <div>
+                                                    {freqCidadesResumo.topCity.label} apareceu em <span className="font-semibold">{freqCidadesResumo.topCity.qtd} dia(s)</span> como centro de algum cluster do cenário vencedor.
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {freqCidadesResumo?.unknownCount ? (
+                                    <div className="mb-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                        {freqCidadesResumo.unknownCount} ocorrência(s) foram classificadas como centro sem cidade identificada.
+                                    </div>
+                                ) : null}
+
                                 {/* Gráfico Top 20 */}
                                 <div className="w-full h-[420px] border rounded-lg p-2 mb-4 bg-white">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <RBarChart
-                                            data={freqCidadesData}
+                                            data={freqCidadesResumo?.chartData || []}
                                             layout="vertical"
                                             margin={{ top: 10, right: 20, left: 120, bottom: 10 }}
                                         >
@@ -1542,19 +1770,26 @@ export default function SimulationPage() {
                                                 type="number"
                                                 allowDecimals={false}
                                                 label={{
-                                                    value: "Frequência",
+                                                    value: "Dias em que o centro apareceu",
                                                     position: "insideBottom",
                                                     offset: -5,
                                                 }}
                                             />
                                             <YAxis
                                                 type="category"
-                                                dataKey="cluster_cidade"
+                                                dataKey="label"
                                                 tick={{ fontSize: 11 }}
                                                 width={140}
                                             />
-                                            <Tooltip />
-                                            <Bar dataKey="qtd" fill="#10b981" radius={[0, 6, 6, 0]} />
+                                            <Tooltip content={<CenterWinnerTooltip />} />
+                                            <Bar dataKey="qtd" radius={[0, 6, 6, 0]}>
+                                                {(freqCidadesResumo?.chartData || []).map((item, index) => (
+                                                    <Cell
+                                                        key={`center-cell-${index}`}
+                                                        fill={item.isUnknown ? "#f59e0b" : "#10b981"}
+                                                    />
+                                                ))}
+                                            </Bar>
                                         </RBarChart>
                                     </ResponsiveContainer>
                                 </div>
@@ -1589,15 +1824,15 @@ export default function SimulationPage() {
                                         <thead>
                                             <tr className="text-left border-b">
                                                 <th className="py-2 pr-4 w-12">#</th>
-                                                <th className="py-2 pr-4">{freqCidadesContexto?.somente_hub_unico ? "Hub" : "Cidade"}</th>
-                                                <th className="py-2 pr-4">Frequência</th>
+                                                <th className="py-2 pr-4">{freqCidadesContexto?.somente_hub_unico ? "Hub" : "Centro"}</th>
+                                                <th className="py-2 pr-4">Dias presentes</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {freqCidadesData.map((r, i) => (
+                                            {(freqCidadesResumo?.chartData || []).map((r, i) => (
                                                 <tr key={i} className="border-b">
                                                     <td className="py-2 pr-4">{i + 1}</td>
-                                                    <td className="py-2 pr-4">{r.cluster_cidade}</td>
+                                                    <td className="py-2 pr-4">{r.label}</td>
                                                     <td className="py-2 pr-4">{r.qtd}</td>
                                                 </tr>
                                             ))}
@@ -1619,6 +1854,9 @@ export default function SimulationPage() {
                             <BarChart3 className="w-5 h-5 text-emerald-600" />
                             Comparativo de custos por cenário
                         </h2>
+                        <p className="mb-4 text-sm text-slate-600">
+                            Compara o custo consolidado projetado de cada cenário no período. Para cenários com cobertura parcial, o custo alvo é estimado para tornar a comparação mais justa entre diferentes valores de k.
+                        </p>
 
                         <div className="grid md:grid-cols-4 gap-4 mb-4">
                             <div>
@@ -1666,26 +1904,43 @@ export default function SimulationPage() {
                                             <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
                                         </>
                                     ) : (
-                                        "Gerar custos por k"
+                                        "Analisar custos por cenário"
                                     )}
                                 </button>
                             </div>
                         </div>
 
                         {kFixoData.length === 0 && !loadingKFixo && (
-                            <div className="text-sm text-gray-500">{kFixoEmptyMessage || "Defina o período para carregar os custos."}</div>
+                            <div className="text-sm text-gray-500">{kFixoEmptyMessage || "Defina o período para analisar os custos consolidados por cenário."}</div>
                         )}
 
                         {kFixoData.length > 0 && (
                             <>
+                                {kFixoResumo && (
+                                    <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                                        O menor custo projetado do período foi <span className="font-semibold">{formatCurrencyBRL(kFixoResumo.best.custo_alvo)}</span>, no cenário <span className="font-semibold">{formatCostScenarioName(kFixoResumo.best.k_clusters)}</span>. Esse cenário cobre <span className="font-semibold">{formatPercent(kFixoResumo.best.cobertura_pct)}</span> do período ({kFixoResumo.best.dias_presentes}/{kFixoResumo.best.total_dias} dias com dados). {kFixoResumo.fullCoverageCount > 0 ? `${kFixoResumo.fullCoverageCount} cenário(s) têm cobertura total.` : "Todos os cenários exibidos usam projeção por cobertura parcial."}
+                                    </div>
+                                )}
+
                                 <div className="w-full h-[420px] border rounded-lg p-2 mb-4 bg-white">
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <RBarChart data={kFixoData}>
+                                        <RBarChart
+                                            data={kFixoResumo?.data || []}
+                                            margin={{ top: 8, right: 16, left: 28, bottom: 28 }}
+                                        >
                                             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                            <XAxis dataKey="k_clusters" tickMargin={8} tickFormatter={formatKLabel}>
-                                                <Label value="Cenários" offset={-5} position="insideBottom" />
+                                            <XAxis
+                                                dataKey="k_clusters"
+                                                tickMargin={10}
+                                                tickFormatter={formatCostScenarioAxisLabel}
+                                                angle={-18}
+                                                textAnchor="end"
+                                                height={62}
+                                            >
+                                                <Label value="Cenários comparados" offset={2} position="insideBottom" />
                                             </XAxis>
                                             <YAxis
+                                                width={88}
                                                 tickFormatter={(v) =>
                                                     new Intl.NumberFormat("pt-BR", {
                                                         notation: "compact",
@@ -1693,22 +1948,22 @@ export default function SimulationPage() {
                                                     }).format(v)
                                                 }
                                                 label={{
-                                                    value: "Custo consolidado (R$)",
+                                                    value: "Custo projetado (R$)",
                                                     angle: -90,
                                                     position: "insideLeft",
+                                                    dx: -8,
                                                 }}
                                                 tickMargin={6}
                                             />
-                                            <Tooltip
-                                                formatter={(v: number) =>
-                                                    new Intl.NumberFormat("pt-BR", {
-                                                        style: "currency",
-                                                        currency: "BRL",
-                                                    }).format(v)
-                                                }
-                                                labelFormatter={(k) => `Cenário ${formatKLabel(String(k))}`}
-                                            />
-                                            <Bar dataKey="custo_alvo" fill="#2563eb" radius={[6, 6, 0, 0]} />
+                                            <Tooltip content={<CostsScenarioTooltip />} />
+                                            <Bar dataKey="custo_alvo" radius={[6, 6, 0, 0]}>
+                                                {(kFixoResumo?.data || []).map((item, index) => (
+                                                    <Cell
+                                                        key={`cost-cell-${index}`}
+                                                        fill={item.isBest ? "#0f766e" : item.hasPartialCoverage ? "#2563eb" : "#1d4ed8"}
+                                                    />
+                                                ))}
+                                            </Bar>
                                         </RBarChart>
                                     </ResponsiveContainer>
                                 </div>
@@ -1730,11 +1985,11 @@ export default function SimulationPage() {
                                     <table className="min-w-full text-sm">
                                         <thead>
                                             <tr className="text-left border-b">
-                                                <th className="py-2 pr-4">k</th>
-                                                <th className="py-2 pr-4">Dias válidos</th>
-                                                <th className="py-2 pr-4">Cobertura</th>
-                                                <th className="py-2 pr-4">Custo alvo (R$)</th>
-                                                <th className="py-2 pr-4">Regret %</th>
+                                                <th className="py-2 pr-4">Cenário</th>
+                                                <th className="py-2 pr-4">Dias com dados</th>
+                                                <th className="py-2 pr-4">Cobertura do período</th>
+                                                <th className="py-2 pr-4">Custo projetado</th>
+                                                <th className="py-2 pr-4">Diferença vs. ótimo</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -1746,21 +2001,18 @@ export default function SimulationPage() {
                                                 )
                                                 .map((r: KFixoResponse["cenarios"][0]) => (
                                                     <tr key={r.k_clusters} className="border-b">
-                                                        <td className="py-2 pr-4">{formatKLabel(r.k_clusters)}</td>
+                                                        <td className="py-2 pr-4">{formatCostScenarioName(r.k_clusters)}</td>
                                                         <td className="py-2 pr-4">
                                                             {r.dias_presentes}/{r.total_dias}
                                                         </td>
                                                         <td className="py-2 pr-4">
-                                                            {(r.cobertura_pct * 100).toFixed(1)}%
+                                                            {formatPercent(r.cobertura_pct)}
                                                         </td>
                                                         <td className="py-2 pr-4">
-                                                            {r.custo_alvo?.toLocaleString("pt-BR", {
-                                                                style: "currency",
-                                                                currency: "BRL",
-                                                            })}
+                                                            {formatCurrencyBRL(r.custo_alvo)}
                                                         </td>
                                                         <td className="py-2 pr-4">
-                                                            {(r.regret_relativo * 100).toFixed(2)}%
+                                                            {formatPercent(r.regret_relativo, 2)}
                                                         </td>
                                                     </tr>
                                                 ))}
