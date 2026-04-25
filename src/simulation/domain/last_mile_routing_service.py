@@ -144,19 +144,12 @@ class LastMileRoutingService:
     def _obter_velocidade_media_kmh(self):
         return float(self.params.velocidade_kmh or 45.0)
 
-    def _calcular_tempo_servico_entrega(self, row):
-        tempo_atendimento = row.get('cte_tempo_atendimento_min')
-        if tempo_atendimento is not None and pd.notna(tempo_atendimento):
-            return max(float(tempo_atendimento), 0.0)
-
-        tempo_parada = (
-            self.params.tempo_parada_pesada
-            if float(row.get('cte_peso', 0.0) or 0.0) > self.params.limite_peso_parada
-            else self.params.tempo_parada_leve
+    def _calcular_tempo_servico_entrega(self, row, peso_total_rota=None):
+        return calcular_tempo_servico(
+            row,
+            self.params,
+            peso_referencia=peso_total_rota,
         )
-
-        tempo_descarga = float(row.get('cte_volumes', 0) or 0) * self.params.tempo_por_volume
-        return float(tempo_parada) + float(tempo_descarga)
 
     def _gerar_subclusters_iniciais(self, df_coords: pd.DataFrame):
         import math
@@ -366,6 +359,8 @@ class LastMileRoutingService:
         rota_ida_coords = []
         anterior = origem
         ctes_mesma_origem_destino = []
+        peso_total_rota = float(df_ordenado['cte_peso'].sum())
+        volumes_total_rota = int(df_ordenado['cte_volumes'].sum())
 
         distancia_parcial = 0.0
         tempo_parcial = 0.0
@@ -421,7 +416,7 @@ class LastMileRoutingService:
             )
 
         tempo_parcial += sum(
-            self._calcular_tempo_servico_entrega(row)
+            self._calcular_tempo_servico_entrega(row, peso_total_rota=peso_total_rota)
             for _, row in df_ordenado.iterrows()
         )
 
@@ -530,8 +525,8 @@ class LastMileRoutingService:
                 "distancia_km": None,
                 "tempo_minutos": None,
                 "qtde_entregas": len(df_ordenado),
-                "peso_total": df_ordenado["cte_peso"].sum(),
-                "volumes_total": df_ordenado["cte_volumes"].sum(),
+                "peso_total": peso_total_rota,
+                "volumes_total": volumes_total_rota,
                 "distancia_total_km": round(distancia_parcial + dist_back, 2) if posicao_rota == 0 else None,
                 "tempo_total_min": round(tempo_total_real, 2) if posicao_rota == 0 else None,
                 "distancia_parcial_km": round(distancia_parcial, 2) if posicao_rota == 0 else None,
@@ -632,6 +627,116 @@ class LastMileRoutingService:
                 if k_clusters == 0
                 else self.params.tempo_max_roteirizacao
             )
+
+            # ============================
+            # 🔥 TIME WINDOWS MODE
+            # ============================
+
+            if self.params.algoritmo_roteirizacao == "time_windows":
+
+                from simulation.utils.ortools_time_windows import solve_time_windows_vrp
+
+                self.logger.info(f"🚀 Executando Time Windows no cluster {cluster_id}")
+
+                locations = list(
+                    zip(df_coords["destino_latitude"], df_coords["destino_longitude"])
+                )
+
+                special_flags = [False] * len(locations)
+
+                time_windows = [(0, tempo_limite)] * len(locations)
+
+                import math
+
+                num_vehicles = max(
+                    1,
+                    math.ceil(len(df_coords) / self.params.entregas_por_rota)
+                )
+
+                peso_total_estimado_rota = (
+                    float(df_coords["cte_peso"].sum()) / float(num_vehicles)
+                    if num_vehicles > 0
+                    else float(df_coords["cte_peso"].sum())
+                )
+
+                service_times = [
+                    calcular_tempo_servico(
+                        row,
+                        self.params,
+                        peso_referencia=peso_total_estimado_rota,
+                    )
+                    for _, row in df_coords.iterrows()
+                ]
+
+                depot_location = (
+                    df_coords["centro_lat"].iloc[0],
+                    df_coords["centro_lon"].iloc[0]
+                )
+
+                routes = solve_time_windows_vrp(
+                    locations=locations,
+                    special_flags=special_flags,
+                    time_windows=time_windows,
+                    service_times=service_times,
+                    params=self.params,
+                    depot_location=depot_location,
+                    num_vehicles=num_vehicles,
+                    route_time_limit_min=tempo_limite,
+                    delivery_debug_rows=df_coords.to_dict("records"),
+                )
+
+                detalhes_cluster = []
+
+                for idx, route in enumerate(routes):
+
+                    if not route:
+                        continue
+
+                    df_rota = df_coords.iloc[route].copy().reset_index(drop=True)
+
+                    df_rota["ordem_entrega"] = range(1, len(df_rota) + 1)
+                    df_rota = df_rota.sort_values("ordem_entrega")
+
+                    resultado_rota = self._montar_detalhes_rota(
+                        cluster_id=cluster_id,
+                        rota_label=f"tw_{idx}",
+                        df_ordenado=df_rota,
+                        tipo_veiculo="VUC",  # ajuste aqui depois se quiser sofisticar
+                        tempo_limite=tempo_limite,
+                        velocidade_media_kmh=velocidade_media_kmh,
+                    )
+
+                    if resultado_rota["excedeu"]:
+                        if self.permitir_rotas_excedentes:
+                            self.logger.warning(
+                                f"⚠️ TW rota tw_{idx} excedeu tempo, aceitando fallback"
+                            )
+
+                            resultado_rota = self._montar_detalhes_rota(
+                                cluster_id=cluster_id,
+                                rota_label=f"tw_{idx}",
+                                df_ordenado=df_rota,
+                                tipo_veiculo="TW",
+                                tempo_limite=tempo_limite,
+                                velocidade_media_kmh=velocidade_media_kmh,
+                                aceitar_excedente=True,
+                            )
+                        else:
+                            raise RuntimeError(
+                                f"❌ TW falhou no cluster {cluster_id}"
+                            )
+
+                    detalhes_cluster.extend(resultado_rota["detalhes"])
+
+                self._emitir_resumo_tentativas_cluster(cluster_id, status_final='sucesso')
+                detalhes_totais.extend(detalhes_cluster)
+
+                # 🔥 IMPORTANTE: pula fluxo KMeans
+                continue
+
+
+
+
             pendentes_iniciais = self._gerar_subclusters_iniciais(df_coords)
             pendentes = [(branch_label, df_sub, 0) for branch_label, df_sub in pendentes_iniciais]
 
