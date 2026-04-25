@@ -70,18 +70,20 @@ class TransferRoutingService:
     def _obter_velocidade_media_kmh(self):
         return float(self.params.velocidade_kmh)
 
-    def _calcular_tempo_servico_ponto(self, ponto):
+    def _calcular_tempo_servico_ponto(self, ponto, peso_total_rota):
         """
         Transferência NÃO usa cte_tempo_atendimento_min do df.
         O tempo de serviço do ponto deve ser sempre estimado
         pela regra operacional de transferência.
+
+        A classificação leve/pesada é definida pelo peso total da rota
+        e aplicada de forma uniforme a todos os pontos atendidos.
         """
-        peso = float(ponto.get("peso") or 0.0)
         volumes = float(ponto.get("volumes") or 0.0)
 
         tempo_parada = (
             self.params.tempo_parada_pesada
-            if peso > self.params.limite_peso_parada
+            if float(peso_total_rota or 0.0) > self.params.limite_peso_parada
             else self.params.tempo_parada_leve
         )
 
@@ -288,7 +290,10 @@ class TransferRoutingService:
 
             for ponto in rota:
                 if ponto.get("cte_numeros"):
-                    tempo_paradas += self._calcular_tempo_servico_ponto(ponto)
+                    tempo_paradas += self._calcular_tempo_servico_ponto(
+                        ponto,
+                        peso,
+                    )
 
             tempo_total_completo = tempo_real + tempo_paradas
             tempo_parcial_completo = tempo_total_completo - tempo_back

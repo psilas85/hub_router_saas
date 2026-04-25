@@ -453,6 +453,12 @@ def _calcular_tempo_total_rota(
     tempo_parada_leve = float(params.tempo_parada_leve)
     tempo_por_volume = float(params.tempo_por_volume)
     limite_peso = float(params.limite_peso_parada)
+    peso_total_rota = sum(float(pontos[pid].get("peso") or 0.0) for pid in rotas_ids)
+    parada_rota = (
+        tempo_parada_pesada
+        if peso_total_rota > limite_peso
+        else tempo_parada_leve
+    )
     tempo_total = 0.0
     anterior = origem
 
@@ -468,14 +474,14 @@ def _calcular_tempo_total_rota(
         dist, tempo_transito, _ = obter_rota_func(anterior, atual)
         tempo_transito = float(tempo_transito or 0.0)
 
-        parada = tempo_parada_pesada if peso > 200 else tempo_parada_leve
         descarga = volumes * tempo_por_volume
 
         logger.debug(
-            f"🧮 Rota {anterior} → {atual} | trânsito={tempo_transito:.2f} min, parada={parada}, descarga={descarga:.2f}"
+            f"🧮 Rota {anterior} → {atual} | trânsito={tempo_transito:.2f} min, "
+            f"parada={parada_rota}, descarga={descarga:.2f}"
         )
 
-        tempo_total += tempo_transito + parada + descarga
+        tempo_total += tempo_transito + parada_rota + descarga
         anterior = atual
 
     # 🔁 Volta ao ponto de origem
@@ -485,7 +491,6 @@ def _calcular_tempo_total_rota(
 
     logger.debug(f"↩️ Volta {anterior} → {origem} | trânsito={tempo_volta:.2f} min")
 
-    peso_total_rota = sum(float(pontos[pid].get("peso") or 0.0) for pid in rotas_ids)
     logger.info(f"⏱️ Rota tentativa: {len(rotas_ids)} clusters | Peso total: {peso_total_rota:.1f}kg | Tempo total: {tempo_total:.1f} min")
 
     return round(tempo_total, 2)

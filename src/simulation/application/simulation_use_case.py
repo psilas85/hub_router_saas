@@ -1645,7 +1645,6 @@ class SimulationUseCase:
         is_ponto_otimo = False
         df_clusterizado["simulation_id"] = self.simulation_id
         df_clusterizado["k_clusters"] = k_persistencia
-        df_base_cluster = df_clusterizado
 
         df_clusterizado = self.cluster_service.ajustar_centros_dos_clusters(df_clusterizado)
 
@@ -1673,9 +1672,11 @@ class SimulationUseCase:
         # 🔴 evita duplicidade
         df_clusterizado = df_clusterizado.drop_duplicates(subset=["cte_numero"])
 
+        df_clusterizacao_persistencia = df_clusterizado.copy()
+
 
         df_clusterizado = self.simulation_service.repartir_cluster_hub_central(
-            df_clusterizado,
+            df_clusterizacao_persistencia,
             self.params,
         )
 
@@ -1685,10 +1686,11 @@ class SimulationUseCase:
             envio_data=self.envio_data,
             simulation_id=self.simulation_id,
             k_clusters=k_persistencia,
-            df_novo=df_clusterizado,
+            df_novo=df_clusterizacao_persistencia,
             logger=self.logger
         )
 
+        df_clusterizacao_persistencia["is_ponto_otimo"] = is_ponto_otimo
         df_clusterizado["is_ponto_otimo"] = is_ponto_otimo
         (
             lista_resumo_transferencias,
@@ -1749,7 +1751,7 @@ class SimulationUseCase:
             cluster_cost_cfg = carregar_cluster_costs(self.simulation_db, self.tenant_id)
 
             df_resumo_clusters = (
-                df_clusterizado.groupby("cluster")
+                df_clusterizacao_persistencia.groupby("cluster")
                 .agg(qde_ctes=("cte_numero", "nunique"))
                 .reset_index()
             )
@@ -1782,7 +1784,7 @@ class SimulationUseCase:
         }
 
         # 🔴 GARANTE SCHEMA DO DF PURO
-        df_para_persistir = df_clusterizado.copy()
+        df_para_persistir = df_clusterizacao_persistencia.copy()
 
         df_para_persistir["simulation_id"] = self.simulation_id
         df_para_persistir["k_clusters"] = k_persistencia

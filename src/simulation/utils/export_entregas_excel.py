@@ -3,6 +3,7 @@
 import os
 import pandas as pd
 
+
 def exportar_entregas_com_rotas_excel(clusterization_db, simulation_db, tenant_id, envio_data, output_dir):
     # Campos desejados da tabela entregas
     campos_entregas = [
@@ -18,7 +19,7 @@ def exportar_entregas_com_rotas_excel(clusterization_db, simulation_db, tenant_i
 
     # Campos desejados da tabela rotas_last_mile
     campos_rotas = [
-        "cte_numero", "rota_id", "ordem_entrega", "cluster"
+        "cte_numero", "k_clusters", "rota_id", "ordem_entrega", "cluster"
     ]
     query_rotas = f"""
         SELECT {', '.join(campos_rotas)}
@@ -26,12 +27,13 @@ def exportar_entregas_com_rotas_excel(clusterization_db, simulation_db, tenant_i
         WHERE tenant_id = %s AND envio_data = %s
     """
     df_rotas = pd.read_sql(query_rotas, simulation_db, params=(tenant_id, envio_data))
+    df_rotas = df_rotas.rename(columns={"k_clusters": "cenario_k"})
 
     # Merge pelo cte_numero
     df = pd.merge(df_entregas, df_rotas, on="cte_numero", how="left")
 
     # Ordena para facilitar leitura
-    df = df.sort_values(["rota_id", "ordem_entrega"]).reset_index(drop=True)
+    df = df.sort_values(["cenario_k", "rota_id", "ordem_entrega"]).reset_index(drop=True)
 
     # Salva Excel
     os.makedirs(output_dir, exist_ok=True)
