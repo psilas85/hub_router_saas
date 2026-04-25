@@ -10,6 +10,7 @@ def gerar_resumo_clusterizacao(
     tenant_id: str,
     envio_data: str,
     k_clusters: int,
+    simulation_id: str | None = None,
     formatar_valores: bool = True
 ) -> pd.DataFrame:
     """
@@ -44,14 +45,19 @@ def gerar_resumo_clusterizacao(
         WHERE tenant_id = %s
           AND envio_data = %s
           AND k_clusters = %s
-        GROUP BY cluster, cluster_cidade
-        ORDER BY cluster
     """
+
+    params = [tenant_id, envio_data, k_clusters]
+    if simulation_id:
+        query += "\n          AND simulation_id = %s"
+        params.append(simulation_id)
+
+    query += "\n        GROUP BY cluster, cluster_cidade\n        ORDER BY cluster"
 
     df = pd.read_sql(
         query,
         db_conn,
-        params=(tenant_id, envio_data, k_clusters)
+        params=tuple(params)
     )
 
     if df.empty:

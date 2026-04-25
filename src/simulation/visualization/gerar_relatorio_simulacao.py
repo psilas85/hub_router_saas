@@ -25,6 +25,25 @@ from simulation.utils.criar_tabela_lastmile_pdf import criar_tabela_lastmile_pdf
 from simulation.utils.path_builder import build_output_path
 
 
+def _formatar_rotulo_cenario(k: int) -> str:
+    return "Hub unico" if int(k) == 0 else f"k = {int(k)}"
+
+
+def _resolver_mapa_png(maps_dir: str, tenant_id: str, envio_data: str, tipo: str, k: int):
+    nomes_por_tipo = {
+        "clusterizacao": [f"{tenant_id}_mapa_clusterizacao_{envio_data}_k{k}.png"],
+        "transferencias": [f"{tenant_id}_mapa_transfer_{envio_data}_k{k}.png"],
+        "lastmile": [f"{tenant_id}_mapa_lastmile_{envio_data}_k{k}.png"],
+    }
+
+    for nome_arquivo in nomes_por_tipo.get(tipo, []):
+        caminho = os.path.join(maps_dir, nome_arquivo)
+        if os.path.exists(caminho):
+            return caminho
+
+    return None
+
+
 def rodape(canvas: Canvas, doc):
     canvas.saveState()
     page_number = canvas.getPageNumber()
@@ -91,7 +110,7 @@ def gerar_relatorio_simulacao(
     # =============================
     for k in sorted(k_clusters_testados):
 
-        elements.append(Paragraph(f"Simulação k = {k}", style_h2))
+        elements.append(Paragraph(_formatar_rotulo_cenario(k), style_h2))
         elements.append(Spacer(1, 10))
 
         for tipo, titulo in [
@@ -103,12 +122,9 @@ def gerar_relatorio_simulacao(
             elements.append(Paragraph(titulo, style_normal))
 
             # 🔴 lógica de mapa simplificada
-            img_path = os.path.join(
-                maps_dir,
-                f"{tenant_id}_mapa_{tipo}_{envio_data}_k{k}.png"
-            )
+            img_path = _resolver_mapa_png(maps_dir, tenant_id, envio_data, tipo, k)
 
-            if os.path.exists(img_path):
+            if img_path and os.path.exists(img_path):
                 elements.append(Image(img_path, width=480, height=280))
             else:
                 elements.append(Paragraph("Mapa disponível em HTML.", style_normal))
@@ -119,7 +135,11 @@ def gerar_relatorio_simulacao(
             try:
                 if tipo == "transferencias":
                     df = carregar_resumo_transferencias(
-                        simulation_db, tenant_id, envio_data, k
+                        simulation_db,
+                        tenant_id,
+                        envio_data,
+                        k,
+                        simulation_id=simulation_id,
                     )
                     if not df.empty:
                         elements.append(Spacer(1, 10))
@@ -127,7 +147,11 @@ def gerar_relatorio_simulacao(
 
                 elif tipo == "clusterizacao":
                     df = gerar_resumo_clusterizacao(
-                        simulation_db, tenant_id, envio_data, k
+                        simulation_db,
+                        tenant_id,
+                        envio_data,
+                        k,
+                        simulation_id=simulation_id,
                     )
                     if not df.empty:
                         elements.append(Spacer(1, 10))
@@ -135,7 +159,11 @@ def gerar_relatorio_simulacao(
 
                 elif tipo == "lastmile":
                     df = carregar_resumo_lastmile(
-                        simulation_db, tenant_id, envio_data, k
+                        simulation_db,
+                        tenant_id,
+                        envio_data,
+                        k,
+                        simulation_id=simulation_id,
                     )
                     if not df.empty:
                         elements.append(Spacer(1, 10))

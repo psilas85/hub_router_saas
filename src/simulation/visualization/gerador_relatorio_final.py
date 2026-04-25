@@ -14,6 +14,25 @@ def _formatar_rotulo_cenario(k: int) -> str:
     return "Hub unico" if int(k) == 0 else str(int(k))
 
 
+def _buscar_k_clusters_testados(simulation_db, tenant_id: str, envio_data: str, simulation_id: str):
+    cursor = simulation_db.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT DISTINCT k_clusters
+            FROM resultados_simulacao
+            WHERE tenant_id = %s
+              AND envio_data = %s
+              AND simulation_id = %s
+            ORDER BY k_clusters
+            """,
+            (tenant_id, envio_data, simulation_id),
+        )
+        return [row[0] for row in cursor.fetchall()]
+    finally:
+        cursor.close()
+
+
 def executar_geracao_relatorio_final(
     tenant_id: str,
     envio_data: str,
@@ -43,16 +62,12 @@ def executar_geracao_relatorio_final(
     # =============================
     # 🔹 Buscar cenários (k_clusters)
     # =============================
-    cursor = simulation_db.cursor()
-    cursor.execute("""
-        SELECT DISTINCT k_clusters
-        FROM resultados_simulacao
-        WHERE tenant_id = %s AND envio_data = %s
-        ORDER BY k_clusters
-    """, (tenant_id, envio_data))
-
-    k_clusters_testados = [row[0] for row in cursor.fetchall()]
-    cursor.close()
+    k_clusters_testados = _buscar_k_clusters_testados(
+        simulation_db,
+        tenant_id,
+        envio_data,
+        simulation_id,
+    )
 
     if not k_clusters_testados:
         print(f"❌ Nenhum resultado encontrado para envio_data={envio_data}")
@@ -72,11 +87,17 @@ def executar_geracao_relatorio_final(
             query = """
                 SELECT k_clusters, custo_transferencia, custo_last_mile, custo_cluster
                 FROM resultados_simulacao
-                WHERE tenant_id = %s AND envio_data = %s
+                WHERE tenant_id = %s
+                  AND envio_data = %s
+                  AND simulation_id = %s
                 ORDER BY k_clusters
             """
 
-            df = pd.read_sql(query, simulation_db, params=(tenant_id, envio_data))
+            df = pd.read_sql(
+                query,
+                simulation_db,
+                params=(tenant_id, envio_data, simulation_id),
+            )
 
             if df.empty:
                 print(f"⚠️ Sem dados para gráfico ({envio_data})")

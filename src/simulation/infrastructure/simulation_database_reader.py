@@ -286,14 +286,32 @@ def obter_capacidade_veiculo(tipo_veiculo: str, db_conn, tenant_id: str) -> floa
 
     return float(result[0]) if result else 0.0
 
-def carregar_resumo_clusters(db_conn, tenant_id: str, envio_data: str, k_clusters: int) -> pd.DataFrame:
+def carregar_resumo_clusters(
+    db_conn,
+    tenant_id: str,
+    envio_data: str,
+    k_clusters: int,
+    simulation_id: str | None = None,
+) -> pd.DataFrame:
     query = """
         SELECT * FROM resumo_clusters
         WHERE tenant_id = %s AND envio_data = %s AND k_clusters = %s
     """
-    return pd.read_sql(query, db_conn, params=(tenant_id, envio_data, k_clusters))
 
-def carregar_resumo_transferencias(db_conn, tenant_id: str, envio_data: str, k_clusters: int) -> pd.DataFrame:
+    params = [tenant_id, envio_data, k_clusters]
+    if simulation_id:
+        query += " AND simulation_id = %s"
+        params.append(simulation_id)
+
+    return pd.read_sql(query, db_conn, params=tuple(params))
+
+def carregar_resumo_transferencias(
+    db_conn,
+    tenant_id: str,
+    envio_data: str,
+    k_clusters: int,
+    simulation_id: str | None = None,
+) -> pd.DataFrame:
     query = """
         SELECT
             rota_id,
@@ -308,9 +326,15 @@ def carregar_resumo_transferencias(db_conn, tenant_id: str, envio_data: str, k_c
             qde_clusters_rota
         FROM resumo_transferencias
         WHERE tenant_id = %s AND envio_data = %s AND k_clusters = %s
-        ORDER BY rota_id
     """
-    return pd.read_sql(query, db_conn, params=(tenant_id, envio_data, k_clusters))
+
+    params = [tenant_id, envio_data, k_clusters]
+    if simulation_id:
+        query += " AND simulation_id = %s"
+        params.append(simulation_id)
+
+    query += " ORDER BY rota_id"
+    return pd.read_sql(query, db_conn, params=tuple(params))
 
 def carregar_detalhes_transferencias(db_conn, tenant_id, envio_data, k_clusters):
     query = """
@@ -483,7 +507,13 @@ def buscar_latlon_ctes(clusterization_db, simulation_db, tenant_id, envio_data, 
 
     return df
 
-def carregar_resumo_lastmile(db_conn, tenant_id: str, envio_data: str, k_clusters: int) -> pd.DataFrame:
+def carregar_resumo_lastmile(
+    db_conn,
+    tenant_id: str,
+    envio_data: str,
+    k_clusters: int,
+    simulation_id: str | None = None,
+) -> pd.DataFrame:
     query = """
         SELECT
             rota_id,
@@ -497,9 +527,15 @@ def carregar_resumo_lastmile(db_conn, tenant_id: str, envio_data: str, k_cluster
             qde_entregas
         FROM resumo_rotas_last_mile
         WHERE tenant_id = %s AND envio_data = %s AND k_clusters = %s
-        ORDER BY rota_id
     """
-    return pd.read_sql(query, db_conn, params=(tenant_id, envio_data, k_clusters))
+
+    params = [tenant_id, envio_data, k_clusters]
+    if simulation_id:
+        query += " AND simulation_id = %s"
+        params.append(simulation_id)
+
+    query += " ORDER BY rota_id"
+    return pd.read_sql(query, db_conn, params=tuple(params))
 
 def carregar_cluster_costs(simulation_db, tenant_id: str) -> dict:
     query = """
