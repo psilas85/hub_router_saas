@@ -183,6 +183,27 @@ def solve_time_windows_vrp(
         special_dimension.CumulVar(end_index).SetMax(max_special_per_route)
 
     # ------------------------------------------------------------------
+    # Restrição: máximo de entregas por rota
+    # ------------------------------------------------------------------
+    delivery_demands = [0] + [1] * len(locations)
+
+    def delivery_demand_callback(from_index):
+        node = manager.IndexToNode(from_index)
+        return delivery_demands[node]
+
+    delivery_callback_index = routing.RegisterUnaryTransitCallback(
+        delivery_demand_callback
+    )
+
+    routing.AddDimensionWithVehicleCapacity(
+        delivery_callback_index,
+        0,
+        [int(entregas_por_rota)] * num_vehicles,
+        True,
+        "Deliveries",
+    )
+
+    # ------------------------------------------------------------------
     # Time dimension = deslocamento + tempo de serviço
     # ------------------------------------------------------------------
     def time_callback(from_index, to_index):
