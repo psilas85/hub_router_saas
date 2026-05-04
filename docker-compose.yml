@@ -190,6 +190,23 @@ services:
       - hub_router_network
     restart: always
 
+  clusterization_worker:
+    image: psilas85/hub_router-clusterization:latest
+    command: rq worker -u redis://redis:6379 clusterization_jobs
+    volumes:
+      - ./src:/app/src
+      - ./exports/clusterization:/app/output
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      - PYTHONPATH=/app/src
+    env_file:
+      - ./src/clusterization/.env
+    networks:
+      - hub_router_network
+    restart: always
+
   last_mile_routing_service:
     build:
       context: .
@@ -461,6 +478,5 @@ networks:
 
 volumes:
   postgres_data:
-
 
 

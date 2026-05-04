@@ -4,9 +4,14 @@ import pandas as pd
 import numpy as np
 
 
-def _histograma(serie: pd.Series, bins: int = 30) -> list:
+def _histograma(serie: pd.Series, bins: int = 30, p_cap: float = 99.0) -> list:
     serie_limpa = serie.dropna()
     serie_limpa = serie_limpa[serie_limpa > 0]
+    if serie_limpa.empty:
+        return []
+    # cap outliers at p_cap percentile so bins aren't stretched by extreme values
+    cap = float(serie_limpa.quantile(p_cap / 100))
+    serie_limpa = serie_limpa[serie_limpa <= cap]
     if serie_limpa.empty:
         return []
     counts, edges = np.histogram(serie_limpa, bins=bins)
@@ -23,7 +28,7 @@ def calcular(df: pd.DataFrame) -> dict:
     frete_sobre_nf: pd.Series = pd.Series(dtype=float)
     if "cte_valor_frete" in df.columns and "cte_valor_nf" in df.columns:
         df_valid = df[(df["cte_valor_nf"] > 0) & (df["cte_valor_frete"] > 0)]
-        frete_sobre_nf = df_valid["cte_valor_frete"] / df_valid["cte_valor_nf"]
+        frete_sobre_nf = (df_valid["cte_valor_frete"] / df_valid["cte_valor_nf"]) * 100
 
     return {
         "peso": _histograma(df["cte_peso"]) if "cte_peso" in df.columns else [],

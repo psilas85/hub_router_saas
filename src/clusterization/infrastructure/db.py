@@ -370,21 +370,36 @@ class Database:
             logging.error(f"❌ Erro ao buscar entregas para tenant {tenant_id}: {e}")
             return pd.DataFrame()
 
-    def buscar_datas_disponiveis_por_tenant(self, tenant_id, limit=30):
+    def buscar_datas_disponiveis_por_tenant(self, tenant_id, limit=30, offset=0, data_inicio=None, data_fim=None):
         """
         Lista as datas que possuem entregas para clusterização, filtrando por tenant_id.
         """
+        filtros = [
+            "tenant_id = %s",
+            "envio_data IS NOT NULL",
+        ]
+        params = [tenant_id]
+
+        if data_inicio:
+            filtros.append("envio_data::date >= %s")
+            params.append(data_inicio)
+        if data_fim:
+            filtros.append("envio_data::date <= %s")
+            params.append(data_fim)
+
+        where_clause = " AND ".join(filtros)
         query = """
         SELECT envio_data::date AS data, COUNT(*) AS quantidade_entregas
         FROM public.entregas
-        WHERE tenant_id = %s
-        AND envio_data IS NOT NULL
+        WHERE {where_clause}
         GROUP BY envio_data::date
         ORDER BY envio_data::date DESC
         LIMIT %s
-        """
+        OFFSET %s
+        """.format(where_clause=where_clause)
+        params.extend([limit, offset])
         try:
-            df = pd.read_sql(query, self.conexao, params=[tenant_id, limit])
+            df = pd.read_sql(query, self.conexao, params=params)
             logging.info(f"✅ {len(df)} datas de entregas encontradas para tenant {tenant_id}.")
             return df
         except Exception as e:

@@ -1,15 +1,21 @@
 #hub_router_1.0.1/src/clusterization/api/routes.py
 import os
 import logging
+import uuid
 import pandas as pd
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from redis import Redis
+from rq import Queue
+from rq.job import Job
 
 from authentication.utils.dependencies import get_current_user
 from authentication.domain.entities import UsuarioToken
 
+from clusterization.application.clusterization_runner import executar_clusterizacao_pipeline
+from clusterization.jobs import CLUSTERIZATION_JOBS_QUEUE, processar_clusterizacao_job
 from clusterization.infrastructure.db import Database
 from clusterization.infrastructure.database_connection import conectar_banco_routing, fechar_conexao
 from clusterization.infrastructure.database_reader import DatabaseReader
@@ -20,7 +26,11 @@ from clusterization.domain.clustering_service import ClusteringService
 from clusterization.application.clusterization_use_case import ClusterizationUseCase
 from clusterization.config import UF_BOUNDS
 
-from clusterization.visualization.main_visualization import carregar_dados_para_visualizacao
+from clusterization.visualization.main_visualization import (
+    carregar_dados_para_visualizacao,
+    carregar_entregas_clusterizadas_para_excel,
+    gerar_excel_entregas_clusterizadas,
+)
 from clusterization.visualization.plot_clusterization import gerar_mapa_clusters, gerar_mapa_estatico
 from clusterization.visualization.gerar_resumo_clusterizacao import gerar_graficos_resumo_clusterizacao
 from clusterization.visualization.gerador_relatorio_clusterizacao import gerar_relatorio_clusterizacao
@@ -31,6 +41,9 @@ router = APIRouter(
 )
 
 logger = logging.getLogger("clusterization")
+
+redis_conn = Redis(host="redis", port=6379)
+clusterization_queue = Queue(CLUSTERIZATION_JOBS_QUEUE, connection=redis_conn)
 
 
 class HubCadastroIn(BaseModel):
@@ -45,6 +58,15 @@ class HubCadastroIn(BaseModel):
 
 class HubCadastroOut(HubCadastroIn):
     id: int
+
+
+class ClusterizationJobIn(BaseModel):
+    data: date
+    data_final: Optional[date] = None
+    hub_central_id: int
+    min_entregas_por_cluster_alvo: int = 10
+    max_entregas_por_cluster_alvo: int = 100
+    raio_cluster_hub_central: float = 80.0
 
 
 def _ensure_hubs_schema(conn):
@@ -230,14 +252,28 @@ def excluir_hub_clusterization(hub_id: int, usuario: UsuarioToken = Depends(get_
 @router.get("/datas-disponiveis", summary="Listar datas com entregas disponíveis")
 def listar_datas_disponiveis(
     limit: int = Query(30, ge=1, le=365, description="Quantidade máxima de datas retornadas"),
+    offset: int = Query(0, ge=0, description="Quantidade de datas ignoradas para paginação"),
+    data_inicio: Optional[date] = Query(None, description="Filtrar datas a partir de YYYY-MM-DD"),
+    data_fim: Optional[date] = Query(None, description="Filtrar datas até YYYY-MM-DD"),
     usuario: UsuarioToken = Depends(get_current_user)
 ):
+    if data_inicio and data_fim and data_fim < data_inicio:
+        raise HTTPException(status_code=400, detail="Data final não pode ser anterior à data inicial")
+
     tenant_id = usuario.tenant_id
     db = Database()
     db.conectar()
 
     try:
-        df_datas = db.buscar_datas_disponiveis_por_tenant(tenant_id, limit=limit)
+        df_datas = db.buscar_datas_disponiveis_por_tenant(
+            tenant_id,
+            limit=limit + 1,
+            offset=offset,
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+        )
+        has_more = len(df_datas) > limit
+        df_datas = df_datas.head(limit)
         datas = [
             {
                 "data": str(row["data"]),
@@ -250,9 +286,93 @@ def listar_datas_disponiveis(
             "status": "ok",
             "tenant_id": tenant_id,
             "datas": datas,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
+            },
         }
     finally:
         db.fechar_conexao()
+
+
+@router.post("/jobs", summary="Executar clusterização assíncrona")
+def criar_job_clusterizacao(
+    payload: ClusterizationJobIn,
+    usuario: UsuarioToken = Depends(get_current_user),
+):
+    if payload.data_final and payload.data_final < payload.data:
+        raise HTTPException(status_code=400, detail="Data final não pode ser anterior à data inicial")
+    if payload.min_entregas_por_cluster_alvo < 1 or payload.max_entregas_por_cluster_alvo < 1:
+        raise HTTPException(status_code=400, detail="Min/max de entregas por cluster devem ser maiores que zero")
+    if payload.min_entregas_por_cluster_alvo > payload.max_entregas_por_cluster_alvo:
+        raise HTTPException(status_code=400, detail="Mínimo de entregas não pode ser maior que o máximo")
+
+    job_id = str(uuid.uuid4())
+    job = clusterization_queue.enqueue(
+        processar_clusterizacao_job,
+        usuario.tenant_id,
+        str(payload.data),
+        str(payload.data_final) if payload.data_final else None,
+        payload.hub_central_id,
+        payload.min_entregas_por_cluster_alvo,
+        payload.max_entregas_por_cluster_alvo,
+        payload.raio_cluster_hub_central,
+        job_id=job_id,
+        job_timeout=3600,
+        result_ttl=86400,
+        failure_ttl=86400,
+    )
+    job.meta["progress"] = 0
+    job.meta["step"] = "Enfileirado"
+    job.save_meta()
+
+    return {
+        "status": "processing",
+        "job_id": job.id,
+        "progress": 0,
+        "step": "Enfileirado",
+    }
+
+
+@router.get("/jobs/{job_id}", summary="Status da clusterização assíncrona")
+def status_job_clusterizacao(
+    job_id: str,
+    usuario: UsuarioToken = Depends(get_current_user),
+):
+    try:
+        job = Job.fetch(job_id, connection=redis_conn)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Job não encontrado")
+
+    status = job.get_status(refresh=True)
+    if job.is_finished:
+        result = job.result or job.meta.get("result")
+        return {
+            "status": "done",
+            "job_id": job.id,
+            "progress": 100,
+            "step": "Concluído",
+            "result": result,
+        }
+
+    if job.is_failed:
+        return {
+            "status": "error",
+            "job_id": job.id,
+            "progress": 100,
+            "step": job.meta.get("step") or "Erro",
+            "error": job.meta.get("error") or "Erro ao executar clusterização",
+        }
+
+    return {
+        "status": "processing",
+        "job_id": job.id,
+        "progress": job.meta.get("progress", 0),
+        "step": job.meta.get("step", "Processando"),
+        "rq_status": status,
+    }
 
 
 @router.post("/clusterizar", summary="Executar clusterização de entregas")
@@ -412,15 +532,24 @@ def visualizar_clusterizacao(
         maps_dir = os.path.join(tenant_base, "maps")
         graphs_dir = os.path.join(tenant_base, "graphs")
         relatorios_dir = os.path.join(tenant_base, "relatorios")
+        planilhas_dir = os.path.join(tenant_base, "planilhas")
 
         os.makedirs(maps_dir, exist_ok=True)
         os.makedirs(graphs_dir, exist_ok=True)
         os.makedirs(relatorios_dir, exist_ok=True)
+        os.makedirs(planilhas_dir, exist_ok=True)
 
         # Gera arquivos
         caminho_mapa_html = gerar_mapa_clusters(df_clusterizado, data, tenant_id, output_path=maps_dir)
         caminho_mapa_png = gerar_mapa_estatico(df_clusterizado, data, tenant_id, output_path=maps_dir)
         caminhos_graficos = gerar_graficos_resumo_clusterizacao(df_resumo, data, tenant_id, output_path=graphs_dir)
+        df_excel = carregar_entregas_clusterizadas_para_excel(tenant_id, data)
+        caminho_excel = gerar_excel_entregas_clusterizadas(
+            df_excel,
+            str(data),
+            tenant_id,
+            output_path=planilhas_dir,
+        )
         caminho_pdf = gerar_relatorio_clusterizacao(
             caminho_mapa_html,
             caminhos_graficos,
@@ -438,7 +567,8 @@ def visualizar_clusterizacao(
         arquivos = {
             "mapa_html": f"{base_url}/maps/mapa_clusters.html",
             "mapa_png": f"{base_url}/maps/mapa_clusters.png",
-            "pdf": f"{base_url}/relatorios/relatorio_clusterizacao.pdf"
+            "pdf": f"{base_url}/relatorios/relatorio_clusterizacao.pdf",
+            "xlsx": f"{base_url}/planilhas/{os.path.basename(caminho_excel)}"
         }
 
         return {

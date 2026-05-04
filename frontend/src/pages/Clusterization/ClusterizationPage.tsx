@@ -2,13 +2,25 @@
 import { useEffect, useState } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
-import { Loader2, Network, PlayCircle, FileText, Map } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Network, PlayCircle, FileText, Map, Search, X } from "lucide-react";
 import { listClusterizationHubs, type ClusterizationHub } from "@/services/clusterizationApi";
 
 type DataDisponivel = {
     data: string;
     quantidade_entregas: number;
 };
+
+type JobState = {
+    job_id: string;
+    status: "processing" | "done" | "error";
+    progress: number;
+    step: string;
+    error?: string;
+};
+
+const POLLING_INTERVAL_MS = 700;
+const MIN_PROGRESS_VISIBLE_MS = 1800;
+const DATAS_PAGE_SIZE = 5;
 
 function normalizeErrorDetail(value: any): string | undefined {
     if (!value) {
@@ -44,8 +56,54 @@ export default function ClusterizationPage() {
     const [vizLoading, setVizLoading] = useState(false);
     const [datasDisponiveis, setDatasDisponiveis] = useState<DataDisponivel[]>([]);
     const [datasLoading, setDatasLoading] = useState(false);
+    const [datasOffset, setDatasOffset] = useState(0);
+    const [datasHasMore, setDatasHasMore] = useState(false);
+    const [dataInicioFiltro, setDataInicioFiltro] = useState("");
+    const [dataFimFiltro, setDataFimFiltro] = useState("");
     const [hubsCentrais, setHubsCentrais] = useState<ClusterizationHub[]>([]);
     const [hubsLoading, setHubsLoading] = useState(false);
+    const [jobState, setJobState] = useState<JobState | null>(null);
+    const [jobStartedAt, setJobStartedAt] = useState<number | null>(null);
+
+    const carregarDatasDisponiveis = async (offset = 0, usarFiltros = true) => {
+        setDatasLoading(true);
+        try {
+            const params: Record<string, string | number> = {
+                limit: DATAS_PAGE_SIZE,
+                offset,
+            };
+            if (usarFiltros && dataInicioFiltro) {
+                params.data_inicio = dataInicioFiltro;
+            }
+            if (usarFiltros && dataFimFiltro) {
+                params.data_fim = dataFimFiltro;
+            }
+
+            const res = await api.get("/clusterization/datas-disponiveis", { params });
+            const datas = res.data.datas || [];
+
+            setDatasDisponiveis(datas);
+            setDatasOffset(offset);
+            setDatasHasMore(Boolean(res.data.pagination?.has_more));
+
+            if (datas.length > 0 && (!data || !datas.some((item: DataDisponivel) => item.data === data))) {
+                setData(datas[0].data);
+            }
+            if (datas.length === 0) {
+                setData("");
+            }
+        } catch (err: any) {
+            toast.error("Não foi possível carregar datas disponíveis: " + getErrorMessage(err));
+        } finally {
+            setDatasLoading(false);
+        }
+    };
+
+    const limparFiltrosDatas = () => {
+        setDataInicioFiltro("");
+        setDataFimFiltro("");
+        carregarDatasDisponiveis(0, false);
+    };
 
     useEffect(() => {
         const carregarDadosIniciais = async () => {
@@ -54,7 +112,7 @@ export default function ClusterizationPage() {
             try {
                 const [datasRes, hubsRes] = await Promise.all([
                     api.get("/clusterization/datas-disponiveis", {
-                        params: { limit: 60 },
+                        params: { limit: DATAS_PAGE_SIZE, offset: 0 },
                     }),
                     listClusterizationHubs(),
                 ]);
@@ -68,6 +126,8 @@ export default function ClusterizationPage() {
                 }
 
                 setDatasDisponiveis(datas);
+                setDatasOffset(0);
+                setDatasHasMore(Boolean(datasRes.data.pagination?.has_more));
                 if (datas.length > 0) {
                     setData((dataAtual) => dataAtual || datas[0].data);
                 }
@@ -103,6 +163,8 @@ export default function ClusterizationPage() {
         setLoading(true);
         setResultado(null);
         setViz(null);
+        setJobState(null);
+        setJobStartedAt(Date.now());
 
         try {
             const payload = {
@@ -113,32 +175,28 @@ export default function ClusterizationPage() {
                 raio_cluster_hub_central: raioHub,
             };
 
-            console.log("[Clusterization] POST /clusterization/processar", {
-                params: payload,
-            });
+            console.log("[Clusterization] POST /clusterization/jobs", payload);
 
-            const res = await api.post("/clusterization/processar", null, {
-                params: payload,
-            });
+            const res = await api.post("/clusterization/jobs", payload);
 
-            setResultado(res.data);
-            if (res.data.datas?.length) {
-                setVizData(res.data.datas[0]);
-            }
-            toast.success("Clusterização concluída com sucesso!");
+            setJobState({
+                job_id: res.data.job_id,
+                status: "processing",
+                progress: Math.max(5, res.data.progress ?? 0),
+                step: res.data.step ?? "Enfileirado",
+            });
+            toast.success("Clusterização enfileirada.");
         } catch (err: any) {
             toast.error(
                 "Erro ao executar clusterização: " +
                 getErrorMessage(err)
             );
-        } finally {
             setLoading(false);
         }
     };
 
-    // 👉 Visualizar relatórios/maps
-    const visualizar = async () => {
-        if (!vizData) {
+    const carregarVisualizacao = async (dataVisualizacao: string, automatico = false) => {
+        if (!dataVisualizacao) {
             toast.error("Selecione uma data para visualizar.");
             return;
         }
@@ -146,10 +204,10 @@ export default function ClusterizationPage() {
         setViz(null);
         try {
             const res = await api.get("/clusterization/visualizar", {
-                params: { data: vizData },
+                params: { data: dataVisualizacao },
             });
             setViz(res.data);
-            toast.success("Visualização carregada!");
+            toast.success(automatico ? "Mapa gerado automaticamente." : "Visualização carregada!");
         } catch (err: any) {
             toast.error(
                 "Erro ao visualizar clusterização: " +
@@ -159,6 +217,81 @@ export default function ClusterizationPage() {
             setVizLoading(false);
         }
     };
+
+    useEffect(() => {
+        if (!jobState?.job_id || jobState.status !== "processing") return;
+
+        let finishTimeout: ReturnType<typeof setTimeout> | null = null;
+
+        const concluirJob = (result: any) => {
+            setJobState({
+                job_id: jobState.job_id,
+                status: "done",
+                progress: 100,
+                step: "Concluído",
+            });
+            setResultado(result);
+            if (result?.datas?.length) {
+                const primeiraData = result.datas[0];
+                setVizData(primeiraData);
+                carregarVisualizacao(primeiraData, true);
+            }
+            setLoading(false);
+            toast.success("Clusterização concluída com sucesso!");
+        };
+
+        const interval = setInterval(async () => {
+            try {
+                const res = await api.get(`/clusterization/jobs/${jobState.job_id}`);
+                const status = res.data.status;
+
+                if (status === "done") {
+                    const result = res.data.result;
+                    setJobState({
+                        job_id: jobState.job_id,
+                        status: "processing",
+                        progress: 98,
+                        step: "Finalizando resultados...",
+                    });
+                    clearInterval(interval);
+                    const elapsed = jobStartedAt ? Date.now() - jobStartedAt : MIN_PROGRESS_VISIBLE_MS;
+                    const remaining = Math.max(250, MIN_PROGRESS_VISIBLE_MS - elapsed);
+                    finishTimeout = setTimeout(() => concluirJob(result), remaining);
+                    return;
+                }
+
+                if (status === "error") {
+                    setJobState({
+                        job_id: jobState.job_id,
+                        status: "error",
+                        progress: 100,
+                        step: res.data.step || "Erro",
+                        error: res.data.error,
+                    });
+                    setLoading(false);
+                    toast.error(res.data.error || "Erro ao executar clusterização.");
+                    clearInterval(interval);
+                    return;
+                }
+
+                setJobState({
+                    job_id: jobState.job_id,
+                    status: "processing",
+                    progress: Math.max(8, Math.min(95, res.data.progress ?? 0)),
+                    step: res.data.step ?? "Processando",
+                });
+            } catch (err: any) {
+                setJobState((prev) => prev ? { ...prev, step: "Aguardando atualização..." } : prev);
+            }
+        }, POLLING_INTERVAL_MS);
+
+        return () => {
+            clearInterval(interval);
+            if (finishTimeout) {
+                clearTimeout(finishTimeout);
+            }
+        };
+    }, [jobState?.job_id, jobState?.status, jobStartedAt]);
 
     const buildExportUrl = (path: string) =>
         `${import.meta.env.VITE_API_URL}${path}`;
@@ -173,37 +306,111 @@ export default function ClusterizationPage() {
 
                 {/* Formulário de parâmetros */}
                 <div className="grid gap-3">
-                    <label className="text-sm font-medium">
-                        Data:
-                        <input
-                            type="date"
-                            value={data}
-                            onChange={(e) => setData(e.target.value)}
-                            className="border rounded px-3 py-2 w-full"
-                        />
-                    </label>
-                    {datasDisponiveis.length > 0 && (
-                        <label className="text-sm font-medium">
-                            Datas com entregas:
-                            <select
-                                value={data}
-                                onChange={(e) => setData(e.target.value)}
-                                className="border rounded px-3 py-2 w-full"
+                    <div className="rounded-lg border bg-slate-50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                            <p className="font-medium flex items-center gap-2">
+                                <CalendarDays className="w-4 h-4 text-emerald-600" />
+                                Datas de input disponíveis
+                            </p>
+                            {data && (
+                                <span className="text-sm text-slate-600">
+                                    Selecionada: {data}
+                                </span>
+                            )}
+                        </div>
+
+                        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto_auto]">
+                            <label className="text-sm font-medium">
+                                De:
+                                <input
+                                    type="date"
+                                    value={dataInicioFiltro}
+                                    onChange={(e) => setDataInicioFiltro(e.target.value)}
+                                    className="border rounded px-3 py-2 w-full bg-white"
+                                />
+                            </label>
+                            <label className="text-sm font-medium">
+                                Até:
+                                <input
+                                    type="date"
+                                    value={dataFimFiltro}
+                                    onChange={(e) => setDataFimFiltro(e.target.value)}
+                                    className="border rounded px-3 py-2 w-full bg-white"
+                                />
+                            </label>
+                            <button
+                                onClick={() => carregarDatasDisponiveis(0, true)}
+                                disabled={datasLoading}
+                                className="self-end bg-white border rounded-lg px-4 py-2 hover:bg-slate-100 disabled:opacity-60 flex items-center justify-center gap-2"
                             >
-                                {datasDisponiveis.map((item) => (
-                                    <option key={item.data} value={item.data}>
-                                        {item.data} - {item.quantidade_entregas} entregas
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-                    )}
-                    {datasLoading && (
-                        <p className="text-sm text-gray-500 flex items-center gap-2">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            Carregando datas disponíveis...
-                        </p>
-                    )}
+                                {datasLoading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <Search className="w-4 h-4" />
+                                )}
+                                Filtrar
+                            </button>
+                            <button
+                                onClick={limparFiltrosDatas}
+                                disabled={datasLoading || (!dataInicioFiltro && !dataFimFiltro && datasOffset === 0)}
+                                className="self-end bg-white border rounded-lg px-4 py-2 hover:bg-slate-100 disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                                <X className="w-4 h-4" />
+                                Limpar
+                            </button>
+                        </div>
+
+                        <div className="mt-4 grid gap-2">
+                            {datasLoading && (
+                                <p className="text-sm text-gray-500 flex items-center gap-2">
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Carregando datas disponíveis...
+                                </p>
+                            )}
+                            {!datasLoading && datasDisponiveis.length === 0 && (
+                                <p className="text-sm text-gray-600">
+                                    Nenhum input encontrado para os filtros informados.
+                                </p>
+                            )}
+                            {!datasLoading && datasDisponiveis.map((item) => (
+                                <button
+                                    key={item.data}
+                                    onClick={() => setData(item.data)}
+                                    className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-left transition ${data === item.data
+                                        ? "border-emerald-600 bg-emerald-50"
+                                        : "bg-white hover:bg-slate-50"
+                                        }`}
+                                >
+                                    <span className="font-medium">{item.data}</span>
+                                    <span className="text-sm text-slate-600">
+                                        {item.quantidade_entregas} entregas
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between gap-3">
+                            <button
+                                onClick={() => carregarDatasDisponiveis(Math.max(0, datasOffset - DATAS_PAGE_SIZE), true)}
+                                disabled={datasLoading || datasOffset === 0}
+                                className="border rounded-lg px-3 py-2 disabled:opacity-50 flex items-center gap-2"
+                            >
+                                <ChevronLeft className="w-4 h-4" />
+                                Anteriores
+                            </button>
+                            <span className="text-sm text-slate-600">
+                                Mostrando {datasOffset + 1} - {datasOffset + datasDisponiveis.length}
+                            </span>
+                            <button
+                                onClick={() => carregarDatasDisponiveis(datasOffset + DATAS_PAGE_SIZE, true)}
+                                disabled={datasLoading || !datasHasMore}
+                                className="border rounded-lg px-3 py-2 disabled:opacity-50 flex items-center gap-2"
+                            >
+                                Próximas
+                                <ChevronRight className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
 
                     <div className="flex gap-3">
                         <label className="flex-1 text-sm font-medium">
@@ -280,6 +487,27 @@ export default function ClusterizationPage() {
                     </button>
                 </div>
 
+                {jobState && (
+                    <div className="mt-6 bg-slate-50 border rounded-lg p-4">
+                        <div className="flex items-center justify-between gap-3">
+                            <p className="font-medium">
+                                {jobState.status === "error" ? "Clusterização com erro" : "Processamento da clusterização"}
+                            </p>
+                            <span className="text-sm text-slate-600">{jobState.progress}%</span>
+                        </div>
+                        <div className="mt-3 h-3 w-full rounded bg-slate-200 overflow-hidden">
+                            <div
+                                className={`h-full ${jobState.status === "error" ? "bg-red-500" : "bg-emerald-600"}`}
+                                style={{ width: `${Math.min(100, Math.max(0, jobState.progress))}%` }}
+                            />
+                        </div>
+                        <p className="mt-2 text-sm text-slate-600">{jobState.step}</p>
+                        {jobState.error && (
+                            <p className="mt-2 text-sm text-red-600">{jobState.error}</p>
+                        )}
+                    </div>
+                )}
+
                 {/* Resultado da execução */}
                 {resultado && (
                     <div className="mt-6 bg-gray-50 border rounded-lg p-4">
@@ -289,6 +517,21 @@ export default function ClusterizationPage() {
                                 Faixa alvo: {resultado.parametros.min_entregas_por_cluster_alvo} a{" "}
                                 {resultado.parametros.max_entregas_por_cluster_alvo} entregas por cluster.
                             </p>
+                        )}
+                        {resultado.resumo?.length > 0 && (
+                            <div className="mt-3 grid gap-2">
+                                {resultado.resumo.map((item: any) => (
+                                    <div key={item.data} className="rounded border bg-white p-3 text-sm">
+                                        <p className="font-medium">{item.data}</p>
+                                        <p className="text-gray-600">
+                                            {item.total_entregas} entregas, {item.total_clusters} clusters, {item.total_outliers} outliers.
+                                        </p>
+                                        <p className="mt-1 text-gray-600">
+                                            Distribuição: {Object.entries(item.distribuicao_clusters || {}).map(([cluster, qtd]) => `Cluster ${cluster}: ${qtd}`).join(" | ")}
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
                         )}
                         {resultado.datas?.length > 0 && (
                             <>
@@ -307,7 +550,7 @@ export default function ClusterizationPage() {
                                     </select>
                                 </label>
                                 <button
-                                    onClick={visualizar}
+                                    onClick={() => carregarVisualizacao(vizData)}
                                     disabled={vizLoading}
                                     className="mt-3 bg-emerald-600 text-white rounded-lg px-4 py-2 hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-2"
                                 >
@@ -317,12 +560,19 @@ export default function ClusterizationPage() {
                                         </>
                                     ) : (
                                         <>
-                                            <FileText className="w-4 h-4" /> Visualizar
+                                            <FileText className="w-4 h-4" /> Atualizar visualização
                                         </>
                                     )}
                                 </button>
                             </>
                         )}
+                    </div>
+                )}
+
+                {vizLoading && (
+                    <div className="mt-6 bg-slate-50 border rounded-lg p-4 text-sm text-slate-600 flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Gerando mapa, gráficos e relatório...
                     </div>
                 )}
 
@@ -351,6 +601,17 @@ export default function ClusterizationPage() {
                                     <FileText className="w-4 h-4" /> Baixar Relatório PDF
                                 </a>
                             </li>
+                            {viz.arquivos.xlsx && (
+                                <li>
+                                    <a
+                                        href={buildExportUrl(viz.arquivos.xlsx)}
+                                        target="_blank"
+                                        className="hover:underline flex items-center gap-1"
+                                    >
+                                        <FileText className="w-4 h-4" /> Baixar Entregas Clusterizadas XLSX
+                                    </a>
+                                </li>
+                            )}
                         </ul>
 
                         {/* Prévia do mapa interativo */}

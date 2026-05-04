@@ -6,7 +6,8 @@ COPY src/ /app/src
 
 ENV PYTHONPATH=/app/src
 
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir redis==5.2.1
 
 EXPOSE 8015
 

@@ -32,10 +32,17 @@ async def healthcheck(request: Request):
 async def listar_datas_disponiveis(
     request: Request,
     limit: int = Query(30, ge=1, le=365, description="Quantidade máxima de datas retornadas"),
+    offset: int = Query(0, ge=0, description="Quantidade de datas ignoradas para paginação"),
+    data_inicio: Optional[str] = Query(None, description="Filtrar datas a partir de YYYY-MM-DD"),
+    data_fim: Optional[str] = Query(None, description="Filtrar datas até YYYY-MM-DD"),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
     url = f"{CLUSTERIZATION_URL}/cluster/datas-disponiveis"
-    params = {"limit": limit}
+    params = {"limit": limit, "offset": offset}
+    if data_inicio:
+        params["data_inicio"] = data_inicio
+    if data_fim:
+        params["data_fim"] = data_fim
     headers = {"Authorization": request.headers.get("Authorization")}
 
     result = await forward_request("GET", url, headers=headers, params=params)
@@ -95,6 +102,34 @@ async def excluir_hub_clusterization(
 ):
     headers = {"Authorization": request.headers.get("Authorization")}
     result = await forward_request("DELETE", f"{CLUSTERIZATION_URL}/cluster/hubs/{hub_id}", headers=headers)
+
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.post("/jobs", summary="Executar clusterização assíncrona")
+async def criar_job_clusterizacao(
+    request: Request,
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    body = await request.json()
+    headers = {"Authorization": request.headers.get("Authorization")}
+    result = await forward_request("POST", f"{CLUSTERIZATION_URL}/cluster/jobs", headers=headers, json=body)
+
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.get("/jobs/{job_id}", summary="Status da clusterização assíncrona")
+async def status_job_clusterizacao(
+    job_id: str,
+    request: Request,
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    headers = {"Authorization": request.headers.get("Authorization")}
+    result = await forward_request("GET", f"{CLUSTERIZATION_URL}/cluster/jobs/{job_id}", headers=headers)
 
     if result["status_code"] >= 400:
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
