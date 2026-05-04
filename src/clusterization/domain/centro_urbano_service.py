@@ -43,6 +43,10 @@ class CentroUrbanoService:
 
         return df_clusterizado
 
+    def buscar_centros_predefinidos(self, tenant_id: str, centros_ids: list) -> list:
+        """Retorna lista de dicts {id, lat, lon, nome} para centros pré-definidos."""
+        return self.reader.buscar_centros_predefinidos(tenant_id, centros_ids)
+
     def buscar_hub_central(self, tenant_id: str, hub_central_id: int = None) -> tuple:
         """
         Retorna latitude e longitude do hub central selecionado do tenant.

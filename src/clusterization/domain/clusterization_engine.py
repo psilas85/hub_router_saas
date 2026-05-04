@@ -149,6 +149,55 @@ class ClusterizationEngine:
         df = self._aplicar_centros(df, centers_df)
         return df, centers_df
 
+    def perform_predefined_center_clustering(
+        self,
+        data: pd.DataFrame,
+        centers: list,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Atribui cada entrega ao centro pré-definido mais próximo por distância Haversine.
+        centers: lista de dicts com chaves 'id', 'lat', 'lon', e opcionalmente 'nome'.
+        """
+        df = self._normalizar_colunas_coordenadas(data).dropna(
+            subset=[self.LAT_COL, self.LON_COL]
+        ).copy()
+
+        if df.empty:
+            return df, pd.DataFrame(columns=["cluster", "centro_lat", "centro_lon", "cluster_cidade"])
+
+        if not centers:
+            raise ValueError("Nenhum centro pré-definido fornecido para clusterização.")
+
+        entrega_lats = np.radians(df[self.LAT_COL].values)
+        entrega_lons = np.radians(df[self.LON_COL].values)
+        center_lats = np.radians(np.array([c["lat"] for c in centers]))
+        center_lons = np.radians(np.array([c["lon"] for c in centers]))
+
+        dlat = center_lats[None, :] - entrega_lats[:, None]
+        dlon = center_lons[None, :] - entrega_lons[:, None]
+        a = (
+            np.sin(dlat / 2) ** 2
+            + np.cos(entrega_lats[:, None]) * np.cos(center_lats[None, :]) * np.sin(dlon / 2) ** 2
+        )
+        nearest_idx = np.argmin(a, axis=1)
+
+        df["cluster"] = [centers[i]["id"] for i in nearest_idx]
+        df["centro_lat"] = [centers[i]["lat"] for i in nearest_idx]
+        df["centro_lon"] = [centers[i]["lon"] for i in nearest_idx]
+        df["cluster_cidade"] = [centers[i].get("nome", "") for i in nearest_idx]
+
+        centers_df = pd.DataFrame([
+            {
+                "cluster": c["id"],
+                "centro_lat": c["lat"],
+                "centro_lon": c["lon"],
+                "cluster_cidade": c.get("nome", ""),
+            }
+            for c in centers
+        ])
+
+        return df, centers_df
+
     def perform_capacity_clustering(
         self,
         data: pd.DataFrame,

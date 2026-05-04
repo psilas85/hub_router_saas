@@ -67,6 +67,8 @@ class ClusterizationJobIn(BaseModel):
     min_entregas_por_cluster_alvo: int = 10
     max_entregas_por_cluster_alvo: int = 100
     raio_cluster_hub_central: float = 80.0
+    modo_clusterizacao: str = "automatico"
+    centros_ids: Optional[List[int]] = None
 
 
 def _ensure_hubs_schema(conn):
@@ -304,10 +306,15 @@ def criar_job_clusterizacao(
 ):
     if payload.data_final and payload.data_final < payload.data:
         raise HTTPException(status_code=400, detail="Data final não pode ser anterior à data inicial")
-    if payload.min_entregas_por_cluster_alvo < 1 or payload.max_entregas_por_cluster_alvo < 1:
-        raise HTTPException(status_code=400, detail="Min/max de entregas por cluster devem ser maiores que zero")
-    if payload.min_entregas_por_cluster_alvo > payload.max_entregas_por_cluster_alvo:
-        raise HTTPException(status_code=400, detail="Mínimo de entregas não pode ser maior que o máximo")
+    if payload.modo_clusterizacao not in ("automatico", "predefinido"):
+        raise HTTPException(status_code=400, detail="modo_clusterizacao deve ser 'automatico' ou 'predefinido'")
+    if payload.modo_clusterizacao == "automatico":
+        if payload.min_entregas_por_cluster_alvo < 1 or payload.max_entregas_por_cluster_alvo < 1:
+            raise HTTPException(status_code=400, detail="Min/max de entregas por cluster devem ser maiores que zero")
+        if payload.min_entregas_por_cluster_alvo > payload.max_entregas_por_cluster_alvo:
+            raise HTTPException(status_code=400, detail="Mínimo de entregas não pode ser maior que o máximo")
+    if payload.modo_clusterizacao == "predefinido" and not payload.centros_ids:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um centro pré-definido.")
 
     job_id = str(uuid.uuid4())
     job = clusterization_queue.enqueue(
@@ -319,6 +326,8 @@ def criar_job_clusterizacao(
         payload.min_entregas_por_cluster_alvo,
         payload.max_entregas_por_cluster_alvo,
         payload.raio_cluster_hub_central,
+        payload.modo_clusterizacao,
+        payload.centros_ids,
         job_id=job_id,
         job_timeout=3600,
         result_ttl=86400,

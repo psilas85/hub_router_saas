@@ -1,9 +1,129 @@
 // src/pages/Clusterization/ClusterizationPage.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
-import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Network, PlayCircle, FileText, Map, Search, X } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Loader2, Network, PlayCircle, FileText, Map, Search, X } from "lucide-react";
 import { listClusterizationHubs, type ClusterizationHub } from "@/services/clusterizationApi";
+
+function MultiSelectCentros({
+    options,
+    selected,
+    onChange,
+    loading,
+}: {
+    options: ClusterizationHub[];
+    selected: number[];
+    onChange: (ids: number[]) => void;
+    loading: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        function handleClick(e: MouseEvent) {
+            if (ref.current && !ref.current.contains(e.target as Node)) {
+                setOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClick);
+        return () => document.removeEventListener("mousedown", handleClick);
+    }, []);
+
+    const toggle = (id: number) => {
+        onChange(selected.includes(id) ? selected.filter((c) => c !== id) : [...selected, id]);
+    };
+
+    const label =
+        selected.length === 0
+            ? "Selecione os centros pré-definidos"
+            : selected.length === options.length
+            ? "Todos os centros selecionados"
+            : `${selected.length} centro${selected.length > 1 ? "s" : ""} selecionado${selected.length > 1 ? "s" : ""}`;
+
+    return (
+        <div ref={ref} className="relative">
+            <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                disabled={loading}
+                className="w-full flex items-center justify-between border rounded px-3 py-2 bg-white text-sm disabled:opacity-60 hover:border-emerald-400 transition"
+            >
+                <span className={selected.length === 0 ? "text-gray-400" : "text-gray-800"}>{label}</span>
+                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
+            </button>
+
+            {selected.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                    {selected.map((id) => {
+                        const hub = options.find((h) => h.id === id);
+                        return hub ? (
+                            <span
+                                key={id}
+                                className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5"
+                            >
+                                {hub.nome}
+                                <button
+                                    type="button"
+                                    onClick={() => toggle(id)}
+                                    className="hover:text-emerald-600"
+                                >
+                                    ✕
+                                </button>
+                            </span>
+                        ) : null;
+                    })}
+                </div>
+            )}
+
+            {open && (
+                <div className="absolute z-50 mt-1 w-full rounded-lg border bg-white shadow-lg max-h-64 overflow-y-auto">
+                    {loading && (
+                        <p className="px-4 py-3 text-sm text-gray-500 flex items-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                        </p>
+                    )}
+                    {!loading && options.length === 0 && (
+                        <p className="px-4 py-3 text-sm text-gray-500">
+                            Nenhum hub marcado como Centro de Cluster ativo.
+                        </p>
+                    )}
+                    {!loading && options.length > 0 && (
+                        <>
+                            <label className="flex items-center gap-3 px-4 py-2 border-b hover:bg-slate-50 cursor-pointer text-sm font-medium">
+                                <input
+                                    type="checkbox"
+                                    checked={selected.length === options.length}
+                                    onChange={() =>
+                                        onChange(selected.length === options.length ? [] : options.map((h) => h.id))
+                                    }
+                                    className="w-4 h-4 accent-emerald-600"
+                                />
+                                Selecionar todos
+                            </label>
+                            {options.map((hub) => (
+                                <label
+                                    key={hub.id}
+                                    className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 cursor-pointer"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={selected.includes(hub.id)}
+                                        onChange={() => toggle(hub.id)}
+                                        className="w-4 h-4 accent-emerald-600"
+                                    />
+                                    <span className="text-sm">
+                                        <span className="font-medium">{hub.nome}</span>
+                                        <span className="text-gray-500 ml-1">— {hub.endereco}</span>
+                                    </span>
+                                </label>
+                            ))}
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
 
 type DataDisponivel = {
     data: string;
@@ -44,10 +164,12 @@ function getErrorMessage(err: any) {
 
 export default function ClusterizationPage() {
     const [data, setData] = useState(""); // apenas uma data
+    const [modo, setModo] = useState<"automatico" | "predefinido">("automatico");
     const [minEntregasClusterAlvo, setMinEntregasClusterAlvo] = useState(10);
     const [maxEntregasClusterAlvo, setMaxEntregasClusterAlvo] = useState(100);
     const [hubCentralId, setHubCentralId] = useState("");
     const [raioHub, setRaioHub] = useState(80.0);
+    const [centrosSelecionados, setCentrosSelecionados] = useState<number[]>([]);
 
     const [loading, setLoading] = useState(false);
     const [resultado, setResultado] = useState<any>(null);
@@ -61,6 +183,7 @@ export default function ClusterizationPage() {
     const [dataInicioFiltro, setDataInicioFiltro] = useState("");
     const [dataFimFiltro, setDataFimFiltro] = useState("");
     const [hubsCentrais, setHubsCentrais] = useState<ClusterizationHub[]>([]);
+    const [hubsCentroCluster, setHubsCentroCluster] = useState<ClusterizationHub[]>([]);
     const [hubsLoading, setHubsLoading] = useState(false);
     const [jobState, setJobState] = useState<JobState | null>(null);
     const [jobStartedAt, setJobStartedAt] = useState<number | null>(null);
@@ -119,8 +242,10 @@ export default function ClusterizationPage() {
 
                 const datas = datasRes.data.datas || [];
                 const hubs = hubsRes.filter((hub) => hub.ativo && hub.hub_central);
+                const centros = hubsRes.filter((hub) => hub.ativo && hub.centro_cluster);
 
                 setHubsCentrais(hubs);
+                setHubsCentroCluster(centros);
                 if (hubs.length > 0) {
                     setHubCentralId((hubAtual) => hubAtual || String(hubs[0].id));
                 }
@@ -148,12 +273,18 @@ export default function ClusterizationPage() {
             toast.error("Informe a data.");
             return;
         }
-        if (minEntregasClusterAlvo < 1 || maxEntregasClusterAlvo < 1) {
-            toast.error("As quantidades de entregas por cluster devem ser maiores que zero.");
-            return;
+        if (modo === "automatico") {
+            if (minEntregasClusterAlvo < 1 || maxEntregasClusterAlvo < 1) {
+                toast.error("As quantidades de entregas por cluster devem ser maiores que zero.");
+                return;
+            }
+            if (minEntregasClusterAlvo > maxEntregasClusterAlvo) {
+                toast.error("O mínimo de entregas por cluster não pode ser maior que o máximo.");
+                return;
+            }
         }
-        if (minEntregasClusterAlvo > maxEntregasClusterAlvo) {
-            toast.error("O mínimo de entregas por cluster não pode ser maior que o máximo.");
+        if (modo === "predefinido" && centrosSelecionados.length === 0) {
+            toast.error("Selecione ao menos um centro pré-definido.");
             return;
         }
         if (!hubCentralId) {
@@ -167,13 +298,18 @@ export default function ClusterizationPage() {
         setJobStartedAt(Date.now());
 
         try {
-            const payload = {
+            const payload: Record<string, any> = {
                 data: data,
-                min_entregas_por_cluster_alvo: minEntregasClusterAlvo,
-                max_entregas_por_cluster_alvo: maxEntregasClusterAlvo,
                 hub_central_id: Number(hubCentralId),
                 raio_cluster_hub_central: raioHub,
+                modo_clusterizacao: modo,
             };
+            if (modo === "automatico") {
+                payload.min_entregas_por_cluster_alvo = minEntregasClusterAlvo;
+                payload.max_entregas_por_cluster_alvo = maxEntregasClusterAlvo;
+            } else {
+                payload.centros_ids = centrosSelecionados;
+            }
 
             console.log("[Clusterization] POST /clusterization/jobs", payload);
 
@@ -412,28 +548,76 @@ export default function ClusterizationPage() {
                         </div>
                     </div>
 
-                    <div className="flex gap-3">
-                        <label className="flex-1 text-sm font-medium">
-                            Mín. entregas por cluster alvo:
-                            <input
-                                type="number"
-                                min={1}
-                                value={minEntregasClusterAlvo}
-                                onChange={(e) => setMinEntregasClusterAlvo(Number(e.target.value))}
-                                className="border rounded px-3 py-2 w-full"
-                            />
-                        </label>
-                        <label className="flex-1 text-sm font-medium">
-                            Máx. entregas por cluster alvo:
-                            <input
-                                type="number"
-                                min={minEntregasClusterAlvo}
-                                value={maxEntregasClusterAlvo}
-                                onChange={(e) => setMaxEntregasClusterAlvo(Number(e.target.value))}
-                                className="border rounded px-3 py-2 w-full"
-                            />
-                        </label>
+                    {/* Modo de clusterização */}
+                    <div className="rounded-lg border bg-slate-50 p-4">
+                        <p className="text-sm font-medium mb-2">Modo de clusterização:</p>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setModo("automatico")}
+                                className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition ${
+                                    modo === "automatico"
+                                        ? "border-emerald-600 bg-emerald-50 text-emerald-700"
+                                        : "bg-white hover:bg-slate-100"
+                                }`}
+                            >
+                                Centro automático
+                            </button>
+                            <button
+                                onClick={() => setModo("predefinido")}
+                                className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition ${
+                                    modo === "predefinido"
+                                        ? "border-emerald-600 bg-emerald-50 text-emerald-700"
+                                        : "bg-white hover:bg-slate-100"
+                                }`}
+                            >
+                                Centro pré-definido
+                            </button>
+                        </div>
                     </div>
+
+                    {/* Parâmetros só para modo automático */}
+                    {modo === "automatico" && (
+                        <div className="flex gap-3">
+                            <label className="flex-1 text-sm font-medium">
+                                Mín. entregas por cluster alvo:
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={minEntregasClusterAlvo}
+                                    onChange={(e) => setMinEntregasClusterAlvo(Number(e.target.value))}
+                                    className="border rounded px-3 py-2 w-full"
+                                />
+                            </label>
+                            <label className="flex-1 text-sm font-medium">
+                                Máx. entregas por cluster alvo:
+                                <input
+                                    type="number"
+                                    min={minEntregasClusterAlvo}
+                                    value={maxEntregasClusterAlvo}
+                                    onChange={(e) => setMaxEntregasClusterAlvo(Number(e.target.value))}
+                                    className="border rounded px-3 py-2 w-full"
+                                />
+                            </label>
+                        </div>
+                    )}
+
+                    {/* Seleção de centros pré-definidos */}
+                    {modo === "predefinido" && (
+                        <div>
+                            <p className="text-sm font-medium mb-1">Centros pré-definidos:</p>
+                            <MultiSelectCentros
+                                options={hubsCentroCluster}
+                                selected={centrosSelecionados}
+                                onChange={setCentrosSelecionados}
+                                loading={hubsLoading}
+                            />
+                            {!hubsLoading && hubsCentroCluster.length === 0 && (
+                                <p className="mt-1 text-xs text-red-600">
+                                    Nenhum hub marcado como Centro de Cluster ativo. Edite os hubs no Cadastro de Hubs.
+                                </p>
+                            )}
+                        </div>
+                    )}
 
                     <label className="text-sm font-medium">
                         Hub Central:

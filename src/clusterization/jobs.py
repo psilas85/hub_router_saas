@@ -17,6 +17,8 @@ def processar_clusterizacao_job(
     min_entregas_por_cluster_alvo: int,
     max_entregas_por_cluster_alvo: int,
     raio_cluster_hub_central: float,
+    modo_clusterizacao: str = "automatico",
+    centros_ids: Optional[list] = None,
 ):
     job = get_current_job()
 
@@ -39,6 +41,8 @@ def processar_clusterizacao_job(
             min_entregas_por_cluster_alvo=min_entregas_por_cluster_alvo,
             max_entregas_por_cluster_alvo=max_entregas_por_cluster_alvo,
             raio_cluster_hub_central=raio_cluster_hub_central,
+            modo_clusterizacao=modo_clusterizacao,
+            centros_ids=centros_ids,
             progress=update,
         )
         update(100, "Concluído", {"result": resultado})

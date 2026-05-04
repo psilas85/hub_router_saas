@@ -93,6 +93,72 @@ class ClusterizationUseCase:
 
         return k_calculado
 
+    def executar_predefinido(
+        self,
+        entregas_df: pd.DataFrame,
+        centros: list,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """
+        Clusteriza usando centros pré-definidos (sem KMeans, sem balanceamento).
+        centros: lista de dicts com 'id', 'lat', 'lon', 'nome'.
+        """
+        df_validos, df_outliers = self.clustering_service.filter_outliers_by_uf(entregas_df)
+
+        if df_validos.empty:
+            raise ValueError("Nenhuma entrega válida disponível para clusterização.")
+
+        if self.usar_cluster_hub_central:
+            tenant_id = entregas_df["tenant_id"].iloc[0]
+            if self.hub_central_id is None:
+                raise ValueError("Hub Central é obrigatório para executar a clusterização.")
+
+            try:
+                hub_coords = self.centro_service.buscar_hub_central(
+                    tenant_id=tenant_id,
+                    hub_central_id=self.hub_central_id,
+                )
+            except ValueError as exc:
+                hub_coords = None
+                if self.clustering_service.logger:
+                    self.clustering_service.logger.warning(
+                        f"Hub Central indisponivel para tenant={tenant_id}. "
+                        f"Clusterizacao seguira sem cluster HUB_CENTRAL. Detalhe: {exc}"
+                    )
+
+            if hub_coords is None:
+                raise ValueError("Hub Central selecionado não foi encontrado ou não está ativo.")
+
+            hub_lat, hub_lon = hub_coords
+            df_hub, df_validos = self.clustering_service.atribuir_cluster_hub_central(
+                df_validos,
+                hub_lat=hub_lat,
+                hub_lon=hub_lon,
+                raio_km=self.raio_cluster_hub_central_km,
+            )
+            if not df_hub.empty and self.clustering_service.logger:
+                self.clustering_service.logger.info(
+                    f"🏢 {len(df_hub)} entregas atribuídas ao cluster HUB_CENTRAL (tenant={tenant_id})."
+                )
+        else:
+            df_hub = pd.DataFrame()
+
+        if df_validos.empty:
+            if df_hub.empty:
+                raise ValueError("Nenhuma entrega válida disponível para clusterização.")
+            df_centros = self.clustering_service._recalculate_centers(df_hub)
+            return df_hub, df_centros, df_outliers
+
+        df_clusterizado, df_centros = self.clustering_service.perform_predefined_center_clustering(
+            data=df_validos.copy(),
+            centers=centros,
+        )
+
+        if not df_hub.empty:
+            df_clusterizado = pd.concat([df_clusterizado, df_hub], ignore_index=True)
+            df_centros = self.clustering_service._recalculate_centers(df_clusterizado)
+
+        return df_clusterizado, df_centros, df_outliers
+
     def executar(
         self,
         entregas_df: pd.DataFrame

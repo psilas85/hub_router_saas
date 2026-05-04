@@ -143,3 +143,33 @@ class DatabaseReader:
             return None
         finally:
             conn.close()
+
+    def buscar_centros_predefinidos(self, tenant_id: str, centros_ids: list) -> list:
+        """
+        Retorna lista de dicts {id, lat, lon, nome} para hubs marcados como centro_cluster.
+        """
+        conn = self.conectar_routing_db()
+        if conn is None:
+            raise ValueError("Não foi possível conectar ao banco routing_db_utf8")
+
+        query = """
+            SELECT id, hub_central_latitude, hub_central_longitude, hub_central_nome
+            FROM hubs_central
+            WHERE tenant_id = %s
+              AND id = ANY(%s)
+              AND centro_cluster = TRUE
+              AND ativo = TRUE;
+        """
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (tenant_id, centros_ids))
+                rows = cursor.fetchall()
+                return [
+                    {"id": row[0], "lat": float(row[1]), "lon": float(row[2]), "nome": row[3]}
+                    for row in rows
+                ]
+        except Exception as e:
+            logging.error(f"❌ Erro ao buscar centros pré-definidos: {e}")
+            return []
+        finally:
+            conn.close()

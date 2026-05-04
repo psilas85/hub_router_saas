@@ -25,6 +25,8 @@ def executar_clusterizacao_pipeline(
     min_entregas_por_cluster_alvo: int,
     max_entregas_por_cluster_alvo: int,
     raio_cluster_hub_central: float,
+    modo_clusterizacao: str = "automatico",
+    centros_ids: Optional[list] = None,
     logger=None,
     progress: ProgressCallback = None,
 ):
@@ -58,12 +60,27 @@ def executar_clusterizacao_pipeline(
         df_entregas["envio_data"] = pd.to_datetime(df_entregas["envio_data"]).dt.date
 
         parametros = {
-            "min_entregas_por_cluster_alvo": min_entregas_por_cluster_alvo,
-            "max_entregas_por_cluster_alvo": max_entregas_por_cluster_alvo,
+            "modo_clusterizacao": modo_clusterizacao,
             "hub_central_id": hub_central_id,
             "raio_cluster_hub_central": raio_cluster_hub_central,
             "modo_forcar": True,
         }
+        if modo_clusterizacao == "automatico":
+            parametros["min_entregas_por_cluster_alvo"] = min_entregas_por_cluster_alvo
+            parametros["max_entregas_por_cluster_alvo"] = max_entregas_por_cluster_alvo
+        else:
+            parametros["centros_ids"] = centros_ids or []
+
+        centros_predefinidos = []
+        if modo_clusterizacao == "predefinido":
+            if not centros_ids:
+                raise ValueError("Modo pré-definido requer ao menos um centro selecionado.")
+            centros_predefinidos = centro_service.buscar_centros_predefinidos(tenant_id, centros_ids)
+            if not centros_predefinidos:
+                raise ValueError(
+                    "Nenhum hub marcado como 'Centro de Cluster' foi encontrado para os IDs informados."
+                )
+
         resumo_datas = []
 
         for index, envio_data in enumerate(datas_envio):
@@ -90,7 +107,12 @@ def executar_clusterizacao_pipeline(
             )
 
             notify(base_progress + 10, f"Calculando clusters de {envio_data}")
-            df_clusterizado, df_centros, df_outliers = use_case.executar(df_envio)
+            if modo_clusterizacao == "predefinido":
+                df_clusterizado, df_centros, df_outliers = use_case.executar_predefinido(
+                    df_envio, centros=centros_predefinidos
+                )
+            else:
+                df_clusterizado, df_centros, df_outliers = use_case.executar(df_envio)
 
             if df_clusterizado["id_entrega"].isna().any():
                 df_clusterizado = df_clusterizado[df_clusterizado["id_entrega"].notna()]
