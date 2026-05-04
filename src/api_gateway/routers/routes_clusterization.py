@@ -28,27 +28,118 @@ async def healthcheck(request: Request):
     return result["content"]
 
 
+@router.get("/datas-disponiveis", summary="Listar datas com entregas disponíveis")
+async def listar_datas_disponiveis(
+    request: Request,
+    limit: int = Query(30, ge=1, le=365, description="Quantidade máxima de datas retornadas"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    url = f"{CLUSTERIZATION_URL}/cluster/datas-disponiveis"
+    params = {"limit": limit}
+    headers = {"Authorization": request.headers.get("Authorization")}
+
+    result = await forward_request("GET", url, headers=headers, params=params)
+
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.get("/hubs-cadastro", summary="Listar hubs de clusterização")
+async def listar_hubs_clusterization(
+    request: Request,
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    headers = {"Authorization": request.headers.get("Authorization")}
+    result = await forward_request("GET", f"{CLUSTERIZATION_URL}/cluster/hubs", headers=headers)
+
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.post("/hubs-cadastro", summary="Criar hub de clusterização")
+async def criar_hub_clusterization(
+    request: Request,
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    body = await request.json()
+    headers = {"Authorization": request.headers.get("Authorization")}
+    result = await forward_request("POST", f"{CLUSTERIZATION_URL}/cluster/hubs", headers=headers, json=body)
+
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.put("/hubs-cadastro/{hub_id}", summary="Atualizar hub de clusterização")
+async def atualizar_hub_clusterization(
+    hub_id: int,
+    request: Request,
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    body = await request.json()
+    headers = {"Authorization": request.headers.get("Authorization")}
+    result = await forward_request("PUT", f"{CLUSTERIZATION_URL}/cluster/hubs/{hub_id}", headers=headers, json=body)
+
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
+@router.delete("/hubs-cadastro/{hub_id}", summary="Excluir hub de clusterização")
+async def excluir_hub_clusterization(
+    hub_id: int,
+    request: Request,
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    headers = {"Authorization": request.headers.get("Authorization")}
+    result = await forward_request("DELETE", f"{CLUSTERIZATION_URL}/cluster/hubs/{hub_id}", headers=headers)
+
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
 @router.post("/processar", summary="Executar clusterização")
 async def processar_clusterizacao(
     request: Request,
     data: str = Query(..., description="Data no formato YYYY-MM-DD"),
     data_final: Optional[str] = Query(None, description="Data final (opcional) no formato YYYY-MM-DD"),
-    k_min: int = Query(2, description="Número mínimo de clusters"),
-    k_max: int = Query(50, description="Número máximo de clusters"),
-    min_entregas_por_cluster: int = Query(25, description="Mínimo de entregas por cluster"),
-    fundir_clusters_pequenos: bool = Query(False, description="Fundir clusters pequenos"),
-    desativar_cluster_hub_central: bool = Query(False, description="Desativar cluster do hub central"),
+    min_entregas_por_cluster_alvo: int = Query(10, description="Mínimo alvo de entregas por cluster"),
+    max_entregas_por_cluster_alvo: int = Query(100, description="Máximo alvo de entregas por cluster"),
+    min_entregas_por_cluster: Optional[int] = Query(
+        None,
+        description="Alias legado para min_entregas_por_cluster_alvo",
+        deprecated=True,
+    ),
+    k_min: Optional[int] = Query(None, description="Legado: ignorado no cálculo atual", deprecated=True),
+    k_max: Optional[int] = Query(None, description="Legado: ignorado no cálculo atual", deprecated=True),
+    fundir_clusters_pequenos: bool = Query(
+        False,
+        description="Legado: ignorado. O balanceamento por min/max ja funde clusters pequenos.",
+        deprecated=True,
+    ),
+    hub_central_id: int = Query(..., description="ID do Hub Central selecionado para a clusterização"),
+    desativar_cluster_hub_central: bool = Query(
+        False,
+        description="Legado: ignorado. Hub Central agora é obrigatório.",
+        deprecated=True,
+    ),
     raio_cluster_hub_central: float = Query(80.0, description="Raio em km para cluster do hub central"),
     tenant_id: str = Depends(obter_tenant_id_do_token),
 ):
     url = f"{CLUSTERIZATION_URL}/cluster/clusterizar"
+    min_cluster_alvo = (
+        min_entregas_por_cluster
+        if min_entregas_por_cluster is not None
+        else min_entregas_por_cluster_alvo
+    )
     params = {
         "data": data,
-        "k_min": k_min,
-        "k_max": k_max,
-        "min_entregas_por_cluster": min_entregas_por_cluster,
-        "fundir_clusters_pequenos": str(fundir_clusters_pequenos).lower(),
-        "desativar_cluster_hub_central": str(desativar_cluster_hub_central).lower(),
+        "min_entregas_por_cluster_alvo": min_cluster_alvo,
+        "max_entregas_por_cluster_alvo": max_entregas_por_cluster_alvo,
+        "hub_central_id": hub_central_id,
         "raio_cluster_hub_central": raio_cluster_hub_central,
         # 🚫 não aceitar mais 'modo_forcar' do usuário
     }
@@ -80,4 +171,3 @@ async def visualizar_clusterizacao(
         raise HTTPException(status_code=result["status_code"], detail=result["content"])
 
     return result["content"]
-

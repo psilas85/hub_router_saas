@@ -370,6 +370,27 @@ class Database:
             logging.error(f"❌ Erro ao buscar entregas para tenant {tenant_id}: {e}")
             return pd.DataFrame()
 
+    def buscar_datas_disponiveis_por_tenant(self, tenant_id, limit=30):
+        """
+        Lista as datas que possuem entregas para clusterização, filtrando por tenant_id.
+        """
+        query = """
+        SELECT envio_data::date AS data, COUNT(*) AS quantidade_entregas
+        FROM public.entregas
+        WHERE tenant_id = %s
+        AND envio_data IS NOT NULL
+        GROUP BY envio_data::date
+        ORDER BY envio_data::date DESC
+        LIMIT %s
+        """
+        try:
+            df = pd.read_sql(query, self.conexao, params=[tenant_id, limit])
+            logging.info(f"✅ {len(df)} datas de entregas encontradas para tenant {tenant_id}.")
+            return df
+        except Exception as e:
+            logging.error(f"❌ Erro ao buscar datas para tenant {tenant_id}: {e}")
+            return pd.DataFrame()
+
 
 # 🔗 Funções auxiliares para conexão:
 def conectar_banco_clusterization():

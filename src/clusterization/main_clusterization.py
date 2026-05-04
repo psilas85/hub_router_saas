@@ -28,10 +28,22 @@ parser.add_argument(
     required=False,
     help="Data final no formato YYYY-MM-DD (opcional, default = data_inicial)"
 )
-parser.add_argument("--k_min", type=int, default=2, help="Valor mínimo de clusters (default=2)")
-parser.add_argument("--k_max", type=int, default=50, help="Valor máximo de clusters (default=50)")
-parser.add_argument("--min_entregas_por_cluster", type=int, default=25,
-                    help="Quantidade mínima de entregas por cluster (default=25)")
+parser.add_argument(
+    "--min_entregas_por_cluster_alvo",
+    type=int,
+    default=10,
+    help="Quantidade mínima alvo de entregas por cluster (default=10)"
+)
+parser.add_argument(
+    "--max_entregas_por_cluster_alvo",
+    type=int,
+    default=100,
+    help="Quantidade máxima alvo de entregas por cluster (default=100)"
+)
+parser.add_argument("--k_min", type=int, default=None, help="Legado: ignorado no cálculo atual")
+parser.add_argument("--k_max", type=int, default=None, help="Legado: ignorado no cálculo atual")
+parser.add_argument("--min_entregas_por_cluster", type=int, default=None,
+                    help="Legado: alias de --min_entregas_por_cluster_alvo")
 parser.add_argument("--fundir_clusters_pequenos", action="store_true",
                     help="Se definido, irá fundir clusters pequenos com menos entregas que o mínimo.")
 parser.add_argument(
@@ -70,8 +82,8 @@ datas_envio = [data_inicial + timedelta(days=i) for i in range((data_final - dat
 logger.info(
     f"🔧 Parâmetros definidos: tenant_id={tenant_id}, "
     f"datas={datas_envio}, "
-    f"k_min={args.k_min}, k_max={args.k_max}, "
-    f"min_entregas_por_cluster={args.min_entregas_por_cluster}, "
+    f"min_entregas_por_cluster_alvo={args.min_entregas_por_cluster_alvo}, "
+    f"max_entregas_por_cluster_alvo={args.max_entregas_por_cluster_alvo}, "
     f"fundir_clusters_pequenos={args.fundir_clusters_pequenos}, "
     f"modo_forcar={MODO_FORCAR}"
 )
@@ -136,9 +148,12 @@ for envio_data in datas_envio:
     # Aqui você chama o uso do caso de clusterização para processar essa data
     use_case = ClusterizationUseCase(
         clustering_service=ClusteringService(UF_BOUNDS, random_state=42, max_clusters=15, logger=logger),
-        k_min=args.k_min,
-        k_max=args.k_max,
-        min_entregas_por_cluster=args.min_entregas_por_cluster,
+        min_entregas_por_cluster_alvo=(
+            args.min_entregas_por_cluster
+            if args.min_entregas_por_cluster is not None
+            else args.min_entregas_por_cluster_alvo
+        ),
+        max_entregas_por_cluster_alvo=args.max_entregas_por_cluster_alvo,
         fundir_clusters_pequenos=args.fundir_clusters_pequenos,
         usar_cluster_hub_central=not args.desativar_cluster_hub_central,
         raio_cluster_hub_central_km=args.raio_cluster_hub_central,
@@ -156,37 +171,41 @@ for envio_data in datas_envio:
     df_clusterizado = centro_service.ajustar_centros(df_clusterizado)
     df_clusterizado["tenant_id"] = tenant_id
 
+    df_centros = df_clusterizado[
+        ["cluster", "centro_lat", "centro_lon", "cluster_cidade"]
+    ].drop_duplicates(subset=["cluster"])
+
     resumo = (
-    df_clusterizado
-    .groupby("cluster")
-    .agg(
-        quantidade_entregas=("id_entrega", "count"),
-        peso_total_kg=("cte_peso", "sum"),
-        quantidade_volumes=("cte_volumes", "sum"),
-        cte_valor_nf_total=("cte_valor_nf", "sum"),
-        cte_valor_frete_total=("cte_valor_frete", "sum")
+        df_clusterizado
+        .groupby("cluster")
+        .agg(
+            quantidade_entregas=("id_entrega", "count"),
+            peso_total_kg=("cte_peso", "sum"),
+            quantidade_volumes=("cte_volumes", "sum"),
+            cte_valor_nf_total=("cte_valor_nf", "sum"),
+            cte_valor_frete_total=("cte_valor_frete", "sum")
+        )
+        .reset_index()
     )
-    .reset_index()
-)
 
-df_resumo = pd.merge(resumo, df_centros, on="cluster", how="left")
-df_resumo["distancia_media_km"] = 0
-df_resumo["tempo_estimado_min"] = 0
+    df_resumo = pd.merge(resumo, df_centros, on="cluster", how="left")
+    df_resumo["distancia_media_km"] = 0
+    df_resumo["tempo_estimado_min"] = 0
 
-if "cte_valor_nf_total" not in df_resumo.columns:
-    df_resumo["cte_valor_nf_total"] = resumo["cte_valor_nf_total"].fillna(0)
-if "cte_valor_frete_total" not in df_resumo.columns:
-    df_resumo["cte_valor_frete_total"] = resumo["cte_valor_frete_total"].fillna(0)
+    if "cte_valor_nf_total" not in df_resumo.columns:
+        df_resumo["cte_valor_nf_total"] = resumo["cte_valor_nf_total"].fillna(0)
+    if "cte_valor_frete_total" not in df_resumo.columns:
+        df_resumo["cte_valor_frete_total"] = resumo["cte_valor_frete_total"].fillna(0)
 
-writer.salvar_clusterizacao(df_clusterizado)
+    writer.salvar_clusterizacao(df_clusterizado)
 
-writer.salvar_resumo_clusters(
-    df_resumo.assign(envio_data=envio_data, tenant_id=tenant_id),
-    envio_data,
-    tenant_id
-)
+    writer.salvar_resumo_clusters(
+        df_resumo.assign(envio_data=envio_data, tenant_id=tenant_id),
+        envio_data,
+        tenant_id
+    )
 
-logger.info(f"✅ Clusterização concluída com sucesso para {envio_data} ({tenant_id})")
+    logger.info(f"✅ Clusterização concluída com sucesso para {envio_data} ({tenant_id})")
 
 fechar_conexao(conexao)
 logger.info("🏁 Processo de clusterização finalizado para todas as datas.")

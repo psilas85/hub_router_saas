@@ -4,6 +4,7 @@ import HomePage from "@/pages/Home/HomePage";
 import LoginPage from "@/pages/Login/LoginPage";
 import DataInputPage from "@/pages/Data_input/DataInputPage";
 import ClusterizationPage from "@/pages/Clusterization/ClusterizationPage";
+import ClusterizationHubsPage from "@/pages/Clusterization/ClusterizationHubsPage";
 import ProfilePage from "@/pages/Profile/ProfilePage";
 import UsersPage from "@/pages/Users/UsersPage";
 import TenantsPage from "@/pages/Tenants/TenantsPage";
@@ -90,6 +91,16 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <ClusterizationPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/clusterization/hubs"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <ClusterizationHubsPage />
                 </Layout>
               </ProtectedRoute>
             }

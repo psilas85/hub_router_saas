@@ -1,6 +1,6 @@
 // hub_router_1.0.1/frontend/src/pages/Exploratory/ExploratoryDashboardPage.tsx
 
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import {
     BarChart,
     Bar,
@@ -396,8 +396,8 @@ function CorrelacaoPanel({ d }: { d: CorrelacaoDados }) {
                     <div key={v} className="text-center text-xs font-mono text-gray-600 truncate px-1">{v}</div>
                 ))}
                 {d.variaveis.map((vx) => (
-                    <>
-                        <div key={`lbl-${vx}`} className="text-xs font-mono text-gray-600 flex items-center pr-2 whitespace-nowrap">{vx}</div>
+                    <Fragment key={vx}>
+                        <div className="text-xs font-mono text-gray-600 flex items-center pr-2 whitespace-nowrap">{vx}</div>
                         {d.variaveis.map((vy) => {
                             const cell = d.matriz.find((m) => m.var_x === vx && m.var_y === vy);
                             const r = cell?.r ?? 0;
@@ -412,7 +412,7 @@ function CorrelacaoPanel({ d }: { d: CorrelacaoDados }) {
                                 </div>
                             );
                         })}
-                    </>
+                    </Fragment>
                 ))}
             </div>
         </div>

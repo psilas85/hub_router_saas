@@ -4,12 +4,14 @@ import logging
 import pandas as pd
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import List, Optional
 
 from authentication.utils.dependencies import get_current_user
 from authentication.domain.entities import UsuarioToken
 
 from clusterization.infrastructure.db import Database
+from clusterization.infrastructure.database_connection import conectar_banco_routing, fechar_conexao
 from clusterization.infrastructure.database_reader import DatabaseReader
 from clusterization.infrastructure.database_writer import DatabaseWriter
 from clusterization.domain.geolocalizacao_service import GeolocalizacaoService
@@ -31,15 +33,252 @@ router = APIRouter(
 logger = logging.getLogger("clusterization")
 
 
+class HubCadastroIn(BaseModel):
+    nome: str = Field(..., min_length=1, max_length=255)
+    endereco: str = Field(..., min_length=1)
+    latitude: float
+    longitude: float
+    hub_central: bool = False
+    centro_cluster: bool = False
+    ativo: bool = True
+
+
+class HubCadastroOut(HubCadastroIn):
+    id: int
+
+
+def _ensure_hubs_schema(conn):
+    with conn.cursor() as cur:
+        cur.execute("ALTER TABLE hubs_central ADD COLUMN IF NOT EXISTS hub_central BOOLEAN DEFAULT FALSE;")
+        cur.execute("ALTER TABLE hubs_central ADD COLUMN IF NOT EXISTS centro_cluster BOOLEAN DEFAULT FALSE;")
+        cur.execute("""
+            WITH candidatos AS (
+                SELECT DISTINCT ON (tenant_id) id, tenant_id
+                FROM hubs_central h
+                WHERE ativo = TRUE
+                  AND hub_central IS DISTINCT FROM TRUE
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM hubs_central existente
+                      WHERE existente.tenant_id = h.tenant_id
+                        AND existente.hub_central = TRUE
+                        AND existente.ativo = TRUE
+                  )
+                ORDER BY tenant_id, id
+            )
+            UPDATE hubs_central h
+            SET hub_central = TRUE
+            FROM candidatos
+            WHERE h.id = candidatos.id;
+        """)
+        cur.execute("DROP INDEX IF EXISTS idx_hubs_central_tenant;")
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_hubs_central_tenant_lookup
+            ON hubs_central (tenant_id);
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_hubs_central_unico_ativo
+            ON hubs_central (tenant_id)
+            WHERE hub_central = TRUE AND ativo = TRUE;
+        """)
+    conn.commit()
+
+
+def _row_to_hub(row) -> HubCadastroOut:
+    return HubCadastroOut(
+        id=row[0],
+        nome=row[1],
+        endereco=row[2],
+        latitude=row[3],
+        longitude=row[4],
+        hub_central=bool(row[5]),
+        centro_cluster=bool(row[6]),
+        ativo=bool(row[7]),
+    )
+
+
+@router.get("/hubs", response_model=List[HubCadastroOut], summary="Listar hubs de clusterização")
+def listar_hubs_clusterization(usuario: UsuarioToken = Depends(get_current_user)):
+    conn = conectar_banco_routing()
+    try:
+        _ensure_hubs_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, hub_central_nome, endereco, hub_central_latitude,
+                       hub_central_longitude, hub_central, centro_cluster, ativo
+                FROM hubs_central
+                WHERE tenant_id = %s
+                ORDER BY hub_central DESC, centro_cluster DESC, id DESC;
+            """, (usuario.tenant_id,))
+            return [_row_to_hub(row) for row in cur.fetchall()]
+    finally:
+        fechar_conexao(conn)
+
+
+@router.post("/hubs", response_model=HubCadastroOut, summary="Criar hub de clusterização")
+def criar_hub_clusterization(payload: HubCadastroIn, usuario: UsuarioToken = Depends(get_current_user)):
+    conn = conectar_banco_routing()
+    try:
+        _ensure_hubs_schema(conn)
+        with conn.cursor() as cur:
+            if payload.hub_central and payload.ativo:
+                cur.execute("""
+                    UPDATE hubs_central
+                    SET hub_central = FALSE, atualizado_em = NOW()
+                    WHERE tenant_id = %s AND hub_central = TRUE;
+                """, (usuario.tenant_id,))
+
+            cur.execute("""
+                INSERT INTO hubs_central (
+                    hub_central_nome, endereco, hub_central_latitude, hub_central_longitude,
+                    tenant_id, ativo, hub_central, centro_cluster, criado_em, atualizado_em
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                RETURNING id, hub_central_nome, endereco, hub_central_latitude,
+                          hub_central_longitude, hub_central, centro_cluster, ativo;
+            """, (
+                payload.nome,
+                payload.endereco,
+                payload.latitude,
+                payload.longitude,
+                usuario.tenant_id,
+                payload.ativo,
+                payload.hub_central,
+                payload.centro_cluster,
+            ))
+            row = cur.fetchone()
+        conn.commit()
+        return _row_to_hub(row)
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=f"Erro ao criar hub: {exc}")
+    finally:
+        fechar_conexao(conn)
+
+
+@router.put("/hubs/{hub_id}", response_model=HubCadastroOut, summary="Atualizar hub de clusterização")
+def atualizar_hub_clusterization(
+    hub_id: int,
+    payload: HubCadastroIn,
+    usuario: UsuarioToken = Depends(get_current_user)
+):
+    conn = conectar_banco_routing()
+    try:
+        _ensure_hubs_schema(conn)
+        with conn.cursor() as cur:
+            if payload.hub_central and payload.ativo:
+                cur.execute("""
+                    UPDATE hubs_central
+                    SET hub_central = FALSE, atualizado_em = NOW()
+                    WHERE tenant_id = %s AND id <> %s AND hub_central = TRUE;
+                """, (usuario.tenant_id, hub_id))
+
+            cur.execute("""
+                UPDATE hubs_central
+                SET hub_central_nome = %s,
+                    endereco = %s,
+                    hub_central_latitude = %s,
+                    hub_central_longitude = %s,
+                    hub_central = %s,
+                    centro_cluster = %s,
+                    ativo = %s,
+                    atualizado_em = NOW()
+                WHERE id = %s AND tenant_id = %s
+                RETURNING id, hub_central_nome, endereco, hub_central_latitude,
+                          hub_central_longitude, hub_central, centro_cluster, ativo;
+            """, (
+                payload.nome,
+                payload.endereco,
+                payload.latitude,
+                payload.longitude,
+                payload.hub_central,
+                payload.centro_cluster,
+                payload.ativo,
+                hub_id,
+                usuario.tenant_id,
+            ))
+            row = cur.fetchone()
+        conn.commit()
+        if not row:
+            raise HTTPException(status_code=404, detail="Hub não encontrado")
+        return _row_to_hub(row)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=f"Erro ao atualizar hub: {exc}")
+    finally:
+        fechar_conexao(conn)
+
+
+@router.delete("/hubs/{hub_id}", summary="Excluir hub de clusterização")
+def excluir_hub_clusterization(hub_id: int, usuario: UsuarioToken = Depends(get_current_user)):
+    conn = conectar_banco_routing()
+    try:
+        _ensure_hubs_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM hubs_central WHERE id = %s AND tenant_id = %s", (hub_id, usuario.tenant_id))
+            deleted = cur.rowcount
+        conn.commit()
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Hub não encontrado")
+        return {"deleted": True}
+    finally:
+        fechar_conexao(conn)
+
+
+@router.get("/datas-disponiveis", summary="Listar datas com entregas disponíveis")
+def listar_datas_disponiveis(
+    limit: int = Query(30, ge=1, le=365, description="Quantidade máxima de datas retornadas"),
+    usuario: UsuarioToken = Depends(get_current_user)
+):
+    tenant_id = usuario.tenant_id
+    db = Database()
+    db.conectar()
+
+    try:
+        df_datas = db.buscar_datas_disponiveis_por_tenant(tenant_id, limit=limit)
+        datas = [
+            {
+                "data": str(row["data"]),
+                "quantidade_entregas": int(row["quantidade_entregas"]),
+            }
+            for _, row in df_datas.iterrows()
+        ]
+
+        return {
+            "status": "ok",
+            "tenant_id": tenant_id,
+            "datas": datas,
+        }
+    finally:
+        db.fechar_conexao()
+
+
 @router.post("/clusterizar", summary="Executar clusterização de entregas")
 def clusterizar(
     data: date = Query(..., description="Data de envio (YYYY-MM-DD)"),
     data_final: Optional[date] = Query(None, description="(Opcional) Data final para intervalo"),
-    k_min: int = Query(2, description="Número mínimo de clusters"),
-    k_max: int = Query(50, description="Número máximo de clusters"),
-    min_entregas_por_cluster: int = Query(25, description="Mínimo de entregas por cluster"),
-    fundir_clusters_pequenos: bool = Query(False, description="Fundir clusters pequenos"),
-    desativar_cluster_hub_central: bool = Query(False, description="Desativar cluster do hub central"),
+    min_entregas_por_cluster_alvo: int = Query(10, description="Mínimo alvo de entregas por cluster"),
+    max_entregas_por_cluster_alvo: int = Query(100, description="Máximo alvo de entregas por cluster"),
+    min_entregas_por_cluster: Optional[int] = Query(
+        None,
+        description="Alias legado para min_entregas_por_cluster_alvo",
+        deprecated=True
+    ),
+    k_min: Optional[int] = Query(None, description="Legado: ignorado no cálculo atual", deprecated=True),
+    k_max: Optional[int] = Query(None, description="Legado: ignorado no cálculo atual", deprecated=True),
+    fundir_clusters_pequenos: bool = Query(
+        False,
+        description="Legado: ignorado. O balanceamento por min/max ja funde clusters pequenos.",
+        deprecated=True
+    ),
+    hub_central_id: int = Query(..., description="ID do Hub Central selecionado para a clusterização"),
+    desativar_cluster_hub_central: bool = Query(
+        False,
+        description="Legado: ignorado. Hub Central agora é obrigatório.",
+        deprecated=True
+    ),
     raio_cluster_hub_central: float = Query(80.0, description="Raio (km) para cluster do hub central"),
     usuario: UsuarioToken = Depends(get_current_user)
 ):
@@ -84,22 +323,31 @@ def clusterizar(
 
             use_case = ClusterizationUseCase(
                 clustering_service=ClusteringService(UF_BOUNDS, random_state=42, max_clusters=15, logger=logger),
-                k_min=k_min,
-                k_max=k_max,
-                min_entregas_por_cluster=min_entregas_por_cluster,
-                fundir_clusters_pequenos=fundir_clusters_pequenos,
-                usar_cluster_hub_central=not desativar_cluster_hub_central,
+                min_entregas_por_cluster_alvo=(
+                    min_entregas_por_cluster
+                    if min_entregas_por_cluster is not None
+                    else min_entregas_por_cluster_alvo
+                ),
+                max_entregas_por_cluster_alvo=max_entregas_por_cluster_alvo,
+                usar_cluster_hub_central=True,
+                hub_central_id=hub_central_id,
                 raio_cluster_hub_central_km=raio_cluster_hub_central,
                 centro_service=centro_service
             )
 
-            df_clusterizado, df_centros, df_outliers = use_case.executar(df_envio)
+            try:
+                df_clusterizado, df_centros, df_outliers = use_case.executar(df_envio)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
 
             if df_clusterizado["id_entrega"].isna().any():
                 df_clusterizado = df_clusterizado[df_clusterizado["id_entrega"].notna()]
 
             df_clusterizado = centro_service.ajustar_centros(df_clusterizado)
             df_clusterizado["tenant_id"] = tenant_id
+            df_centros = df_clusterizado[
+                ["cluster", "centro_lat", "centro_lon", "cluster_cidade"]
+            ].drop_duplicates(subset=["cluster"])
 
             resumo = (
                 df_clusterizado.groupby("cluster").agg(
@@ -129,11 +377,13 @@ def clusterizar(
             "mensagem": f"✅ Clusterização finalizada para {len(datas_envio)} dia(s)",
             "datas": [str(d) for d in datas_envio],
             "parametros": {
-                "k_min": k_min,
-                "k_max": k_max,
-                "min_entregas_por_cluster": min_entregas_por_cluster,
-                "fundir_clusters_pequenos": fundir_clusters_pequenos,
-                "desativar_cluster_hub_central": desativar_cluster_hub_central,
+                "min_entregas_por_cluster_alvo": (
+                    min_entregas_por_cluster
+                    if min_entregas_por_cluster is not None
+                    else min_entregas_por_cluster_alvo
+                ),
+                "max_entregas_por_cluster_alvo": max_entregas_por_cluster_alvo,
+                "hub_central_id": hub_central_id,
                 "raio_cluster_hub_central": raio_cluster_hub_central,
                 "modo_forcar": True
             }

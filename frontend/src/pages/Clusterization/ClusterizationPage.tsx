@@ -1,16 +1,40 @@
 // src/pages/Clusterization/ClusterizationPage.tsx
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
 import { Loader2, Network, PlayCircle, FileText, Map } from "lucide-react";
+import { listClusterizationHubs, type ClusterizationHub } from "@/services/clusterizationApi";
+
+type DataDisponivel = {
+    data: string;
+    quantidade_entregas: number;
+};
+
+function normalizeErrorDetail(value: any): string | undefined {
+    if (!value) {
+        return undefined;
+    }
+    if (typeof value === "string") {
+        return value;
+    }
+    if (value.detail) {
+        return normalizeErrorDetail(value.detail);
+    }
+    if (value.message) {
+        return normalizeErrorDetail(value.message);
+    }
+    return undefined;
+}
+
+function getErrorMessage(err: any) {
+    return normalizeErrorDetail(err.response?.data?.detail) || err.message;
+}
 
 export default function ClusterizationPage() {
     const [data, setData] = useState(""); // apenas uma data
-    const [kMin, setKMin] = useState(2);
-    const [kMax, setKMax] = useState(50);
-    const [minEntregas, setMinEntregas] = useState(25);
-    const [fundirClusters, setFundirClusters] = useState(false);
-    const [desativarHub, setDesativarHub] = useState(false);
+    const [minEntregasClusterAlvo, setMinEntregasClusterAlvo] = useState(10);
+    const [maxEntregasClusterAlvo, setMaxEntregasClusterAlvo] = useState(100);
+    const [hubCentralId, setHubCentralId] = useState("");
     const [raioHub, setRaioHub] = useState(80.0);
 
     const [loading, setLoading] = useState(false);
@@ -18,6 +42,45 @@ export default function ClusterizationPage() {
     const [vizData, setVizData] = useState("");
     const [viz, setViz] = useState<any>(null);
     const [vizLoading, setVizLoading] = useState(false);
+    const [datasDisponiveis, setDatasDisponiveis] = useState<DataDisponivel[]>([]);
+    const [datasLoading, setDatasLoading] = useState(false);
+    const [hubsCentrais, setHubsCentrais] = useState<ClusterizationHub[]>([]);
+    const [hubsLoading, setHubsLoading] = useState(false);
+
+    useEffect(() => {
+        const carregarDadosIniciais = async () => {
+            setDatasLoading(true);
+            setHubsLoading(true);
+            try {
+                const [datasRes, hubsRes] = await Promise.all([
+                    api.get("/clusterization/datas-disponiveis", {
+                        params: { limit: 60 },
+                    }),
+                    listClusterizationHubs(),
+                ]);
+
+                const datas = datasRes.data.datas || [];
+                const hubs = hubsRes.filter((hub) => hub.ativo && hub.hub_central);
+
+                setHubsCentrais(hubs);
+                if (hubs.length > 0) {
+                    setHubCentralId((hubAtual) => hubAtual || String(hubs[0].id));
+                }
+
+                setDatasDisponiveis(datas);
+                if (datas.length > 0) {
+                    setData((dataAtual) => dataAtual || datas[0].data);
+                }
+            } catch (err: any) {
+                toast.error("Não foi possível carregar dados iniciais: " + getErrorMessage(err));
+            } finally {
+                setDatasLoading(false);
+                setHubsLoading(false);
+            }
+        };
+
+        carregarDadosIniciais();
+    }, []);
 
     // 👉 Executar clusterização
     const executar = async () => {
@@ -25,21 +88,37 @@ export default function ClusterizationPage() {
             toast.error("Informe a data.");
             return;
         }
+        if (minEntregasClusterAlvo < 1 || maxEntregasClusterAlvo < 1) {
+            toast.error("As quantidades de entregas por cluster devem ser maiores que zero.");
+            return;
+        }
+        if (minEntregasClusterAlvo > maxEntregasClusterAlvo) {
+            toast.error("O mínimo de entregas por cluster não pode ser maior que o máximo.");
+            return;
+        }
+        if (!hubCentralId) {
+            toast.error("Selecione o Hub Central.");
+            return;
+        }
         setLoading(true);
         setResultado(null);
         setViz(null);
 
         try {
+            const payload = {
+                data: data,
+                min_entregas_por_cluster_alvo: minEntregasClusterAlvo,
+                max_entregas_por_cluster_alvo: maxEntregasClusterAlvo,
+                hub_central_id: Number(hubCentralId),
+                raio_cluster_hub_central: raioHub,
+            };
+
+            console.log("[Clusterization] POST /clusterization/processar", {
+                params: payload,
+            });
+
             const res = await api.post("/clusterization/processar", null, {
-                params: {
-                    data: data,
-                    k_min: kMin,
-                    k_max: kMax,
-                    min_entregas_por_cluster: minEntregas,
-                    fundir_clusters_pequenos: fundirClusters,
-                    desativar_cluster_hub_central: desativarHub,
-                    raio_cluster_hub_central: raioHub,
-                },
+                params: payload,
             });
 
             setResultado(res.data);
@@ -50,7 +129,7 @@ export default function ClusterizationPage() {
         } catch (err: any) {
             toast.error(
                 "Erro ao executar clusterização: " +
-                (err.response?.data?.detail || err.message)
+                getErrorMessage(err)
             );
         } finally {
             setLoading(false);
@@ -74,7 +153,7 @@ export default function ClusterizationPage() {
         } catch (err: any) {
             toast.error(
                 "Erro ao visualizar clusterização: " +
-                (err.response?.data?.detail || err.message)
+                getErrorMessage(err)
             );
         } finally {
             setVizLoading(false);
@@ -103,58 +182,75 @@ export default function ClusterizationPage() {
                             className="border rounded px-3 py-2 w-full"
                         />
                     </label>
+                    {datasDisponiveis.length > 0 && (
+                        <label className="text-sm font-medium">
+                            Datas com entregas:
+                            <select
+                                value={data}
+                                onChange={(e) => setData(e.target.value)}
+                                className="border rounded px-3 py-2 w-full"
+                            >
+                                {datasDisponiveis.map((item) => (
+                                    <option key={item.data} value={item.data}>
+                                        {item.data} - {item.quantidade_entregas} entregas
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
+                    {datasLoading && (
+                        <p className="text-sm text-gray-500 flex items-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Carregando datas disponíveis...
+                        </p>
+                    )}
 
                     <div className="flex gap-3">
                         <label className="flex-1 text-sm font-medium">
-                            Nº mínimo de clusters:
+                            Mín. entregas por cluster alvo:
                             <input
                                 type="number"
                                 min={1}
-                                value={kMin}
-                                onChange={(e) => setKMin(Number(e.target.value))}
+                                value={minEntregasClusterAlvo}
+                                onChange={(e) => setMinEntregasClusterAlvo(Number(e.target.value))}
                                 className="border rounded px-3 py-2 w-full"
                             />
                         </label>
                         <label className="flex-1 text-sm font-medium">
-                            Nº máximo de clusters:
+                            Máx. entregas por cluster alvo:
                             <input
                                 type="number"
-                                min={kMin}
-                                value={kMax}
-                                onChange={(e) => setKMax(Number(e.target.value))}
+                                min={minEntregasClusterAlvo}
+                                value={maxEntregasClusterAlvo}
+                                onChange={(e) => setMaxEntregasClusterAlvo(Number(e.target.value))}
                                 className="border rounded px-3 py-2 w-full"
                             />
                         </label>
                     </div>
 
                     <label className="text-sm font-medium">
-                        Mínimo de entregas por cluster:
-                        <input
-                            type="number"
-                            min={1}
-                            value={minEntregas}
-                            onChange={(e) => setMinEntregas(Number(e.target.value))}
+                        Hub Central:
+                        <select
+                            value={hubCentralId}
+                            onChange={(e) => setHubCentralId(e.target.value)}
                             className="border rounded px-3 py-2 w-full"
-                        />
+                            disabled={hubsLoading}
+                        >
+                            <option value="">
+                                {hubsLoading ? "Carregando hubs..." : "Selecione o Hub Central"}
+                            </option>
+                            {hubsCentrais.map((hub) => (
+                                <option key={hub.id} value={hub.id}>
+                                    {hub.nome} - {hub.endereco}
+                                </option>
+                            ))}
+                        </select>
                     </label>
-
-                    <label className="flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={fundirClusters}
-                            onChange={(e) => setFundirClusters(e.target.checked)}
-                        />
-                        Fundir clusters pequenos
-                    </label>
-
-                    <label className="flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={desativarHub}
-                            onChange={(e) => setDesativarHub(e.target.checked)}
-                        />
-                        Desativar cluster Hub Central
-                    </label>
+                    {!hubsLoading && hubsCentrais.length === 0 && (
+                        <p className="text-sm text-red-600">
+                            Cadastre e marque um hub ativo como Hub Central antes de executar.
+                        </p>
+                    )}
 
                     <label className="text-sm font-medium">
                         Raio cluster Hub Central (km):
@@ -188,6 +284,12 @@ export default function ClusterizationPage() {
                 {resultado && (
                     <div className="mt-6 bg-gray-50 border rounded-lg p-4">
                         <p className="font-medium">{resultado.mensagem}</p>
+                        {resultado.parametros && (
+                            <p className="mt-2 text-sm text-gray-600">
+                                Faixa alvo: {resultado.parametros.min_entregas_por_cluster_alvo} a{" "}
+                                {resultado.parametros.max_entregas_por_cluster_alvo} entregas por cluster.
+                            </p>
+                        )}
                         {resultado.datas?.length > 0 && (
                             <>
                                 <label className="block mt-3 text-sm">

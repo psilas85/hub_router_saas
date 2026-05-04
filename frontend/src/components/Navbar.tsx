@@ -60,6 +60,7 @@ export default function Navbar() {
     // Submenus
     const [mmOpen, setMmOpen] = useState(false); // Middle-Mile
     const [lmOpen, setLmOpen] = useState(false); // Last-Mile
+    const [clusterOpen, setClusterOpen] = useState(false); // Clusterização
     const [simOpen, setSimOpen] = useState(false); // Simulação
     const [adminOpen, setAdminOpen] = useState(false); // Admin
 
@@ -189,13 +190,23 @@ export default function Navbar() {
                     EDA
                 </Item>
 
-                <Item
-                    to="/clusterization"
-                    icon={<Network size={16} />}
-                    onClick={() => setDrawerOpen(false)}
-                >
-                    Clusterização
-                </Item>
+                {/* Clusterização */}
+                <SubMenu title="Clusterização" icon={<Network size={16} />} open={clusterOpen} setOpen={setClusterOpen}>
+                    <Item
+                        to="/clusterization"
+                        icon={<span className="text-base leading-none">▶️</span>}
+                        onClick={() => setDrawerOpen(false)}
+                    >
+                        Processamento
+                    </Item>
+                    <Item
+                        to="/clusterization/hubs"
+                        icon={<span className="text-base leading-none">📍</span>}
+                        onClick={() => setDrawerOpen(false)}
+                    >
+                        Cadastro de Hubs
+                    </Item>
+                </SubMenu>
 
                 {/* Middle-Mile */}
                 <SubMenu title="Middle-Mile" icon={<Truck size={16} />} open={mmOpen} setOpen={setMmOpen}>

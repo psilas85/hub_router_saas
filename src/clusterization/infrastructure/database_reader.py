@@ -104,30 +104,39 @@ class DatabaseReader:
             return None, None
 
     # ✅ Busca no banco routing_db_utf8 (hubs_central)
-    def buscar_hub_central(self, tenant_id: str):
+    def buscar_hub_central(self, tenant_id: str, hub_central_id: int = None):
         """
-        Busca as coordenadas (latitude, longitude) do hub central no banco routing_db_utf8.
+        Busca as coordenadas (latitude, longitude) do hub central selecionado.
         """
         conn = self.conectar_routing_db()
         if conn is None:
             raise ValueError("❌ Não foi possível conectar ao banco routing_db_utf8")
 
         query = """
-            SELECT hub_central_latitude, hub_central_longitude
+            SELECT hub_central_latitude, hub_central_longitude, hub_central_nome
             FROM hubs_central
-            WHERE tenant_id = %s AND ativo = TRUE
+            WHERE tenant_id = %s
+              AND id = %s
+              AND ativo = TRUE
+              AND hub_central = TRUE
             LIMIT 1;
         """
         try:
             with conn.cursor() as cursor:
-                cursor.execute(query, (tenant_id,))
+                cursor.execute(query, (tenant_id, hub_central_id))
                 resultado = cursor.fetchone()
                 if resultado:
-                    lat, lon = resultado
-                    logging.info(f"🏢 Hub Central encontrado para tenant '{tenant_id}': ({lat}, {lon})")
+                    lat, lon, nome = resultado
+                    logging.info(
+                        f"🏢 Hub Central selecionado para tenant '{tenant_id}': "
+                        f"id={hub_central_id}, nome={nome}, coords=({lat}, {lon})"
+                    )
                     return lat, lon
                 else:
-                    logging.warning(f"⚠️ Nenhum Hub Central encontrado para tenant '{tenant_id}'.")
+                    logging.warning(
+                        f"⚠️ Hub Central id={hub_central_id} não encontrado, inativo "
+                        f"ou não marcado como Hub Central para tenant '{tenant_id}'."
+                    )
                     return None
         except Exception as e:
             logging.error(f"❌ Erro ao buscar Hub Central: {e}")
