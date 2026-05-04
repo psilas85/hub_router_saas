@@ -9,8 +9,9 @@ interface ProtectedRouteProps {
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     const token = useAuthStore((s) => s.token);
+    const isTokenExpired = useAuthStore((s) => s.isTokenExpired);
 
-    if (!token) {
+    if (!token || isTokenExpired()) {
         return <Navigate to="/login" replace />;
     }
 

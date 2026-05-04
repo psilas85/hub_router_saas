@@ -1,15 +1,6 @@
 #hub_router_1.0.1/docker-compose.yml
 
-version: "3.9"
-
 services:
-
-  # ❌ REMOVIDO BUILD DO BASE (usa imagem pronta)
-  # base_image:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.base
-  #   image: psilas85/hub_router-base:latest
 
   postgres:
     image: postgis/postgis:17-3.4
@@ -64,8 +55,6 @@ services:
     networks:
       - hub_router_network
     restart: always
-
-    # 🔥 ADICIONAR ISSO
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
       interval: 10s
@@ -74,13 +63,7 @@ services:
 
   data_input_worker:
     image: psilas85/hub_router-data_input:latest
-    build:
-      context: .
-      dockerfile: src/data_input/Dockerfile.data_input
-
-    # 🔥 worker robusto
     command: rq worker -u redis://redis:6379 data_input_jobs
-
     volumes:
       - ./src:/app/src
       - ./src/data_input/tenants:/app/src/data_input/tenants
@@ -90,7 +73,7 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
-      - REDIS_URL=redis://redis:6379   # 🔥 garante redis correto
+      - REDIS_URL=redis://redis:6379
     depends_on:
       - redis
       - postgres
@@ -100,41 +83,27 @@ services:
 
   data_input_subjob_worker:
     image: psilas85/hub_router-data_input:latest
-    build:
-      context: .
-      dockerfile: src/data_input/Dockerfile.data_input
-
     command: rq worker -u redis://redis:6379 data_input_subjobs
-
     volumes:
       - ./src:/app/src
       - ./src/data_input/tenants:/app/src/data_input/tenants
       - ./data/ibge:/app/data/ibge
-
     env_file:
       - ./src/data_input/.env
-
     environment:
       - PYTHONPATH=/app/src
       - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
       - REDIS_URL=redis://redis:6379
-
     depends_on:
       - redis
       - postgres
-
     networks:
       - hub_router_network
-
     restart: always
 
   simulation_worker:
-    build:
-      context: .
-      dockerfile: src/simulation/Dockerfile.simulation
     image: psilas85/hub_router-simulation:latest
     command: rq worker -u redis://redis:6379 simulation_jobs
-
     volumes:
       - ./src:/app/src
       - ./exports:/app/exports
@@ -148,8 +117,6 @@ services:
     networks:
       - hub_router_network
     restart: always
-
-    # 🔥 ADICIONA ISSO
     logging:
       driver: "json-file"
       options:
@@ -157,12 +124,8 @@ services:
         max-file: "3"
 
   simulation_date_worker:
-    build:
-      context: .
-      dockerfile: src/simulation/Dockerfile.simulation
     image: psilas85/hub_router-simulation:latest
     command: rq worker -u redis://redis:6379 simulation_date_jobs
-
     volumes:
       - ./src:/app/src
       - ./exports:/app/exports
@@ -177,7 +140,6 @@ services:
     networks:
       - hub_router_network
     restart: always
-
     logging:
       driver: "json-file"
       options:
@@ -192,7 +154,7 @@ services:
     image: psilas85/hub_router-authentication:latest
     ports:
       - "8001:8000"
-    volumes: # Apenas para desenvolvimento
+    volumes:
       - ./src:/app/src
     depends_on:
       postgres:
@@ -201,7 +163,7 @@ services:
       - PYTHONPATH=/app/src
       - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
     env_file:
-      - ./src/authentication/.env   # ✅ Adicionado para manter padrão
+      - ./src/authentication/.env
     networks:
       - hub_router_network
     restart: always
@@ -300,7 +262,7 @@ services:
       - "8006:8005"
     volumes:
       - ./src:/app/src
-      - ./exports/costs_transfer:/app/exports/costs_transfer   # 👈 ajuste aqui
+      - ./exports/costs_transfer:/app/exports/costs_transfer
     env_file:
       - ./src/costs_transfer/.env
     depends_on:
@@ -335,50 +297,33 @@ services:
     restart: always
 
 
-  exploratory_analysis_api_service:
+  exploratory_analysis_service:
     build:
       context: .
-      dockerfile: src/exploratory_analysis/Dockerfile.exploratory_api
-    image: psilas85/hub_router-exploratory_api:latest
+      dockerfile: src/exploratory_analysis/Dockerfile.exploratory
+    image: psilas85/hub_router-exploratory:latest
+    container_name: exploratory_analysis_service
     ports:
-      - "8013:8010"     # 🔁 antes era "8010:8010"
-    volumes:                          # 👇 adicionar
+      - "8015:8015"
+    volumes:
       - ./src:/app/src
-      - ./exports/exploratory_analysis:/app/exploratory_analysis/output
     env_file:
       - ./src/exploratory_analysis/.env
+    environment:
+      - PYTHONPATH=/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - hub_router_network
-    depends_on:
-      - authentication_service
     restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8010/"]  # mantém 8010 (porta interna)
+      test: ["CMD", "curl", "-f", "http://localhost:8015/health"]
       interval: 10s
       timeout: 5s
       retries: 3
-
-
-  exploratory_analysis_ui_service:
-    build:
-      context: .
-      dockerfile: src/exploratory_analysis/Dockerfile.exploratory_ui
-    image: psilas85/hub_router-exploratory_ui:latest
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./exports/exploratory_analysis:/app/exploratory_analysis/output   # 👈 monta a pasta de gráficos/relatórios
-    networks:
-      - hub_router_network
-    depends_on:
-      - authentication_service
-    restart: always
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8501 | grep -q '200'"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
 
   osrm:
     image: osrm/osrm-backend:latest
@@ -403,17 +348,18 @@ services:
       - "8011:8011"
     volumes:
       - ./src:/app/src
-      - ./models:/app/models                       # ✅ persistência dos modelos
-      - ./exports/ml_pipeline:/app/exports/ml_pipeline   # ✅ novos exports (forecasts e planos)
+      - ./models:/app/models
+      - ./exports/ml_pipeline:/app/exports/ml_pipeline
     env_file:
-      - ./src/ml_pipeline/.env   # carrega POSTGRES_* e SERVICE_PORT
+      - ./src/ml_pipeline/.env
     environment:
-      - PYTHONPATH=/app/src      # garante PYTHONPATH mesmo se env_file não aplicar
+      - PYTHONPATH=/app/src
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - hub_router_network
+    restart: always
 
   frontend_service:
     build:
@@ -451,6 +397,29 @@ services:
       - hub_router_network
     restart: always
 
+  api_gateway:
+    container_name: api_gateway
+    build:
+      context: ./src/api_gateway
+      dockerfile: Dockerfile.api_gateway
+    ports:
+      - "8010:8000"
+    volumes:
+      - ./src:/app/src
+      - ./exports:/app/exports
+    env_file:
+      - ./src/api_gateway/.env
+    environment:
+      - PYTHONPATH=/app/src
+    depends_on:
+      authentication_service:
+        condition: service_started
+      data_input_service:
+        condition: service_healthy
+    networks:
+      - hub_router_network
+    restart: always
+
   nginx:
     image: nginx:latest
     container_name: hub_router_nginx
@@ -462,16 +431,13 @@ services:
       - ./nginx/certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot
       - ./exports:/app/exports
-
-    # 🔥 CORREÇÃO AQUI
     depends_on:
       frontend_service:
         condition: service_started
-      authentication_service:
+      api_gateway:
         condition: service_started
       data_input_service:
-        condition: service_healthy   # 🔥 ESSENCIAL
-
+        condition: service_healthy
     networks:
       - hub_router_network
     restart: always
@@ -486,7 +452,7 @@ services:
       - ./nginx/www:/var/www/certbot
     networks:
       - hub_router_network
-    restart: "no"              # não precisa reiniciar sempre
+    restart: "no"
 
 
 networks:

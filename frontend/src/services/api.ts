@@ -42,11 +42,8 @@ api.interceptors.response.use(
 
         if (status === 401) {
             console.warn("⚠️ 401 recebido:", err.config?.url);
-
-            if (err.config?.url?.includes("/auth")) {
-                useAuthStore.getState().logout();
-                window.location.href = "/login";
-            }
+            useAuthStore.getState().logout();
+            window.location.href = "/login";
 
         } else if (status === 403) {
             alert("🚫 Você não tem permissão.");

@@ -188,8 +188,11 @@ async def ultimos_30_dias(request: Request):
                 f"{DATA_INPUT_URL}/dashboard/ultimos-30-dias",
                 headers=copiar_headers(request),
             )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
         return resp.json()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro no proxy ultimos-30-dias: {str(e)}")
 
@@ -203,8 +206,11 @@ async def mensal(request: Request):
                 f"{DATA_INPUT_URL}/dashboard/mensal",
                 headers=copiar_headers(request),
             )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
         return resp.json()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro no proxy mensal: {str(e)}")
 
@@ -218,8 +224,11 @@ async def mapa(request: Request):
                 f"{DATA_INPUT_URL}/dashboard/mapa",
                 headers=copiar_headers(request),
             )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
         return resp.json()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro no proxy mapa: {str(e)}")
 
