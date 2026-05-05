@@ -47,7 +47,9 @@ def gerar_mapa(tenant_id, data_inicial, data_final=None, output_path=None):
     query = """
         SELECT rota_transf, rota_coord, hub_central_latitude, hub_central_longitude
         FROM transferencias_resumo
-        WHERE tenant_id = %s AND envio_data BETWEEN %s AND %s
+        WHERE tenant_id = %s
+          AND envio_data BETWEEN %s AND %s
+          AND rota_transf <> 'HUB'
     """
     df = pd.read_sql(query, conn, params=(tenant_id, data_inicial, data_final))
     fechar_conexao(conn)

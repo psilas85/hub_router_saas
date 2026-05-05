@@ -9,6 +9,7 @@ from transfer_routing.infrastructure.database_connection import (
     fechar_conexao
 )
 from transfer_routing.infrastructure.database_writer import (
+    contar_roteirizacao_transferencias,
     existe_roteirizacao_transferencias,
     excluir_roteirizacao_transferencias
 )
@@ -32,13 +33,41 @@ class TransferRoutingUseCase:
         conn_routing = conectar_banco_routing()
 
         try:
+            resumo_count, detalhes_count = contar_roteirizacao_transferencias(
+                self.tenant_id,
+                data_inicial,
+                conn_routing,
+            )
+            if resumo_count > 0 and detalhes_count == 0:
+                self.logger.warning(
+                    f"Roteirização incompleta para {data_inicial}: "
+                    f"{resumo_count} resumos e {detalhes_count} detalhes. Limpando parcial..."
+                )
+                excluir_roteirizacao_transferencias(
+                    self.tenant_id,
+                    data_inicial,
+                    conn_routing,
+                    self.logger,
+                )
+
             if existe_roteirizacao_transferencias(self.tenant_id, data_inicial, conn_routing):
                 if self.modo_forcar:
                     excluir_roteirizacao_transferencias(self.tenant_id, data_inicial, conn_routing, self.logger)
                     self.logger.info(f"Processando novamente para {data_inicial} (modo forçar ativo)...")
                 else:
-                    self.logger.info(f"Já existe roteirização para {data_inicial} e tenant {self.tenant_id}. Encerrando.")
-                    return
+                    mensagem = (
+                        f"Já existe roteirização para {data_inicial}. "
+                        "Nenhum dado foi reprocessado. Ative forçar sobrescrita para substituir o resultado salvo."
+                    )
+                    self.logger.info(f"{mensagem} tenant={self.tenant_id}")
+                    return {
+                        "status": "skipped_existing",
+                        "processed": False,
+                        "envio_data": str(data_inicial),
+                        "mensagem": mensagem,
+                        "resumos_existentes": resumo_count,
+                        "detalhes_existentes": detalhes_count,
+                    }
 
             planner = TransferPlanner(
                 tenant_id=self.tenant_id,
@@ -57,9 +86,16 @@ class TransferRoutingUseCase:
             )
 
             self.logger.info("Processamento de roteirização de transferências concluído com sucesso.")
+            return {
+                "status": "processed",
+                "processed": True,
+                "envio_data": str(data_inicial),
+                "mensagem": f"Transferências processadas com sucesso para {data_inicial}.",
+            }
 
         except Exception as e:
             self.logger.error(f"Erro na roteirização de transferências: {e}")
+            raise
 
         finally:
             fechar_conexao(conn_cluster)

@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from datetime import date
+from decimal import Decimal
+from typing import Optional
 import os
 from fastapi.responses import FileResponse
 
@@ -14,15 +16,194 @@ from transfer_routing.logs.logging_factory import LoggerFactory
 from transfer_routing.visualization.route_plotter import gerar_mapa
 from transfer_routing.visualization.mapa_estatico import gerar_mapa_estatico_transferencias
 from transfer_routing.visualization.gerador_relatorio_transferencias import gerar_relatorio_transferencias
-from transfer_routing.infrastructure.database_connection import conectar_banco_routing, fechar_conexao
+from transfer_routing.infrastructure.database_connection import (
+    conectar_banco_cluster,
+    conectar_banco_routing,
+    fechar_conexao,
+)
 
 router = APIRouter(tags=["Transfer Routing"])
 logger = LoggerFactory.get_logger("transfer_routing")
 
 
+def _json_safe(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _carregar_resumo_artefatos_transferencias(tenant_id: str, data_inicial: date, data_final: date):
+    conn = conectar_banco_routing()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    rota_transf,
+                    tipo_veiculo,
+                    quantidade_entregas,
+                    clusters_qde,
+                    volumes_total,
+                    peso_total_kg,
+                    cte_peso,
+                    cte_valor_nf,
+                    cte_valor_frete,
+                    distancia_ida_km,
+                    distancia_total_km,
+                    tempo_ida_min,
+                    tempo_total_min,
+                    tempo_paradas,
+                    tempo_descarga,
+                    aproveitamento_percentual
+                FROM transferencias_resumo
+                WHERE tenant_id = %s
+                  AND envio_data BETWEEN %s AND %s
+                ORDER BY
+                    CASE WHEN rota_transf = 'HUB' THEN 1 ELSE 0 END,
+                    rota_transf
+                """,
+                (tenant_id, data_inicial, data_final),
+            )
+            columns = [desc[0] for desc in cur.description]
+            rotas = [
+                {
+                    **{col: _json_safe(value) for col, value in zip(columns, row)},
+                    "is_hub_central": str(row[0]) == "HUB",
+                }
+                for row in cur.fetchall()
+            ]
+    finally:
+        fechar_conexao(conn)
+
+    rotas_transferencia = [r for r in rotas if not r.get("is_hub_central")]
+    rotas_hub = [r for r in rotas if r.get("is_hub_central")]
+
+    def _totais(itens):
+        return {
+            "rotas": len(itens),
+            "entregas": sum(float(r.get("quantidade_entregas") or 0) for r in itens),
+            "paradas": sum(float(r.get("clusters_qde") or 0) for r in itens),
+            "volumes": sum(float(r.get("volumes_total") or 0) for r in itens),
+            "peso_total_kg": sum(float(r.get("peso_total_kg") or r.get("cte_peso") or 0) for r in itens),
+            "valor_nf": sum(float(r.get("cte_valor_nf") or 0) for r in itens),
+            "valor_frete": sum(float(r.get("cte_valor_frete") or 0) for r in itens),
+            "distancia_ida_km": sum(float(r.get("distancia_ida_km") or 0) for r in itens),
+            "distancia_total_km": sum(float(r.get("distancia_total_km") or 0) for r in itens),
+            "tempo_ida_min": sum(float(r.get("tempo_ida_min") or 0) for r in itens),
+            "tempo_total_min": sum(float(r.get("tempo_total_min") or 0) for r in itens),
+        }
+
+    totais = {
+        **_totais(rotas),
+        "rotas_transferencia": len(rotas_transferencia),
+    }
+    return {
+        "totais": totais,
+        "totais_transferencia": _totais(rotas_transferencia),
+        "hub_central": _totais(rotas_hub),
+        "rotas": rotas,
+    }
+
+
 @router.get("/health", summary="Health Check", tags=["Monitoramento"])
 def healthcheck():
     return {"status": "ok", "service": "transfer_routing"}
+
+
+@router.get("/transferencias/clusterizacoes-disponiveis", summary="Listar clusterizações disponíveis para transferência", tags=["Transferências"])
+def listar_clusterizacoes_disponiveis(
+    limit: int = Query(30, ge=1, le=365, description="Quantidade máxima de datas retornadas"),
+    offset: int = Query(0, ge=0, description="Quantidade de datas ignoradas para paginação"),
+    data_inicio: Optional[date] = Query(None, description="Filtrar datas a partir de YYYY-MM-DD"),
+    data_fim: Optional[date] = Query(None, description="Filtrar datas até YYYY-MM-DD"),
+    usuario: UsuarioToken = Depends(get_current_user),
+):
+    if data_inicio and data_fim and data_fim < data_inicio:
+        raise HTTPException(status_code=400, detail="Data final não pode ser anterior à data inicial")
+
+    tenant_id = usuario.tenant_id
+    conn_cluster = conectar_banco_cluster()
+    conn_routing = conectar_banco_routing()
+
+    try:
+        filtros = ["ec.tenant_id = %s"]
+        params = [tenant_id]
+        if data_inicio:
+            filtros.append("ec.envio_data >= %s")
+            params.append(data_inicio)
+        if data_fim:
+            filtros.append("ec.envio_data <= %s")
+            params.append(data_fim)
+
+        where_sql = " AND ".join(filtros)
+        with conn_cluster.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT ec.envio_data,
+                       COUNT(DISTINCT ec.cte_numero) AS quantidade_entregas,
+                       COUNT(DISTINCT ec.cluster) AS total_clusters,
+                       COUNT(DISTINCT CASE WHEN CAST(ec.cluster AS TEXT) NOT LIKE '9999%%' THEN ec.cluster END) AS clusters_transferiveis,
+                       COALESCE(SUM(e.cte_peso), 0) AS peso_total_kg,
+                       COALESCE(SUM(e.cte_volumes), 0) AS volumes_total
+                FROM entregas_clusterizadas ec
+                JOIN entregas e
+                  ON ec.cte_numero = e.cte_numero
+                 AND ec.transportadora = e.transportadora
+                 AND ec.tenant_id = e.tenant_id
+                 AND ec.envio_data = e.envio_data
+                WHERE {where_sql}
+                GROUP BY ec.envio_data
+                ORDER BY ec.envio_data DESC
+                LIMIT %s OFFSET %s
+                """,
+                tuple(params + [limit + 1, offset]),
+            )
+            rows = cur.fetchall()
+
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        datas = []
+
+        for row in rows:
+            envio_data = row[0]
+            with conn_routing.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM transferencias_resumo
+                    WHERE tenant_id = %s AND envio_data = %s
+                    """,
+                    (tenant_id, envio_data),
+                )
+                rotas_processadas = int(cur.fetchone()[0] or 0)
+
+            datas.append({
+                "data": str(envio_data),
+                "quantidade_entregas": int(row[1] or 0),
+                "total_clusters": int(row[2] or 0),
+                "clusters_transferiveis": int(row[3] or 0),
+                "peso_total_kg": float(row[4] or 0.0),
+                "volumes_total": int(row[5] or 0),
+                "roteirizacao_existente": rotas_processadas > 0,
+                "rotas_processadas": rotas_processadas,
+            })
+
+        return {
+            "status": "ok",
+            "tenant_id": tenant_id,
+            "clusterizacoes": datas,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
+            },
+        }
+    finally:
+        fechar_conexao(conn_cluster)
+        fechar_conexao(conn_routing)
 
 
 @router.post("/transferencias", summary="Processar Transferências", tags=["Transferências"])
@@ -50,8 +231,13 @@ def executar_transferencias(
         tempo_parada_pesada=tempo_parada_pesada,
         tempo_por_volume=tempo_por_volume
     )
-    roteirizador.run(data_inicial=envio_data, data_final=envio_data)
-    return {"mensagem": f"✅ Transferências processadas com sucesso para {envio_data}"}
+    resultado = roteirizador.run(data_inicial=envio_data, data_final=envio_data)
+    return resultado or {
+        "status": "processed",
+        "processed": True,
+        "envio_data": str(envio_data),
+        "mensagem": f"Transferências processadas com sucesso para {envio_data}.",
+    }
 
 
 @router.get("/transferencias/visualizacao", summary="Visualizar transferências", tags=["Transferências"])
@@ -202,4 +388,5 @@ def artefatos_transferencias(
         "map_html_url": _to_public_url(html_path),
         "map_png_url": _to_public_url(png_path),
         "pdf_url": _to_public_url(pdf_path),
+        "resumo": _carregar_resumo_artefatos_transferencias(tenant_id, data_inicial, data_final),
     }

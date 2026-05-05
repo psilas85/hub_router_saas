@@ -154,29 +154,30 @@ class TransferRoutingService:
             raise ValueError(f"❌ Hub central com hub_id={self.hub_id} não encontrado para este tenant.")
         origem = (hub["latitude"], hub["longitude"])
 
-        agregacoes = {
-            "cte_peso": "sum",
-            "cte_volumes": "sum",
-            "cte_valor_nf": "sum",
-            "cte_valor_frete": "sum",
-            "cte_numero": lambda x: list(x),
-        }
-
-        agrupado = df.groupby(["cluster", "centro_lat", "centro_lon"]).agg(agregacoes).reset_index()
-
-        pontos = [
-            {
-                "cluster_id": row["cluster"],
-                "cte_numeros": row["cte_numero"],
-                "lat": row["centro_lat"],
-                "lon": row["centro_lon"],
-                "peso": row["cte_peso"],
-                "volumes": row["cte_volumes"],
-                "valor_nf": row["cte_valor_nf"],
-                "valor_frete": row["cte_valor_frete"],
-            }
-            for _, row in agrupado.iterrows()
-        ]
+        pontos = []
+        for (cluster, centro_lat, centro_lon), grupo in df.groupby(["cluster", "centro_lat", "centro_lon"]):
+            ctes = [
+                {
+                    "cte_numero": row["cte_numero"],
+                    "peso": float(row["cte_peso"] or 0.0),
+                    "volumes": int(row["cte_volumes"] or 0),
+                    "valor_nf": float(row["cte_valor_nf"] or 0.0),
+                    "valor_frete": float(row["cte_valor_frete"] or 0.0),
+                }
+                for _, row in grupo.iterrows()
+            ]
+            pontos.append({
+                "cluster_id": cluster,
+                "carga_id": str(cluster),
+                "cte_numeros": [cte["cte_numero"] for cte in ctes],
+                "ctes": ctes,
+                "lat": centro_lat,
+                "lon": centro_lon,
+                "peso": sum(cte["peso"] for cte in ctes),
+                "volumes": sum(cte["volumes"] for cte in ctes),
+                "valor_nf": sum(cte["valor_nf"] for cte in ctes),
+                "valor_frete": sum(cte["valor_frete"] for cte in ctes),
+            })
         velocidade_media_kmh = self._obter_velocidade_media_kmh()
         pontos = expandir_pontos_por_capacidade_veiculo(
             pontos,

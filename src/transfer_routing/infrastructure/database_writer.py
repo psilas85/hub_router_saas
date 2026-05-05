@@ -1,4 +1,15 @@
 import json
+import numpy as np
+
+
+def _native(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {k: _native(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_native(v) for v in value]
+    return value
 
 def salvar_transferencias_resumo(rotas, conn, tenant_id: str, envio_data, logger):
     try:
@@ -23,12 +34,12 @@ def salvar_transferencias_resumo(rotas, conn, tenant_id: str, envio_data, logger
                         %s
                     )
                 """, (
-                    envio_data, r["rota_id"], r["quantidade_entregas"], r["cte_peso"], r["cte_valor_nf"], r["cte_valor_frete"],
-                    r.get("clusters_qde"), json.dumps(r["rota_coord"]), r["hub_central_nome"], r["hub_central_latitude"], r["hub_central_longitude"],
-                    r["distancia_ida_km"], r["distancia_total_km"], r["tempo_ida_min"], r["tempo_total_min"],
-                    r["tempo_transito_ida"], r["tempo_transito_total"], r["tempo_paradas"], r["tempo_descarga"],
-                    r["tipo_veiculo"], tenant_id, r["volumes_total"], r["quantidade_entregas"], r["peso_total_kg"],
-                    r.get("aproveitamento_percentual")
+                    envio_data, _native(r["rota_id"]), _native(r["quantidade_entregas"]), _native(r["cte_peso"]), _native(r["cte_valor_nf"]), _native(r["cte_valor_frete"]),
+                    _native(r.get("clusters_qde")), json.dumps(_native(r["rota_coord"])), _native(r["hub_central_nome"]), _native(r["hub_central_latitude"]), _native(r["hub_central_longitude"]),
+                    _native(r["distancia_ida_km"]), _native(r["distancia_total_km"]), _native(r["tempo_ida_min"]), _native(r["tempo_total_min"]),
+                    _native(r["tempo_transito_ida"]), _native(r["tempo_transito_total"]), _native(r["tempo_paradas"]), _native(r["tempo_descarga"]),
+                    _native(r["tipo_veiculo"]), tenant_id, _native(r["volumes_total"]), _native(r["quantidade_entregas"]), _native(r["peso_total_kg"]),
+                    _native(r.get("aproveitamento_percentual"))
                 ))
 
 
@@ -58,9 +69,9 @@ def salvar_transferencias_detalhes(detalhes, conn, tenant_id: str, envio_data, l
                         %s, %s, %s
                     )
                 """, (
-                    envio_data, d["cte_numero"], d["hub_central_nome"], d["cluster"], d["rota_id"],
-                    d["cte_peso"], d["cte_valor_nf"], d["cte_valor_frete"], tenant_id,
-                    d.get("centro_lat"), d.get("centro_lon"), d.get("cte_volumes")
+                    envio_data, _native(d["cte_numero"]), _native(d["hub_central_nome"]), _native(d["cluster"]), _native(d["rota_id"]),
+                    _native(d["cte_peso"]), _native(d["cte_valor_nf"]), _native(d["cte_valor_frete"]), tenant_id,
+                    _native(d.get("centro_lat")), _native(d.get("centro_lon")), _native(d.get("cte_volumes"))
                 ))
 
             conn.commit()
@@ -78,16 +89,33 @@ def salvar_transferencias(rotas_resumo, detalhes, conn, tenant_id, envio_data, l
 
 
 def existe_roteirizacao_transferencias(tenant_id: str, envio_data, conn) -> bool:
-    query = """
-        SELECT COUNT(*) 
-        FROM transferencias_resumo
-        WHERE tenant_id = %s
-          AND envio_data = %s
-    """
+    resumo_count, detalhes_count = contar_roteirizacao_transferencias(
+        tenant_id,
+        envio_data,
+        conn,
+    )
+    return resumo_count > 0 and detalhes_count > 0
+
+
+def contar_roteirizacao_transferencias(tenant_id: str, envio_data, conn) -> tuple[int, int]:
     with conn.cursor() as cur:
-        cur.execute(query, (tenant_id, envio_data))
-        count = cur.fetchone()[0]
-    return count > 0
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM transferencias_resumo
+            WHERE tenant_id = %s
+              AND envio_data = %s
+        """, (tenant_id, envio_data))
+        resumo_count = int(cur.fetchone()[0] or 0)
+
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM transferencias_detalhes
+            WHERE tenant_id = %s
+              AND envio_data = %s
+        """, (tenant_id, envio_data))
+        detalhes_count = int(cur.fetchone()[0] or 0)
+
+    return resumo_count, detalhes_count
 
 
 def excluir_roteirizacao_transferencias(tenant_id: str, envio_data, conn, logger):

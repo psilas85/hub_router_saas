@@ -84,7 +84,8 @@ def gerar_mapa_estatico_transferencias(tenant_id: str, data_inicial: str, data_f
             envio_data
         FROM transferencias_resumo
         WHERE tenant_id = %s
-        AND envio_data BETWEEN %s AND %s;
+        AND envio_data BETWEEN %s AND %s
+        AND rota_transf <> 'HUB';
     """
 
     # Consulta detalhes
@@ -97,7 +98,8 @@ def gerar_mapa_estatico_transferencias(tenant_id: str, data_inicial: str, data_f
             envio_data
         FROM transferencias_detalhes
         WHERE tenant_id = %s
-        AND envio_data BETWEEN %s AND %s;
+        AND envio_data BETWEEN %s AND %s
+        AND rota_transf <> 'HUB';
     """
 
     df_resumo = pd.read_sql(query_resumo, conn, params=(tenant_id, data_inicial, data_final))

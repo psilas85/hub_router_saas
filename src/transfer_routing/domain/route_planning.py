@@ -9,6 +9,89 @@ def calcular_distancia_e_tempo(p1, p2, obter_rota):
     return distancia or 0.0, tempo or 0.0
 
 
+def expandir_pontos_por_capacidade(pontos, conn, tenant_id, logger):
+    with conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT MAX(capacidade_kg_max)
+            FROM transfer_costs
+            WHERE tenant_id = %s
+        """, (tenant_id,))
+        row = cursor.fetchone()
+
+    capacidade_maxima = float(row[0] or 0.0) if row else 0.0
+    if capacidade_maxima <= 0:
+        if logger:
+            logger.warning("Capacidade máxima de transferência não encontrada. Pontos não serão expandidos.")
+        return pontos
+
+    novos_pontos = []
+    for ponto in pontos:
+        peso = float(ponto["peso"] or 0.0)
+        ponto["capacidade_maxima_veiculo"] = capacidade_maxima
+        if peso <= capacidade_maxima:
+            novos_pontos.append(ponto)
+            continue
+
+        partes = []
+        for cte in sorted(ponto.get("ctes", []), key=lambda item: float(item.get("peso") or 0.0), reverse=True):
+            peso_cte = float(cte.get("peso") or 0.0)
+            melhor_parte = None
+            menor_sobra = None
+
+            for parte in partes:
+                novo_peso = parte["peso"] + peso_cte
+                if novo_peso <= capacidade_maxima:
+                    sobra = capacidade_maxima - novo_peso
+                    if menor_sobra is None or sobra < menor_sobra:
+                        melhor_parte = parte
+                        menor_sobra = sobra
+
+            if melhor_parte is None:
+                melhor_parte = {
+                    "ctes": [],
+                    "peso": 0.0,
+                    "volumes": 0,
+                    "valor_nf": 0.0,
+                    "valor_frete": 0.0,
+                }
+                partes.append(melhor_parte)
+
+            melhor_parte["ctes"].append(cte)
+            melhor_parte["peso"] += peso_cte
+            melhor_parte["volumes"] += int(cte.get("volumes") or 0)
+            melhor_parte["valor_nf"] += float(cte.get("valor_nf") or 0.0)
+            melhor_parte["valor_frete"] += float(cte.get("valor_frete") or 0.0)
+
+            if peso_cte > capacidade_maxima and logger:
+                logger.warning(
+                    f"CT-e {cte.get('cte_numero')} do cluster {ponto['cluster_id']} "
+                    f"excede sozinho a capacidade máxima ({peso_cte:.1f}kg > {capacidade_maxima:.1f}kg)."
+                )
+
+        for i, parte in enumerate(partes):
+            novos_pontos.append({
+                "lat": ponto["lat"],
+                "lon": ponto["lon"],
+                "cte_numeros": [cte["cte_numero"] for cte in parte["ctes"]],
+                "ctes": parte["ctes"],
+                "peso": parte["peso"],
+                "volumes": parte["volumes"],
+                "valor_nf": parte["valor_nf"],
+                "valor_frete": parte["valor_frete"],
+                "cluster_id": f"{ponto['cluster_id']}_p{i+1}",
+                "carga_id": ponto.get("carga_id", ponto["cluster_id"]),
+                "capacidade_maxima_veiculo": capacidade_maxima,
+            })
+
+        if logger:
+            logger.info(
+                f"Cluster {ponto['cluster_id']} expandido em {len(partes)} partes "
+                f"por exceder {capacidade_maxima:.0f}kg, mantendo CT-es indivisíveis."
+            )
+
+    return novos_pontos
+
+
 def gerar_rotas_transferencias(
     df_entregas,
     origem,
@@ -24,26 +107,29 @@ def gerar_rotas_transferencias(
     hub_info
 ):
     logger.info("Gerando matriz de pontos...")
-    agrupado = df_entregas.groupby(["centro_lat", "centro_lon"]).agg({
-        "cte_numero": list,
-        "cte_peso": "sum",
-        "cte_volumes": "sum",
-        "cte_valor_nf": "sum",
-        "cte_valor_frete": "sum",
-        "cluster": "first"
-    }).reset_index()
-
     pontos = []
-    for _, row in agrupado.iterrows():
+    for (centro_lat, centro_lon), grupo in df_entregas.groupby(["centro_lat", "centro_lon"]):
+        ctes = [
+            {
+                "cte_numero": row["cte_numero"],
+                "peso": float(row["cte_peso"] or 0.0),
+                "volumes": int(row["cte_volumes"] or 0),
+                "valor_nf": float(row["cte_valor_nf"] or 0.0),
+                "valor_frete": float(row["cte_valor_frete"] or 0.0),
+            }
+            for _, row in grupo.iterrows()
+        ]
         pontos.append({
-            "lat": row["centro_lat"],
-            "lon": row["centro_lon"],
-            "cte_numeros": row["cte_numero"],
-            "peso": row["cte_peso"],
-            "volumes": row["cte_volumes"],
-            "valor_nf": row["cte_valor_nf"],
-            "valor_frete": row["cte_valor_frete"],
-            "cluster_id": row["cluster"]
+            "lat": centro_lat,
+            "lon": centro_lon,
+            "cte_numeros": [cte["cte_numero"] for cte in ctes],
+            "ctes": ctes,
+            "peso": sum(cte["peso"] for cte in ctes),
+            "volumes": sum(cte["volumes"] for cte in ctes),
+            "valor_nf": sum(cte["valor_nf"] for cte in ctes),
+            "valor_frete": sum(cte["valor_frete"] for cte in ctes),
+            "cluster_id": grupo["cluster"].iloc[0],
+            "carga_id": str(grupo["cluster"].iloc[0]),
         })
 
     if not pontos:
@@ -51,6 +137,8 @@ def gerar_rotas_transferencias(
         return [], []
 
     logger.info(f"Total de pontos para roteirização: {len(pontos)}")
+    pontos = expandir_pontos_por_capacidade(pontos, conn, tenant_id, logger)
+    logger.info(f"Total de pontos após expansão por capacidade: {len(pontos)}")
 
     # Matriz de distâncias e tempos
     logger.info("Calculando matriz de distâncias...")
@@ -83,6 +171,17 @@ def gerar_rotas_transferencias(
 
         if rota_i and rota_j and rota_i != rota_j:
             nova_rota = rota_i + rota_j
+            peso_total_rota = sum(pontos[idx]["peso"] for idx in nova_rota)
+            cargas_rota = [pontos[idx].get("carga_id", pontos[idx].get("cluster_id")) for idx in nova_rota]
+            if len(cargas_rota) != len(set(cargas_rota)):
+                continue
+
+            capacidade_maxima_rota = max(
+                float(pontos[idx].get("capacidade_maxima_veiculo") or 0.0)
+                for idx in nova_rota
+            )
+            if capacidade_maxima_rota > 0 and peso_total_rota > capacidade_maxima_rota:
+                continue
 
             # Cálculo de tempo parcial sem volta
             tempo_transito = 0.0
@@ -98,11 +197,14 @@ def gerar_rotas_transferencias(
             _, tempo_volta = calcular_distancia_e_tempo({"lat": anterior[0], "lon": anterior[1]},
                                                          {"lat": origem[0], "lon": origem[1]}, obter_rota)
 
-            # Tempo de parada
-            tempo_parada = sum(
-                tempo_parada_pesada if pontos[idx]["peso"] > peso_leve_max else tempo_parada_leve
-                for idx in nova_rota
+            # Tempo de parada: leve/pesada é definido pela carga total embarcada
+            # no veículo e aplicado uniformemente em todas as paradas da rota.
+            parada_rota = (
+                tempo_parada_pesada
+                if peso_total_rota > peso_leve_max
+                else tempo_parada_leve
             )
+            tempo_parada = len(nova_rota) * parada_rota
 
             # Tempo de descarregamento
             total_volumes = sum(pontos[idx]["volumes"] for idx in nova_rota)
@@ -145,18 +247,18 @@ def gerar_rotas_transferencias(
 
             rota_coords.append({"lat": ponto["lat"], "lon": ponto["lon"]})
 
-            for cte in ponto["cte_numeros"]:
+            for cte in ponto.get("ctes", []):
                 detalhes.append({
-                    "cte_numero": cte,
+                    "cte_numero": cte["cte_numero"],
                     "cluster": ponto["cluster_id"],
                     "rota_id": rota_id,
                     "hub_central_nome": hub_info["nome"],
-                    "cte_peso": ponto["peso"],
-                    "cte_valor_nf": ponto["valor_nf"],
-                    "cte_valor_frete": ponto["valor_frete"],
+                    "cte_peso": cte["peso"],
+                    "cte_valor_nf": cte["valor_nf"],
+                    "cte_valor_frete": cte["valor_frete"],
                     "centro_lat": ponto["lat"],
                     "centro_lon": ponto["lon"],
-                    "cte_volumes": ponto["volumes"]
+                    "cte_volumes": cte["volumes"]
                 })
 
         # Cálculo de distância e tempo
@@ -178,11 +280,14 @@ def gerar_rotas_transferencias(
         distancia_total = distancia_ida + dist_volta
         tempo_transito_total = tempo_transito_ida + tempo_volta
 
-        # Tempos operacionais
-        tempo_parada = sum(
-            tempo_parada_pesada if pontos[idx]["peso"] > peso_leve_max else tempo_parada_leve
-            for idx in rota
+        # Tempos operacionais: leve/pesada é definido pela carga total embarcada
+        # no veículo e aplicado uniformemente em todas as paradas da rota.
+        parada_rota = (
+            tempo_parada_pesada
+            if peso_total > peso_leve_max
+            else tempo_parada_leve
         )
+        tempo_parada = len(rota) * parada_rota
         tempo_descarga = volumes_total * tempo_por_volume
 
         tempo_ida = tempo_transito_ida + tempo_parada + tempo_descarga

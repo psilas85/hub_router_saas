@@ -10,7 +10,6 @@ from transfer_routing.infrastructure.database_reader import (
 from transfer_routing.infrastructure.database_writer import salvar_transferencias
 from transfer_routing.infrastructure.geolocation import get_route
 from transfer_routing.domain.route_planning import gerar_rotas_transferencias
-from transfer_routing.infrastructure.vehicle_selector import obter_tipo_veiculo_por_peso
 
 
 
@@ -71,11 +70,8 @@ class TransferPlanner:
 
         # Adicionar rota do HUB_CENTRAL manualmente no resumo e detalhes
         if not df_hub.empty:
-            logger.info(f"Adicionando rota do HUB Central ({len(df_hub)} entregas)")
-            # Obter tipo de veículo para o HUB
+            logger.info(f"Adicionando linha de validação do HUB Central ({len(df_hub)} entregas sem transferência)")
             peso_total_hub = round(df_hub["cte_peso"].sum(), 2)
-            veiculo_info = obter_tipo_veiculo_por_peso(peso_total_hub, self.tenant_id, conn_routing)
-            tipo_veiculo_hub = veiculo_info["tipo_veiculo"] if veiculo_info else "Desconhecido"
 
             rota_hub = {
                 "rota_id": "HUB",
@@ -83,7 +79,7 @@ class TransferPlanner:
                 "cte_peso": peso_total_hub,
                 "cte_valor_nf": round(df_hub["cte_valor_nf"].sum(), 2),
                 "cte_valor_frete": round(df_hub["cte_valor_frete"].sum(), 2),
-                "clusters_qde": 1,
+                "clusters_qde": 0,
                 "rota_coord": [],
                 "hub_central_nome": hub["nome"],
                 "hub_central_latitude": hub["latitude"],
@@ -96,7 +92,7 @@ class TransferPlanner:
                 "tempo_transito_total": 0.0,
                 "tempo_paradas": 0.0,
                 "tempo_descarga": 0.0,
-                "tipo_veiculo": tipo_veiculo_hub,
+                "tipo_veiculo": None,
                 "volumes_total": int(df_hub["cte_volumes"].sum()),
                 "peso_total_kg": peso_total_hub
             }
@@ -128,9 +124,17 @@ class TransferPlanner:
             logger.warning(f"Nenhuma rota gerada para {envio_data}.")
             return
 
-        logger.info(f"Total de rotas criadas: {len(rotas_resumo)}")
+        total_rotas_transferencia = sum(1 for rota in rotas_resumo if rota["rota_id"] != "HUB")
+        logger.info(f"Total de rotas de transferência criadas: {total_rotas_transferencia}")
         logger.info("Resumo das rotas:")
         for rota in rotas_resumo:
+            if rota["rota_id"] == "HUB":
+                logger.info(
+                    f"HUB Central | Sem rota de transferência | Sem veículo alocado | "
+                    f"Entregas para validação: {rota['quantidade_entregas']} | "
+                    f"Peso: {rota['cte_peso']:.2f} kg"
+                )
+                continue
             logger.info(
                 f"Rota {rota['rota_id']} | "
                 f"Entregas: {rota['quantidade_entregas']} | "

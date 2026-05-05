@@ -2,6 +2,39 @@
 
 import api from "@/services/api";
 
+export type ClusterizacaoTransferDisponivel = {
+    data: string;
+    quantidade_entregas: number;
+    total_clusters: number;
+    clusters_transferiveis: number;
+    peso_total_kg: number;
+    volumes_total: number;
+    roteirizacao_existente: boolean;
+    rotas_processadas: number;
+};
+
+export type ClusterizacoesTransferResponse = {
+    status: string;
+    tenant_id: string;
+    clusterizacoes: ClusterizacaoTransferDisponivel[];
+    pagination?: {
+        limit: number;
+        offset: number;
+        has_more: boolean;
+        next_offset?: number | null;
+    };
+};
+
+export async function listarClusterizacoesTransfer(params: {
+    limit?: number;
+    offset?: number;
+    data_inicio?: string;
+    data_fim?: string;
+}): Promise<ClusterizacoesTransferResponse> {
+    const { data } = await api.get("/transfer_routing/clusterizacoes-disponiveis", { params });
+    return data;
+}
+
 // ===== Transfer Routing (processamento + PDF)
 export type ProcessarParams = {
     data_inicial: string;      // YYYY-MM-DD

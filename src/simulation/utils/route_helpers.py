@@ -408,6 +408,22 @@ def gerar_rotas_savings_transfer(
                 f"🚫 Rejeitada por peso excedente: {peso_total:.1f}kg > {params.peso_max_transferencia}kg"
             )
             continue
+
+        cargas_rota = [pontos[pid].get("carga_id", pontos[pid].get("cluster_id")) for pid in nova_rota]
+        if len(cargas_rota) != len(set(cargas_rota)):
+            logger.info("🚫 Rejeitada por recombinar partes da mesma carga em uma rota.")
+            continue
+
+        capacidade_maxima_rota = max(
+            float(pontos[pid].get("capacidade_maxima_veiculo") or 0.0)
+            for pid in nova_rota
+        )
+        if capacidade_maxima_rota > 0 and peso_total > capacidade_maxima_rota:
+            logger.info(
+                f"🚫 Rejeitada por capacidade de veículo: {peso_total:.1f}kg > {capacidade_maxima_rota:.1f}kg"
+            )
+            continue
+
         # Calcular tempo total
         tempo_total = _calcular_tempo_total_rota(
             nova_rota,
@@ -858,46 +874,99 @@ def expandir_pontos_por_capacidade_veiculo(
     logger=None,
 ) -> list[dict]:
     """
-    Divide pontos com peso maior que a capacidade máxima de veículos disponíveis.
-    Retorna uma nova lista de pontos com divisões aplicadas.
+    Divide pontos com peso maior que a capacidade máxima de veículos disponíveis,
+    mantendo cada CT-e indivisível e presente em uma única divisão.
     """
-    # Carrega tabela de veículos
     df_veiculos = pd.read_sql(
         "SELECT * FROM veiculos_transferencia WHERE tenant_id = %s",
         db_conn,
         params=(tenant_id,),
     )
-    capacidade_maxima = df_veiculos["capacidade_kg_max"].max()
+    capacidade_maxima_raw = df_veiculos["capacidade_kg_max"].max()
+    if pd.isna(capacidade_maxima_raw) or float(capacidade_maxima_raw) <= 0:
+        if logger:
+            logger.warning(
+                "⚠️ Capacidade máxima de transferência não encontrada. Pontos não serão expandidos."
+            )
+        return pontos
+
+    capacidade_maxima = float(capacidade_maxima_raw)
 
     novos_pontos = []
 
     for ponto in pontos:
-        peso = ponto["peso"]
+        peso = float(ponto["peso"] or 0.0)
+        ponto["capacidade_maxima_veiculo"] = capacidade_maxima
 
         if peso <= capacidade_maxima:
             novos_pontos.append(ponto)
-        else:
-            # Determina quantas divisões são necessárias
-            n = int((peso // capacidade_maxima) + 1)
-            peso_unit = peso / n
-            vol_unit = ponto["volumes"] / n
-            nf_unit = ponto["valor_nf"] / n
-            frete_unit = ponto["valor_frete"] / n
-            cte_numeros = ponto["cte_numeros"]
+            continue
 
-            for i in range(n):
-                novos_pontos.append({
-                    "cluster_id": f"{ponto['cluster_id']}_p{i+1}",
-                    "cte_numeros": cte_numeros,
-                    "lat": ponto["lat"],
-                    "lon": ponto["lon"],
-                    "peso": peso_unit,
-                    "volumes": vol_unit,
-                    "valor_nf": nf_unit,
-                    "valor_frete": frete_unit
-                })
-
+        ctes = ponto.get("ctes") or []
+        if not ctes:
             if logger:
-                logger.info(f"📦 Cluster {ponto['cluster_id']} expandido em {n} rotas por exceder {capacidade_maxima:.0f}kg")
+                logger.warning(
+                    f"⚠️ Cluster {ponto['cluster_id']} excede {capacidade_maxima:.0f}kg, "
+                    "mas não possui detalhes de CT-e para divisão indivisível. Mantendo ponto original."
+                )
+            novos_pontos.append(ponto)
+            continue
+
+        partes = []
+        for cte in sorted(ctes, key=lambda item: float(item.get("peso") or 0.0), reverse=True):
+            peso_cte = float(cte.get("peso") or 0.0)
+            melhor_parte = None
+            menor_sobra = None
+
+            for parte in partes:
+                novo_peso = parte["peso"] + peso_cte
+                if novo_peso <= capacidade_maxima:
+                    sobra = capacidade_maxima - novo_peso
+                    if menor_sobra is None or sobra < menor_sobra:
+                        melhor_parte = parte
+                        menor_sobra = sobra
+
+            if melhor_parte is None:
+                melhor_parte = {
+                    "ctes": [],
+                    "peso": 0.0,
+                    "volumes": 0,
+                    "valor_nf": 0.0,
+                    "valor_frete": 0.0,
+                }
+                partes.append(melhor_parte)
+
+            melhor_parte["ctes"].append(cte)
+            melhor_parte["peso"] += peso_cte
+            melhor_parte["volumes"] += int(cte.get("volumes") or 0)
+            melhor_parte["valor_nf"] += float(cte.get("valor_nf") or 0.0)
+            melhor_parte["valor_frete"] += float(cte.get("valor_frete") or 0.0)
+
+            if peso_cte > capacidade_maxima and logger:
+                logger.warning(
+                    f"⚠️ CT-e {cte.get('cte_numero')} do cluster {ponto['cluster_id']} "
+                    f"excede sozinho a capacidade máxima ({peso_cte:.1f}kg > {capacidade_maxima:.1f}kg)."
+                )
+
+        for i, parte in enumerate(partes):
+            novos_pontos.append({
+                "cluster_id": f"{ponto['cluster_id']}_p{i+1}",
+                "carga_id": ponto.get("carga_id", ponto["cluster_id"]),
+                "cte_numeros": [cte["cte_numero"] for cte in parte["ctes"]],
+                "ctes": parte["ctes"],
+                "lat": ponto["lat"],
+                "lon": ponto["lon"],
+                "peso": parte["peso"],
+                "volumes": parte["volumes"],
+                "valor_nf": parte["valor_nf"],
+                "valor_frete": parte["valor_frete"],
+                "capacidade_maxima_veiculo": capacidade_maxima,
+            })
+
+        if logger:
+            logger.info(
+                f"📦 Cluster {ponto['cluster_id']} expandido em {len(partes)} partes "
+                f"por exceder {capacidade_maxima:.0f}kg, mantendo CT-es indivisíveis."
+            )
 
     return novos_pontos
