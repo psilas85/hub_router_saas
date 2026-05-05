@@ -606,242 +606,202 @@ export default function ClusterizationPage() {
         `${import.meta.env.VITE_API_URL}${path}`;
 
     return (
-        <div className="p-6">
-            <div className="max-w-4xl mx-auto bg-white shadow rounded-2xl p-6">
-                <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+        <div className="px-6 py-4">
+            <div className="bg-white shadow rounded-2xl p-5">
+                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
                     <Network className="w-5 h-5 text-emerald-600" />
                     Clusterização
                 </h2>
 
-                {/* Formulário de parâmetros */}
-                <div className="grid gap-3">
-                    <div className="rounded-lg border bg-slate-50 p-4">
-                        <div className="flex items-center justify-between gap-3">
-                            <p className="font-medium flex items-center gap-2">
+                {/* ── Layout 2 colunas ── */}
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 items-start">
+
+                    {/* Coluna esquerda — seletor de datas */}
+                    <div className="rounded-lg border bg-slate-50 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                            <p className="text-sm font-medium flex items-center gap-1.5">
                                 <CalendarDays className="w-4 h-4 text-emerald-600" />
-                                Datas de input disponíveis
+                                Datas disponíveis
                             </p>
                             {data && (
-                                <span className="text-sm text-slate-600">
-                                    Selecionada: {data}
+                                <span className="text-xs text-slate-500 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5">
+                                    {data}
                                 </span>
                             )}
                         </div>
 
-                        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto_auto]">
-                            <label className="text-sm font-medium">
-                                De:
-                                <input
-                                    type="date"
-                                    value={dataInicioFiltro}
-                                    onChange={(e) => setDataInicioFiltro(e.target.value)}
-                                    className="border rounded px-3 py-2 w-full bg-white"
-                                />
-                            </label>
-                            <label className="text-sm font-medium">
-                                Até:
-                                <input
-                                    type="date"
-                                    value={dataFimFiltro}
-                                    onChange={(e) => setDataFimFiltro(e.target.value)}
-                                    className="border rounded px-3 py-2 w-full bg-white"
-                                />
-                            </label>
+                        {/* Filtros de data */}
+                        <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 mb-2">
+                            <input
+                                type="date"
+                                value={dataInicioFiltro}
+                                onChange={(e) => setDataInicioFiltro(e.target.value)}
+                                placeholder="De"
+                                className="border rounded px-2 py-1.5 text-sm bg-white w-full"
+                            />
+                            <input
+                                type="date"
+                                value={dataFimFiltro}
+                                onChange={(e) => setDataFimFiltro(e.target.value)}
+                                placeholder="Até"
+                                className="border rounded px-2 py-1.5 text-sm bg-white w-full"
+                            />
                             <button
                                 onClick={() => carregarDatasDisponiveis(0, true)}
                                 disabled={datasLoading}
-                                className="self-end bg-white border rounded-lg px-4 py-2 hover:bg-slate-100 disabled:opacity-60 flex items-center justify-center gap-2"
+                                className="border rounded px-3 py-1.5 bg-white hover:bg-slate-100 disabled:opacity-60 flex items-center gap-1 text-sm"
                             >
-                                {datasLoading ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                    <Search className="w-4 h-4" />
-                                )}
+                                {datasLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                                 Filtrar
                             </button>
                             <button
                                 onClick={limparFiltrosDatas}
                                 disabled={datasLoading || (!dataInicioFiltro && !dataFimFiltro && datasOffset === 0)}
-                                className="self-end bg-white border rounded-lg px-4 py-2 hover:bg-slate-100 disabled:opacity-50 flex items-center justify-center gap-2"
+                                className="border rounded px-2 py-1.5 bg-white hover:bg-slate-100 disabled:opacity-50"
+                                title="Limpar filtros"
                             >
-                                <X className="w-4 h-4" />
-                                Limpar
+                                <X className="w-3.5 h-3.5" />
                             </button>
                         </div>
 
-                        <div className="mt-4 grid gap-2">
+                        {/* Lista de datas — linhas compactas */}
+                        <div className="grid gap-1">
                             {datasLoading && (
-                                <p className="text-sm text-gray-500 flex items-center gap-2">
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                    Carregando datas disponíveis...
+                                <p className="text-xs text-gray-400 flex items-center gap-1.5 py-2">
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Carregando...
                                 </p>
                             )}
                             {!datasLoading && datasDisponiveis.length === 0 && (
-                                <p className="text-sm text-gray-600">
-                                    Nenhum input encontrado para os filtros informados.
-                                </p>
+                                <p className="text-sm text-gray-500 py-2">Nenhum input encontrado.</p>
                             )}
                             {!datasLoading && datasDisponiveis.map((item) => (
                                 <button
                                     key={item.data}
                                     onClick={() => setData(item.data)}
-                                    className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-left transition ${data === item.data
-                                        ? "border-emerald-600 bg-emerald-50"
-                                        : "bg-white hover:bg-slate-50"
-                                        }`}
+                                    className={`flex items-center justify-between gap-2 rounded border px-3 py-2 text-left text-sm transition ${
+                                        data === item.data
+                                            ? "border-emerald-500 bg-emerald-50 text-emerald-800"
+                                            : "bg-white hover:bg-slate-50 text-slate-700"
+                                    }`}
                                 >
                                     <span className="font-medium">{item.data}</span>
-                                    <span className="text-sm text-slate-600">
-                                        {item.quantidade_entregas} entregas
-                                    </span>
+                                    <span className="text-xs text-slate-400">{item.quantidade_entregas} entregas</span>
                                 </button>
                             ))}
                         </div>
 
-                        <div className="mt-3 flex items-center justify-between gap-3">
+                        {/* Paginação compacta */}
+                        <div className="mt-2 flex items-center justify-between gap-2">
                             <button
                                 onClick={() => carregarDatasDisponiveis(Math.max(0, datasOffset - DATAS_PAGE_SIZE), true)}
                                 disabled={datasLoading || datasOffset === 0}
-                                className="border rounded-lg px-3 py-2 disabled:opacity-50 flex items-center gap-2"
+                                className="border rounded px-2 py-1 text-xs disabled:opacity-40 flex items-center gap-1 hover:bg-slate-100"
                             >
-                                <ChevronLeft className="w-4 h-4" />
-                                Anteriores
+                                <ChevronLeft className="w-3.5 h-3.5" /> Anteriores
                             </button>
-                            <span className="text-sm text-slate-600">
-                                Mostrando {datasOffset + 1} - {datasOffset + datasDisponiveis.length}
+                            <span className="text-xs text-slate-400">
+                                {datasOffset + 1}–{datasOffset + datasDisponiveis.length}
                             </span>
                             <button
                                 onClick={() => carregarDatasDisponiveis(datasOffset + DATAS_PAGE_SIZE, true)}
                                 disabled={datasLoading || !datasHasMore}
-                                className="border rounded-lg px-3 py-2 disabled:opacity-50 flex items-center gap-2"
+                                className="border rounded px-2 py-1 text-xs disabled:opacity-40 flex items-center gap-1 hover:bg-slate-100"
                             >
-                                Próximas
-                                <ChevronRight className="w-4 h-4" />
+                                Próximas <ChevronRight className="w-3.5 h-3.5" />
                             </button>
                         </div>
                     </div>
 
-                    {/* Modo de clusterização */}
-                    <div className="rounded-lg border bg-slate-50 p-4">
-                        <p className="text-sm font-medium mb-2">Modo de clusterização:</p>
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => setModo("automatico")}
-                                className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition ${
-                                    modo === "automatico"
-                                        ? "border-emerald-600 bg-emerald-50 text-emerald-700"
-                                        : "bg-white hover:bg-slate-100"
-                                }`}
-                            >
-                                Centro automático
-                            </button>
-                            <button
-                                onClick={() => setModo("predefinido")}
-                                className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition ${
-                                    modo === "predefinido"
-                                        ? "border-emerald-600 bg-emerald-50 text-emerald-700"
-                                        : "bg-white hover:bg-slate-100"
-                                }`}
-                            >
-                                Centro pré-definido
-                            </button>
+                    {/* Coluna direita — parâmetros + botão */}
+                    <div className="grid gap-3">
+
+                        {/* Modo */}
+                        <div className="rounded-lg border bg-slate-50 p-3">
+                            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Modo</p>
+                            <div className="grid grid-cols-2 gap-1.5">
+                                {(["automatico", "predefinido"] as const).map((m) => (
+                                    <button
+                                        key={m}
+                                        onClick={() => setModo(m)}
+                                        className={`rounded-lg border py-2 text-sm font-medium transition ${
+                                            modo === m
+                                                ? "border-emerald-600 bg-emerald-50 text-emerald-700"
+                                                : "bg-white hover:bg-slate-100 text-slate-600"
+                                        }`}
+                                    >
+                                        {m === "automatico" ? "Automático" : "Pré-definido"}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
-                    </div>
 
-                    {/* Parâmetros só para modo automático */}
-                    {modo === "automatico" && (
-                        <div className="flex gap-3">
-                            <label className="flex-1 text-sm font-medium">
-                                Mín. entregas por cluster alvo:
-                                <input
-                                    type="number"
-                                    min={1}
-                                    value={minEntregasClusterAlvo}
-                                    onChange={(e) => setMinEntregasClusterAlvo(Number(e.target.value))}
-                                    className="border rounded px-3 py-2 w-full"
-                                />
-                            </label>
-                            <label className="flex-1 text-sm font-medium">
-                                Máx. entregas por cluster alvo:
-                                <input
-                                    type="number"
-                                    min={minEntregasClusterAlvo}
-                                    value={maxEntregasClusterAlvo}
-                                    onChange={(e) => setMaxEntregasClusterAlvo(Number(e.target.value))}
-                                    className="border rounded px-3 py-2 w-full"
-                                />
-                            </label>
-                        </div>
-                    )}
-
-                    {/* Seleção de centros pré-definidos */}
-                    {modo === "predefinido" && (
-                        <div>
-                            <p className="text-sm font-medium mb-1">Centros pré-definidos:</p>
-                            <MultiSelectCentros
-                                options={hubsCentroCluster}
-                                selected={centrosSelecionados}
-                                onChange={setCentrosSelecionados}
-                                loading={hubsLoading}
-                            />
-                            {!hubsLoading && hubsCentroCluster.length === 0 && (
-                                <p className="mt-1 text-xs text-red-600">
-                                    Nenhum hub marcado como Centro de Cluster ativo. Edite os hubs no Cadastro de Hubs.
-                                </p>
-                            )}
-                        </div>
-                    )}
-
-                    <label className="text-sm font-medium">
-                        Hub Central:
-                        <select
-                            value={hubCentralId}
-                            onChange={(e) => setHubCentralId(e.target.value)}
-                            className="border rounded px-3 py-2 w-full"
-                            disabled={hubsLoading}
-                        >
-                            <option value="">
-                                {hubsLoading ? "Carregando hubs..." : "Selecione o Hub Central"}
-                            </option>
-                            {hubsCentrais.map((hub) => (
-                                <option key={hub.id} value={hub.id}>
-                                    {hub.nome} - {hub.endereco}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                    {!hubsLoading && hubsCentrais.length === 0 && (
-                        <p className="text-sm text-red-600">
-                            Cadastre e marque um hub ativo como Hub Central antes de executar.
-                        </p>
-                    )}
-
-                    <label className="text-sm font-medium">
-                        Raio cluster Hub Central (km):
-                        <input
-                            type="number"
-                            step="0.1"
-                            value={raioHub}
-                            onChange={(e) => setRaioHub(Number(e.target.value))}
-                            className="border rounded px-3 py-2 w-full"
-                        />
-                    </label>
-
-                    <button
-                        onClick={executar}
-                        disabled={loading}
-                        className="bg-emerald-600 text-white rounded-lg px-4 py-2 hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-2"
-                    >
-                        {loading ? (
-                            <>
-                                <Loader2 className="w-4 h-4 animate-spin" /> Processando...
-                            </>
+                        {/* Parâmetros do modo */}
+                        {modo === "automatico" ? (
+                            <div className="grid grid-cols-2 gap-2">
+                                <label className="text-xs font-medium text-slate-600">
+                                    Mín. entregas/cluster
+                                    <input type="number" min={1} value={minEntregasClusterAlvo}
+                                        onChange={(e) => setMinEntregasClusterAlvo(Number(e.target.value))}
+                                        className="mt-1 border rounded px-2 py-1.5 text-sm w-full" />
+                                </label>
+                                <label className="text-xs font-medium text-slate-600">
+                                    Máx. entregas/cluster
+                                    <input type="number" min={minEntregasClusterAlvo} value={maxEntregasClusterAlvo}
+                                        onChange={(e) => setMaxEntregasClusterAlvo(Number(e.target.value))}
+                                        className="mt-1 border rounded px-2 py-1.5 text-sm w-full" />
+                                </label>
+                            </div>
                         ) : (
-                            <>
-                                <PlayCircle className="w-4 h-4" /> Executar
-                            </>
+                            <div>
+                                <p className="text-xs font-medium text-slate-600 mb-1">Centros pré-definidos</p>
+                                <MultiSelectCentros
+                                    options={hubsCentroCluster}
+                                    selected={centrosSelecionados}
+                                    onChange={setCentrosSelecionados}
+                                    loading={hubsLoading}
+                                />
+                                {!hubsLoading && hubsCentroCluster.length === 0 && (
+                                    <p className="mt-1 text-xs text-red-600">
+                                        Nenhum hub marcado como Centro de Cluster ativo.
+                                    </p>
+                                )}
+                            </div>
                         )}
-                    </button>
+
+                        {/* Hub Central */}
+                        <label className="text-xs font-medium text-slate-600">
+                            Hub Central
+                            <select value={hubCentralId} onChange={(e) => setHubCentralId(e.target.value)}
+                                className="mt-1 border rounded px-2 py-1.5 text-sm w-full" disabled={hubsLoading}>
+                                <option value="">{hubsLoading ? "Carregando..." : "Selecione o Hub Central"}</option>
+                                {hubsCentrais.map((hub) => (
+                                    <option key={hub.id} value={hub.id}>{hub.nome} — {hub.endereco}</option>
+                                ))}
+                            </select>
+                            {!hubsLoading && hubsCentrais.length === 0 && (
+                                <p className="mt-1 text-xs text-red-600">Cadastre um hub como Hub Central.</p>
+                            )}
+                        </label>
+
+                        {/* Raio */}
+                        <label className="text-xs font-medium text-slate-600">
+                            Raio cluster Hub Central (km)
+                            <input type="number" step="0.1" value={raioHub}
+                                onChange={(e) => setRaioHub(Number(e.target.value))}
+                                className="mt-1 border rounded px-2 py-1.5 text-sm w-full" />
+                        </label>
+
+                        {/* Botão executar */}
+                        <button
+                            onClick={executar}
+                            disabled={loading}
+                            className="w-full bg-emerald-600 text-white rounded-lg px-4 py-2.5 hover:bg-emerald-700 disabled:opacity-60 flex items-center justify-center gap-2 font-medium"
+                        >
+                            {loading
+                                ? <><Loader2 className="w-4 h-4 animate-spin" /> Processando...</>
+                                : <><PlayCircle className="w-4 h-4" /> Executar</>}
+                        </button>
+                    </div>
                 </div>
 
                 {/* ── Stepper de progresso ── */}
