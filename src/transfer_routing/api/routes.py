@@ -5,12 +5,15 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 import os
+import json as _json
 from fastapi.responses import FileResponse
 
 from authentication.utils.dependencies import get_current_user
 from authentication.domain.entities import UsuarioToken
 from transfer_routing.application.transfer_routing_use_case import TransferRoutingUseCase
 from transfer_routing.logs.logging_factory import LoggerFactory
+from transfer_routing.infrastructure.cache import obter_rota_do_cache, save_route_to_cache
+import requests as _requests
 
 # Imports das funções de visualização
 from transfer_routing.visualization.route_plotter import gerar_mapa
@@ -389,4 +392,301 @@ def artefatos_transferencias(
         "map_png_url": _to_public_url(png_path),
         "pdf_url": _to_public_url(pdf_path),
         "resumo": _carregar_resumo_artefatos_transferencias(tenant_id, data_inicial, data_final),
+    }
+
+
+# ──────────────────────────────────────────────────────────────
+# Helpers for GeoJSON endpoint
+# ──────────────────────────────────────────────────────────────
+
+_ROUTE_COLORS = [
+    "#2563eb", "#16a34a", "#dc2626", "#d97706", "#7c3aed",
+    "#0891b2", "#c026d3", "#ea580c", "#65a30d", "#0f766e",
+    "#be185d", "#854d0e", "#1d4ed8", "#15803d", "#b91c1c",
+]
+
+
+def _rota_color(rota_id: str) -> str:
+    """Deterministic color for a route id (stable across Python restarts)."""
+    h = 0
+    for c in rota_id:
+        h = (h * 31 + ord(c)) & 0xFFFFFFFF
+    return _ROUTE_COLORS[h % len(_ROUTE_COLORS)]
+
+
+def _decode_polyline(polyline_str: str) -> list:
+    """Decode Google Maps encoded polyline → list of (lat, lon) tuples."""
+    index, lat, lng = 0, 0, 0
+    coordinates = []
+    while index < len(polyline_str):
+        for is_lat in (True, False):
+            shift, result = 0, 0
+            while True:
+                b = ord(polyline_str[index]) - 63
+                index += 1
+                result |= (b & 0x1f) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            delta = ~(result >> 1) if result & 1 else (result >> 1)
+            if is_lat:
+                lat += delta
+            else:
+                lng += delta
+        coordinates.append((lat / 1e5, lng / 1e5))
+    return coordinates
+
+
+def _osrm_coords(origem: tuple, destino: tuple) -> list | None:
+    """
+    Fetch road geometry from OSRM public API.
+    Returns list of GeoJSON [lon, lat] pairs, or None on any failure.
+    OSRM expects coordinates as lon,lat.
+    """
+    try:
+        url = (
+            f"http://router.project-osrm.org/route/v1/driving/"
+            f"{origem[1]},{origem[0]};{destino[1]},{destino[0]}"
+            f"?overview=full&geometries=polyline"
+        )
+        resp = _requests.get(url, timeout=6)
+        data = resp.json()
+        if data.get("code") == "Ok":
+            pts = _decode_polyline(data["routes"][0]["geometry"])
+            if pts:
+                return [[lon, lat] for lat, lon in pts]
+    except Exception:
+        pass
+    return None
+
+
+def _segment_geojson_coords(origem: tuple, destino: tuple, conn, tenant_id: str = "") -> list:
+    """
+    Return a list of GeoJSON [lon, lat] pairs for the road segment.
+    Priority: local cache → OSRM (result cached for reuse) → straight line.
+    """
+    orig_str = f"{round(origem[0], 6)},{round(origem[1], 6)}"
+    dest_str = f"{round(destino[0], 6)},{round(destino[1], 6)}"
+    _, _, rota_json = obter_rota_do_cache(orig_str, dest_str, conn)
+
+    if rota_json:
+        polyline = rota_json.get("overview_polyline")
+        if polyline:
+            return [[lon, lat] for lat, lon in _decode_polyline(polyline)]
+        coords_list = rota_json.get("coordenadas")
+        if coords_list:
+            result = []
+            for p in coords_list:
+                try:
+                    if isinstance(p, (list, tuple)) and len(p) >= 2:
+                        result.append([float(p[1]), float(p[0])])  # [lon, lat]
+                    elif isinstance(p, dict):
+                        result.append([float(p["lon"]), float(p["lat"])])
+                except (KeyError, TypeError, ValueError):
+                    pass
+            if result:
+                return result
+
+    # Cache miss — fetch from OSRM and persist for next request
+    osrm_pts = _osrm_coords(origem, destino)
+    if osrm_pts:
+        try:
+            # Store as coordenadas [lat, lon] so the next read takes the
+            # coordenadas branch above (avoids re-encoding the polyline).
+            save_route_to_cache(
+                orig_str, dest_str, tenant_id or "osrm",
+                distancia_km=0.0, tempo_minutos=0.0,
+                rota_json={"coordenadas": [[lat, lon] for lon, lat in osrm_pts]},
+                conn=conn,
+            )
+        except Exception:
+            pass
+        return osrm_pts
+
+    # Final fallback: straight line
+    return [[origem[1], origem[0]], [destino[1], destino[0]]]
+
+
+# ──────────────────────────────────────────────────────────────
+# New lean endpoints
+# ──────────────────────────────────────────────────────────────
+
+@router.get("/transferencias/resumo", summary="Resumo JSON das transferências (sem gerar arquivos)", tags=["Transferências"])
+def resumo_json_transferencias(
+    data_inicial: date = Query(..., description="Data inicial (YYYY-MM-DD)"),
+    data_final: Optional[date] = Query(None, description="Data final (YYYY-MM-DD, opcional)"),
+    usuario: UsuarioToken = Depends(get_current_user),
+):
+    if not data_final:
+        data_final = data_inicial
+    return _carregar_resumo_artefatos_transferencias(usuario.tenant_id, data_inicial, data_final)
+
+
+@router.get("/transferencias/geojson", summary="GeoJSON das rotas de transferência", tags=["Transferências"])
+def geojson_transferencias(
+    data_inicial: date = Query(..., description="Data inicial (YYYY-MM-DD)"),
+    data_final: Optional[date] = Query(None, description="Data final (YYYY-MM-DD, opcional)"),
+    usuario: UsuarioToken = Depends(get_current_user),
+):
+    if not data_final:
+        data_final = data_inicial
+
+    conn = conectar_banco_routing()
+    features: list = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    rota_transf,
+                    rota_coord,
+                    hub_central_latitude,
+                    hub_central_longitude,
+                    tipo_veiculo,
+                    quantidade_entregas,
+                    clusters_qde,
+                    volumes_total,
+                    peso_total_kg,
+                    cte_peso,
+                    distancia_total_km,
+                    tempo_total_min,
+                    aproveitamento_percentual
+                FROM transferencias_resumo
+                WHERE tenant_id = %s
+                  AND envio_data BETWEEN %s AND %s
+                ORDER BY rota_transf
+                """,
+                (usuario.tenant_id, data_inicial, data_final),
+            )
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        # Pre-fetch exact centroid coordinates from transferencias_detalhes.
+        # These match the precision used when the cache_rotas keys were written,
+        # avoiding floating-point rounding mismatches that cause cache misses.
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT rota_transf,
+                       CAST(centro_lat AS DOUBLE PRECISION),
+                       CAST(centro_lon AS DOUBLE PRECISION)
+                FROM transferencias_detalhes
+                WHERE tenant_id = %s
+                  AND envio_data BETWEEN %s AND %s
+                """,
+                (usuario.tenant_id, data_inicial, data_final),
+            )
+            exact_centroids: dict = {}
+            for rota, lat, lon in cur.fetchall():
+                exact_centroids.setdefault(str(rota), []).append((float(lat), float(lon)))
+
+        def _snap(pt: tuple, candidates: list) -> tuple:
+            """Return the candidate nearest to pt (resolves sub-millimetre float drift)."""
+            if not candidates:
+                return pt
+            return min(candidates, key=lambda c: (c[0] - pt[0]) ** 2 + (c[1] - pt[1]) ** 2)
+
+        hub_added = False
+
+        for row in rows:
+            rota_id = str(row["rota_transf"])
+            is_hub = rota_id == "HUB"
+            color = "#9ca3af" if is_hub else _rota_color(rota_id)
+
+            hub_lat = row.get("hub_central_latitude")
+            hub_lon = row.get("hub_central_longitude")
+
+            if not hub_added and hub_lat is not None and hub_lon is not None:
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [float(hub_lon), float(hub_lat)]},
+                    "properties": {"feature_type": "hub", "label": "Hub Central"},
+                })
+                hub_added = True
+
+            rota_coord = row.get("rota_coord")
+            if isinstance(rota_coord, str):
+                try:
+                    rota_coord = _json.loads(rota_coord)
+                except Exception:
+                    rota_coord = []
+
+            if not rota_coord or hub_lat is None or hub_lon is None:
+                continue
+
+            rough_pontos: list = []
+            for p in rota_coord:
+                try:
+                    if isinstance(p, dict):
+                        rough_pontos.append((float(p["lat"]), float(p["lon"])))
+                    elif isinstance(p, (list, tuple)) and len(p) >= 2:
+                        rough_pontos.append((float(p[0]), float(p[1])))
+                except (ValueError, KeyError, TypeError):
+                    pass
+
+            if not rough_pontos:
+                continue
+
+            hub_lat_f, hub_lon_f = float(hub_lat), float(hub_lon)
+
+            # Snap each stop to its exact centroid (matches cache key precision).
+            route_centroids = exact_centroids.get(rota_id, [])
+            pontos = [_snap(p, route_centroids) for p in rough_pontos]
+
+            # Build LineString using actual road geometry from cache_rotas.
+            # conn is still open here — same routing DB hosts cache_rotas.
+            waypoints = [(hub_lat_f, hub_lon_f)] + pontos + [(hub_lat_f, hub_lon_f)]
+            coords: list = []
+            for i in range(len(waypoints) - 1):
+                seg = _segment_geojson_coords(waypoints[i], waypoints[i + 1], conn, usuario.tenant_id)
+                if coords and seg:
+                    seg = seg[1:]  # drop duplicate junction point
+                coords.extend(seg)
+
+            peso = _json_safe(row.get("peso_total_kg") or row.get("cte_peso"))
+
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {
+                    "feature_type": "route",
+                    "rota_id": rota_id,
+                    "color": color,
+                    "is_hub_central": is_hub,
+                    "tipo_veiculo": row.get("tipo_veiculo"),
+                    "quantidade_entregas": _json_safe(row.get("quantidade_entregas")),
+                    "clusters_qde": _json_safe(row.get("clusters_qde")),
+                    "volumes_total": _json_safe(row.get("volumes_total")),
+                    "peso_total_kg": peso,
+                    "distancia_total_km": _json_safe(row.get("distancia_total_km")),
+                    "tempo_total_min": _json_safe(row.get("tempo_total_min")),
+                    "aproveitamento_percentual": _json_safe(row.get("aproveitamento_percentual")),
+                },
+            })
+
+            for i, (lat, lon) in enumerate(pontos):
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                    "properties": {
+                        "feature_type": "stop",
+                        "rota_id": rota_id,
+                        "color": color,
+                        "is_hub_central": is_hub,
+                        "stop_index": i + 1,
+                    },
+                })
+
+    finally:
+        fechar_conexao(conn)
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {
+            "tenant_id": usuario.tenant_id,
+            "data_inicial": data_inicial.isoformat(),
+            "data_final": data_final.isoformat(),
+            "total_routes": sum(1 for f in features if f["properties"].get("feature_type") == "route"),
+        },
     }

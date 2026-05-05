@@ -118,3 +118,37 @@ async def artefatos_transferencias(
 
     result = await forward_request("GET", url, headers=headers, params=params)
     return result["content"]
+
+
+@router.get("/resumo", summary="Resumo JSON das transferências (sem gerar arquivos)")
+async def resumo_transferencias(
+    request: Request,
+    data_inicial: str = Query(..., description="YYYY-MM-DD"),
+    data_final: str | None = Query(None, description="YYYY-MM-DD"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    url = f"{TRANSFER_ROUTING_URL}/transferencias/resumo"
+    params = {"data_inicial": data_inicial}
+    if data_final:
+        params["data_final"] = data_final
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    headers = {"authorization": auth} if auth else {}
+    result = await forward_request("GET", url, headers=headers, params=params)
+    return result["content"]
+
+
+@router.get("/geojson", summary="GeoJSON das rotas de transferência")
+async def geojson_transferencias(
+    request: Request,
+    data_inicial: str = Query(..., description="YYYY-MM-DD"),
+    data_final: str | None = Query(None, description="YYYY-MM-DD"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    url = f"{TRANSFER_ROUTING_URL}/transferencias/geojson"
+    params = {"data_inicial": data_inicial}
+    if data_final:
+        params["data_final"] = data_final
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    headers = {"authorization": auth} if auth else {}
+    result = await forward_request("GET", url, headers=headers, params=params)
+    return result["content"]
