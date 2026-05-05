@@ -2,8 +2,170 @@
 import { useEffect, useRef, useState } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
-import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Loader2, Network, PlayCircle, FileText, Map, Search, X } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Loader2, Network, PlayCircle, FileText, Map, Search, X, CheckCircle2, Circle, AlertCircle } from "lucide-react";
 import { listClusterizationHubs, type ClusterizationHub } from "@/services/clusterizationApi";
+import { MapContainer, TileLayer, CircleMarker, Popup, Marker } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
+// ─── Paleta de cores por cluster ───────────────────────────────────────────
+const CLUSTER_COLORS = [
+    "#2563eb","#16a34a","#dc2626","#d97706","#7c3aed",
+    "#0891b2","#be185d","#65a30d","#ea580c","#0d9488",
+    "#6d28d9","#b45309","#047857","#1d4ed8","#c026d3",
+];
+function clusterColor(clusterId: any): string {
+    if (String(clusterId) === "9999") return "#6b7280";
+    const n = typeof clusterId === "number" ? clusterId : parseInt(String(clusterId), 10);
+    return CLUSTER_COLORS[Math.abs(n) % CLUSTER_COLORS.length];
+}
+
+type ClusterSummary = {
+    cluster: number | string;
+    cluster_cidade: string | null;
+    centro_lat: number;
+    centro_lon: number;
+    quantidade_entregas: number;
+    peso_total_kg: number;
+    quantidade_volumes: number;
+    cte_valor_nf_total: number;
+    cte_valor_frete_total: number;
+};
+
+type ResultadoJSON = {
+    data: string;
+    total_clusters: number;
+    total_entregas: number;
+    clusters: ClusterSummary[];
+    pontos: { cluster: number | string; lat: number; lon: number }[];
+};
+
+// ─── Ícone estrela para centro de cluster ──────────────────────────────────
+function centerIcon(color: string) {
+    return L.divIcon({
+        className: "",
+        html: `<div style="width:18px;height:18px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 0 4px rgba(0,0,0,.4)"></div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+    });
+}
+
+// ─── Mapa react-leaflet ────────────────────────────────────────────────────
+function ClusterMap({ resultado }: { resultado: ResultadoJSON }) {
+    const center: [number, number] = resultado.clusters.length > 0
+        ? [resultado.clusters[0].centro_lat, resultado.clusters[0].centro_lon]
+        : [-5, -39];
+
+    return (
+        <MapContainer center={center} zoom={7} style={{ height: 420, width: "100%" }} scrollWheelZoom={false}>
+            <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            />
+            {resultado.pontos.map((p, i) => (
+                <CircleMarker
+                    key={i}
+                    center={[p.lat, p.lon]}
+                    radius={4}
+                    pathOptions={{ color: clusterColor(p.cluster), fillColor: clusterColor(p.cluster), fillOpacity: 0.7, weight: 0 }}
+                />
+            ))}
+            {resultado.clusters.map((c) => (
+                <Marker key={`centro-${c.cluster}`} position={[c.centro_lat, c.centro_lon]} icon={centerIcon(clusterColor(c.cluster))}>
+                    <Popup>
+                        <strong>{c.cluster_cidade || `Cluster ${c.cluster}`}</strong><br />
+                        {c.quantidade_entregas} entregas · {c.peso_total_kg?.toFixed(0)} kg
+                    </Popup>
+                </Marker>
+            ))}
+        </MapContainer>
+    );
+}
+
+// ─── Tabela de clusters ────────────────────────────────────────────────────
+function TabelaClusters({ clusters }: { clusters: ClusterSummary[] }) {
+    const brl = (v: number) => v?.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+    return (
+        <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-xs text-slate-600 uppercase">
+                    <tr>
+                        <th className="px-3 py-2 text-left">Cluster</th>
+                        <th className="px-3 py-2 text-left">Cidade centro</th>
+                        <th className="px-3 py-2 text-right">Entregas</th>
+                        <th className="px-3 py-2 text-right">Peso (kg)</th>
+                        <th className="px-3 py-2 text-right">Volumes</th>
+                        <th className="px-3 py-2 text-right">Valor NF</th>
+                        <th className="px-3 py-2 text-right">Receita frete</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {clusters.map((c) => (
+                        <tr key={c.cluster} className="border-t hover:bg-slate-50">
+                            <td className="px-3 py-2">
+                                <span className="inline-flex items-center gap-1.5">
+                                    <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: clusterColor(c.cluster) }} />
+                                    {String(c.cluster) === "9999" ? "HUB" : `#${c.cluster}`}
+                                </span>
+                            </td>
+                            <td className="px-3 py-2 text-slate-600">{c.cluster_cidade || "—"}</td>
+                            <td className="px-3 py-2 text-right font-medium">{c.quantidade_entregas}</td>
+                            <td className="px-3 py-2 text-right">{c.peso_total_kg?.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</td>
+                            <td className="px-3 py-2 text-right">{c.quantidade_volumes}</td>
+                            <td className="px-3 py-2 text-right">{brl(c.cte_valor_nf_total)}</td>
+                            <td className="px-3 py-2 text-right">{brl(c.cte_valor_frete_total)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+// ─── Stepper de progresso ──────────────────────────────────────────────────
+const STEPS = ["Buscando dados", "Clusterizando", "Ajustando centros", "Salvando", "Concluído"];
+function stepIndex(stepText: string): number {
+    const t = (stepText || "").toLowerCase();
+    if (t.includes("busca") || t.includes("conecta") || t.includes("enfilei")) return 0;
+    if (t.includes("cluster")) return 1;
+    if (t.includes("ajusta") || t.includes("centro")) return 2;
+    if (t.includes("salva") || t.includes("finaliz")) return 3;
+    if (t.includes("concluí") || t.includes("conclui")) return 4;
+    return 0;
+}
+
+function Stepper({ step, isError }: { step: string; isError: boolean }) {
+    const current = isError ? -1 : stepIndex(step);
+    return (
+        <ol className="flex items-center gap-0 w-full mt-3">
+            {STEPS.map((label, i) => {
+                const done = !isError && i < current;
+                const active = !isError && i === current;
+                return (
+                    <li key={label} className="flex-1 flex flex-col items-center relative">
+                        {i < STEPS.length - 1 && (
+                            <div className={`absolute top-3 left-1/2 w-full h-0.5 ${done || active ? "bg-emerald-500" : "bg-slate-200"}`} />
+                        )}
+                        <div className={`relative z-10 w-6 h-6 rounded-full flex items-center justify-center text-xs
+                            ${isError ? "bg-red-100 text-red-500" :
+                              done ? "bg-emerald-500 text-white" :
+                              active ? "bg-emerald-600 text-white ring-4 ring-emerald-100" :
+                              "bg-slate-200 text-slate-400"}`}>
+                            {isError ? <AlertCircle className="w-3.5 h-3.5" /> :
+                             done ? <CheckCircle2 className="w-3.5 h-3.5" /> :
+                             active ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+                             <Circle className="w-3.5 h-3.5" />}
+                        </div>
+                        <span className={`mt-1 text-[10px] text-center leading-tight hidden sm:block
+                            ${done ? "text-emerald-600" : active ? "text-emerald-700 font-medium" : "text-slate-400"}`}>
+                            {label}
+                        </span>
+                    </li>
+                );
+            })}
+        </ol>
+    );
+}
 
 function MultiSelectCentros({
     options,
@@ -172,8 +334,8 @@ export default function ClusterizationPage() {
     const [centrosSelecionados, setCentrosSelecionados] = useState<number[]>([]);
 
     const [loading, setLoading] = useState(false);
-    const [resultado, setResultado] = useState<any>(null);
-    const [vizData, setVizData] = useState("");
+    const [resultadoJSON, setResultadoJSON] = useState<ResultadoJSON | null>(null);
+    const [resultadoJSONLoading, setResultadoJSONLoading] = useState(false);
     const [viz, setViz] = useState<any>(null);
     const [vizLoading, setVizLoading] = useState(false);
     const [datasDisponiveis, setDatasDisponiveis] = useState<DataDisponivel[]>([]);
@@ -292,7 +454,7 @@ export default function ClusterizationPage() {
             return;
         }
         setLoading(true);
-        setResultado(null);
+        setResultadoJSON(null);
         setViz(null);
         setJobState(null);
         setJobStartedAt(Date.now());
@@ -331,6 +493,18 @@ export default function ClusterizationPage() {
         }
     };
 
+    const carregarResultadoJSON = async (dataVisualizacao: string) => {
+        setResultadoJSONLoading(true);
+        try {
+            const res = await api.get("/clusterization/resultado", { params: { data: dataVisualizacao } });
+            setResultadoJSON(res.data);
+        } catch {
+            // silencia — o resultado em arquivo ainda estará disponível
+        } finally {
+            setResultadoJSONLoading(false);
+        }
+    };
+
     const carregarVisualizacao = async (dataVisualizacao: string, automatico = false) => {
         if (!dataVisualizacao) {
             toast.error("Selecione uma data para visualizar.");
@@ -366,10 +540,9 @@ export default function ClusterizationPage() {
                 progress: 100,
                 step: "Concluído",
             });
-            setResultado(result);
             if (result?.datas?.length) {
                 const primeiraData = result.datas[0];
-                setVizData(primeiraData);
+                carregarResultadoJSON(primeiraData);
                 carregarVisualizacao(primeiraData, true);
             }
             setLoading(false);
@@ -671,141 +844,81 @@ export default function ClusterizationPage() {
                     </button>
                 </div>
 
+                {/* ── Stepper de progresso ── */}
                 {jobState && (
-                    <div className="mt-6 bg-slate-50 border rounded-lg p-4">
-                        <div className="flex items-center justify-between gap-3">
-                            <p className="font-medium">
-                                {jobState.status === "error" ? "Clusterização com erro" : "Processamento da clusterização"}
+                    <div className="mt-6 rounded-lg border bg-slate-50 p-4">
+                        <div className="flex items-center justify-between">
+                            <p className="font-medium text-sm">
+                                {jobState.status === "error" ? "Erro na clusterização" : "Processando clusterização"}
                             </p>
-                            <span className="text-sm text-slate-600">{jobState.progress}%</span>
+                            <span className="text-xs text-slate-500">{jobState.progress}%</span>
                         </div>
-                        <div className="mt-3 h-3 w-full rounded bg-slate-200 overflow-hidden">
-                            <div
-                                className={`h-full ${jobState.status === "error" ? "bg-red-500" : "bg-emerald-600"}`}
-                                style={{ width: `${Math.min(100, Math.max(0, jobState.progress))}%` }}
-                            />
-                        </div>
-                        <p className="mt-2 text-sm text-slate-600">{jobState.step}</p>
+                        <Stepper step={jobState.step} isError={jobState.status === "error"} />
                         {jobState.error && (
-                            <p className="mt-2 text-sm text-red-600">{jobState.error}</p>
+                            <p className="mt-3 text-sm text-red-600 bg-red-50 rounded p-2">{jobState.error}</p>
                         )}
                     </div>
                 )}
 
-                {/* Resultado da execução */}
-                {resultado && (
-                    <div className="mt-6 bg-gray-50 border rounded-lg p-4">
-                        <p className="font-medium">{resultado.mensagem}</p>
-                        {resultado.parametros && (
-                            <p className="mt-2 text-sm text-gray-600">
-                                Faixa alvo: {resultado.parametros.min_entregas_por_cluster_alvo} a{" "}
-                                {resultado.parametros.max_entregas_por_cluster_alvo} entregas por cluster.
-                            </p>
-                        )}
-                        {resultado.resumo?.length > 0 && (
-                            <div className="mt-3 grid gap-2">
-                                {resultado.resumo.map((item: any) => (
-                                    <div key={item.data} className="rounded border bg-white p-3 text-sm">
-                                        <p className="font-medium">{item.data}</p>
-                                        <p className="text-gray-600">
-                                            {item.total_entregas} entregas, {item.total_clusters} clusters, {item.total_outliers} outliers.
-                                        </p>
-                                        <p className="mt-1 text-gray-600">
-                                            Distribuição: {Object.entries(item.distribuicao_clusters || {}).map(([cluster, qtd]) => `Cluster ${cluster}: ${qtd}`).join(" | ")}
-                                        </p>
-                                    </div>
-                                ))}
+                {/* ── Resultado inline: mapa + tabela ── */}
+                {resultadoJSONLoading && (
+                    <div className="mt-6 flex items-center gap-2 text-sm text-slate-500">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Carregando resultado...
+                    </div>
+                )}
+
+                {resultadoJSON && (
+                    <div className="mt-6 grid gap-4">
+                        {/* KPIs */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            {[
+                                { label: "Data", value: resultadoJSON.data },
+                                { label: "Clusters", value: resultadoJSON.total_clusters },
+                                { label: "Entregas", value: resultadoJSON.total_entregas.toLocaleString("pt-BR") },
+                                { label: "Média / cluster", value: Math.round(resultadoJSON.total_entregas / resultadoJSON.total_clusters).toLocaleString("pt-BR") },
+                            ].map((kpi) => (
+                                <div key={kpi.label} className="rounded-lg border bg-white p-3 text-center">
+                                    <p className="text-xs text-slate-500 uppercase tracking-wide">{kpi.label}</p>
+                                    <p className="text-xl font-bold text-slate-800 mt-0.5">{kpi.value}</p>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Mapa */}
+                        <div className="rounded-xl border overflow-hidden">
+                            <ClusterMap resultado={resultadoJSON} />
+                        </div>
+
+                        {/* Tabela */}
+                        <TabelaClusters clusters={resultadoJSON.clusters} />
+
+                        {/* Downloads */}
+                        {viz && (
+                            <div className="rounded-lg border bg-slate-50 p-4">
+                                <p className="text-sm font-medium mb-2 text-slate-700">Downloads</p>
+                                <div className="flex flex-wrap gap-3">
+                                    <a href={buildExportUrl(viz.arquivos.mapa_html)} target="_blank"
+                                        className="flex items-center gap-1.5 text-sm text-emerald-700 hover:underline">
+                                        <Map className="w-4 h-4" /> Mapa interativo
+                                    </a>
+                                    <a href={buildExportUrl(viz.arquivos.pdf)} target="_blank"
+                                        className="flex items-center gap-1.5 text-sm text-emerald-700 hover:underline">
+                                        <FileText className="w-4 h-4" /> Relatório PDF
+                                    </a>
+                                    {viz.arquivos.xlsx && (
+                                        <a href={buildExportUrl(viz.arquivos.xlsx)} target="_blank"
+                                            className="flex items-center gap-1.5 text-sm text-emerald-700 hover:underline">
+                                            <FileText className="w-4 h-4" /> Planilha XLSX
+                                        </a>
+                                    )}
+                                    {vizLoading && (
+                                        <span className="text-xs text-slate-400 flex items-center gap-1">
+                                            <Loader2 className="w-3 h-3 animate-spin" /> Gerando arquivos...
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         )}
-                        {resultado.datas?.length > 0 && (
-                            <>
-                                <label className="block mt-3 text-sm">
-                                    Data para visualizar:
-                                    <select
-                                        value={vizData}
-                                        onChange={(e) => setVizData(e.target.value)}
-                                        className="border rounded px-3 py-2 w-full"
-                                    >
-                                        {resultado.datas.map((d: string) => (
-                                            <option key={d} value={d}>
-                                                {d}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
-                                <button
-                                    onClick={() => carregarVisualizacao(vizData)}
-                                    disabled={vizLoading}
-                                    className="mt-3 bg-emerald-600 text-white rounded-lg px-4 py-2 hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-2"
-                                >
-                                    {vizLoading ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 animate-spin" /> Gerando...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <FileText className="w-4 h-4" /> Atualizar visualização
-                                        </>
-                                    )}
-                                </button>
-                            </>
-                        )}
-                    </div>
-                )}
-
-                {vizLoading && (
-                    <div className="mt-6 bg-slate-50 border rounded-lg p-4 text-sm text-slate-600 flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Gerando mapa, gráficos e relatório...
-                    </div>
-                )}
-
-                {/* Visualização */}
-                {viz && (
-                    <div className="mt-6 bg-white border rounded-lg p-4 shadow-sm">
-                        <p className="font-semibold mb-2">
-                            Arquivos de {viz.data}
-                        </p>
-                        <ul className="list-disc pl-5 text-emerald-700 text-sm">
-                            <li>
-                                <a
-                                    href={buildExportUrl(viz.arquivos.mapa_html)}
-                                    target="_blank"
-                                    className="hover:underline flex items-center gap-1"
-                                >
-                                    <Map className="w-4 h-4" /> Baixar Mapa interativo
-                                </a>
-                            </li>
-                            <li>
-                                <a
-                                    href={buildExportUrl(viz.arquivos.pdf)}
-                                    target="_blank"
-                                    className="hover:underline flex items-center gap-1"
-                                >
-                                    <FileText className="w-4 h-4" /> Baixar Relatório PDF
-                                </a>
-                            </li>
-                            {viz.arquivos.xlsx && (
-                                <li>
-                                    <a
-                                        href={buildExportUrl(viz.arquivos.xlsx)}
-                                        target="_blank"
-                                        className="hover:underline flex items-center gap-1"
-                                    >
-                                        <FileText className="w-4 h-4" /> Baixar Entregas Clusterizadas XLSX
-                                    </a>
-                                </li>
-                            )}
-                        </ul>
-
-                        {/* Prévia do mapa interativo */}
-                        <div className="mt-4">
-                            <h3 className="font-semibold mb-2">Prévia do mapa interativo:</h3>
-                            <iframe
-                                src={buildExportUrl(viz.arquivos.mapa_html)}
-                                className="w-full h-[500px] border rounded-xl"
-                            />
-                        </div>
                     </div>
                 )}
             </div>

@@ -190,6 +190,20 @@ async def processar_clusterizacao(
     return result["content"]
 
 
+@router.get("/resultado", summary="Resultado da clusterização em JSON")
+async def resultado_clusterizacao(
+    request: Request,
+    data: str = Query(..., description="Data do envio no formato YYYY-MM-DD"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    headers = {"Authorization": request.headers.get("Authorization")}
+    result = await forward_request("GET", f"{CLUSTERIZATION_URL}/cluster/resultado", headers=headers, params={"data": data})
+
+    if result["status_code"] >= 400:
+        raise HTTPException(status_code=result["status_code"], detail=result["content"])
+    return result["content"]
+
+
 @router.get("/visualizar", summary="Visualizar clusterização")
 async def visualizar_clusterizacao(
     request: Request,

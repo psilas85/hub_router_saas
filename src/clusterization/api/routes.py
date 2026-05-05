@@ -522,6 +522,61 @@ def clusterizar(
         db.fechar_conexao()
 
 
+@router.get("/resultado", summary="Resultado da clusterização em JSON")
+def resultado_clusterizacao(
+    data: date = Query(..., description="Data de envio (YYYY-MM-DD)"),
+    usuario: UsuarioToken = Depends(get_current_user),
+):
+    tenant_id = usuario.tenant_id
+    from clusterization.infrastructure.database_connection import conectar_banco
+    conn = conectar_banco()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT rc.cluster,
+                       (SELECT ec.cluster_cidade FROM entregas_clusterizadas ec
+                        WHERE ec.tenant_id = rc.tenant_id AND ec.envio_data = rc.envio_data
+                          AND ec.cluster = rc.cluster AND ec.cluster_cidade IS NOT NULL
+                        LIMIT 1) AS cluster_cidade,
+                       rc.centro_lat, rc.centro_lon,
+                       rc.quantidade_entregas, rc.peso_total_kg, rc.quantidade_volumes,
+                       rc.cte_valor_nf_total, rc.cte_valor_frete_total
+                FROM resumo_clusterizacao rc
+                WHERE rc.tenant_id = %s AND rc.envio_data = %s
+                ORDER BY rc.quantidade_entregas DESC
+            """, (tenant_id, data))
+            cols = [d[0] for d in cur.description]
+            clusters = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        if not clusters:
+            raise HTTPException(status_code=404, detail="Nenhuma clusterização encontrada para esta data.")
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ec.cluster, e.destino_latitude AS lat, e.destino_longitude AS lon
+                FROM entregas_clusterizadas ec
+                JOIN entregas e
+                  ON ec.cte_numero = e.cte_numero AND ec.transportadora = e.transportadora
+                WHERE ec.tenant_id = %s AND ec.envio_data = %s
+                  AND e.destino_latitude IS NOT NULL AND e.destino_longitude IS NOT NULL
+            """, (tenant_id, data))
+            pontos = [{"cluster": r[0], "lat": float(r[1]), "lon": float(r[2])} for r in cur.fetchall()]
+
+        return {
+            "data": str(data),
+            "total_clusters": len(clusters),
+            "total_entregas": sum(c["quantidade_entregas"] for c in clusters),
+            "clusters": [
+                {k: (float(v) if v is not None and k in ("centro_lat", "centro_lon", "peso_total_kg", "cte_valor_nf_total", "cte_valor_frete_total") else v)
+                 for k, v in c.items()}
+                for c in clusters
+            ],
+            "pontos": pontos,
+        }
+    finally:
+        fechar_conexao(conn)
+
+
 @router.get("/clusterizar/visualizacao", summary="Visualizar clusterização")
 def visualizar_clusterizacao(
     data: date = Query(..., description="Data de envio (YYYY-MM-DD)"),
