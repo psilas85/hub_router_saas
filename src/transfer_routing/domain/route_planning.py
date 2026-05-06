@@ -1,8 +1,12 @@
 #transfer_routing/domain/route_planning.py
 
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 
 from transfer_routing.infrastructure.vehicle_selector import obter_tipo_veiculo_por_peso
+from transfer_routing.infrastructure.geolocation import get_route
+from transfer_routing.infrastructure.database_connection import conectar_banco_routing, fechar_conexao
 
 def calcular_distancia_e_tempo(p1, p2, obter_rota):
     distancia, tempo, _ = obter_rota((p1["lat"], p1["lon"]), (p2["lat"], p2["lon"]))
@@ -104,7 +108,8 @@ def gerar_rotas_transferencias(
     conn,
     tenant_id,
     logger,
-    hub_info
+    hub_info,
+    progress_callback=None,
 ):
     logger.info("Gerando matriz de pontos...")
     pontos = []
@@ -140,18 +145,42 @@ def gerar_rotas_transferencias(
     pontos = expandir_pontos_por_capacidade(pontos, conn, tenant_id, logger)
     logger.info(f"Total de pontos após expansão por capacidade: {len(pontos)}")
 
-    # Matriz de distâncias e tempos
-    logger.info("Calculando matriz de distâncias...")
+    # Matriz de distâncias e tempos — paralela, cada thread abre sua própria conexão
+    logger.info("Calculando matriz de distâncias (paralelo)...")
+    if progress_callback:
+        progress_callback(15, "Calculando matriz de distâncias")
+
+    pares = [(i, j) for i in range(len(pontos)) for j in range(len(pontos)) if i != j]
+    total_pares = len(pares)
+
+    def _calcular_par(par):
+        i, j = par
+        conn_t = conectar_banco_routing()
+        try:
+            fn = partial(get_route, tenant_id=tenant_id, conn=conn_t, logger=None)
+            d, t = calcular_distancia_e_tempo(pontos[i], pontos[j], fn)
+            return (i, j), (d, t)
+        finally:
+            fechar_conexao(conn_t)
+
     matriz_dist = {}
-    for i, p1 in enumerate(pontos):
-        for j, p2 in enumerate(pontos):
-            if i != j:
-                d, t = calcular_distancia_e_tempo(p1, p2, obter_rota)
-                matriz_dist[(i, j)] = (d, t)
+    concluidos = 0
+    max_workers = min(8, max(1, total_pares))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_calcular_par, par): par for par in pares}
+        for future in as_completed(futures):
+            key, value = future.result()
+            matriz_dist[key] = value
+            concluidos += 1
+            if progress_callback and total_pares > 0:
+                pct = 15 + int(concluidos / total_pares * 55)
+                progress_callback(pct, f"Matriz: {concluidos}/{total_pares} pares")
 
     rotas = [[i] for i in range(len(pontos))]
 
     # Calculando savings
+    if progress_callback:
+        progress_callback(70, "Calculando savings")
     logger.info("Calculando savings...")
     savings = []
     for i in range(len(pontos)):
@@ -164,6 +193,8 @@ def gerar_rotas_transferencias(
 
     savings.sort(reverse=True)
 
+    if progress_callback:
+        progress_callback(80, "Otimizando rotas")
     logger.info("Iniciando processo de junção de rotas com base nos savings...")
     for _, i, j in savings:
         rota_i = next((r for r in rotas if r[-1] == i), None)
@@ -218,6 +249,8 @@ def gerar_rotas_transferencias(
                 rotas.remove(rota_j)
                 rotas.append(nova_rota)
 
+    if progress_callback:
+        progress_callback(90, "Montando resumo das rotas")
     logger.info("Montando resumos e detalhes das rotas...")
 
     rotas_final = []

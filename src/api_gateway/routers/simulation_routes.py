@@ -341,27 +341,34 @@ async def status_simulacao(
             detail = f"Erro ao consultar status do job {job_id}."
         raise HTTPException(status_code=status_code, detail=detail)
 
-    # 🔹 Normaliza a resposta
+    if not isinstance(content, dict):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Resposta inválida ao consultar status do job {job_id}.",
+        )
+
+    # 🔹 Normaliza a resposta sem sobrescrever o status principal do job
     retorno = {
         "status": content.get("status"),
     }
 
-    # Se backend devolveu `result` dentro
+    for campo in [
+        "job_id",
+        "tenant_id",
+        "mensagem",
+        "progress",
+        "step",
+        "error",
+        "datas_processadas",
+        "ended_at",
+    ]:
+        if campo in content:
+            retorno[campo] = content[campo]
+
     if "result" in content and isinstance(content["result"], dict):
-        retorno.update(content["result"])
-    else:
-        for campo in [
-            "job_id",
-            "tenant_id",
-            "mensagem",
-            "progress",
-            "step",
-            "error",
-            "datas_processadas",
-            "ended_at",
-        ]:
-            if campo in content:
-                retorno[campo] = content[campo]
+        retorno["result"] = content["result"]
+        if "mensagem" not in retorno and content["result"].get("mensagem"):
+            retorno["mensagem"] = content["result"].get("mensagem")
 
     return retorno
 

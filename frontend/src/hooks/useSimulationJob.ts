@@ -6,6 +6,7 @@ import { getSimulationStatus, getHistorico } from "@/services/simulationApi";
 type Options = {
     jobId: string | null;
     onUpdate: (msg: string, tone: "info" | "success" | "error") => void;
+    onProgress?: (progress: number, step: string) => void;
     onFinish: () => void;
     onError: () => void;
 };
@@ -13,6 +14,7 @@ type Options = {
 export function useSimulationJob({
     jobId,
     onUpdate,
+    onProgress,
     onFinish,
     onError,
 }: Options) {
@@ -26,6 +28,14 @@ export function useSimulationJob({
         const run = async () => {
             try {
                 const status = await getSimulationStatus(jobId);
+                const rawStatus = String(status.status);
+                const normalizedStatus = (rawStatus === "ok" ? "done" : rawStatus) as
+                    | "queued"
+                    | "processing"
+                    | "done"
+                    | "error"
+                    | "finished"
+                    | "failed";
 
                 const mensagem =
                     status.mensagem ||
@@ -33,30 +43,33 @@ export function useSimulationJob({
                     status.error ||
                     null;
 
-                if (status.status === "done" || status.status === "finished") {
+                if (normalizedStatus === "done" || normalizedStatus === "finished") {
+                    onProgress?.(100, "Concluído");
                     onUpdate(mensagem || "✅ Simulação concluída.", "success");
                     onFinish();
                     return true;
                 }
 
-                if (status.status === "error" || status.status === "failed") {
+                if (normalizedStatus === "error" || normalizedStatus === "failed") {
                     onUpdate(mensagem || "❌ Simulação falhou.", "error");
                     onError();
                     return true;
                 }
 
+                onProgress?.(status.progress ?? 0, status.step ?? "Processando...");
                 onUpdate(mensagem || "⏳ Processando...", "info");
                 return false;
             } catch (err: any) {
-                // 🔥 fallback histórico
+                // fallback histórico quando job expira do Redis
                 if (err?.response?.status === 404) {
                     try {
-                        const hist = await getHistorico(10);
+                        const hist = await getHistorico(25);
                         const job = hist.historico?.find(
                             (h) => h.job_id === jobId
                         );
 
                         if (job?.status === "finished") {
+                            onProgress?.(100, "Concluído");
                             onUpdate(
                                 job.mensagem || "✅ Simulação concluída.",
                                 "success"
@@ -95,21 +108,20 @@ export function useSimulationJob({
 
             const finished = await run();
 
-            // 🔥 para polling se terminou
             if (finished) {
                 clearInterval(interval);
                 return;
             }
 
-            // 🔥 timeout (10 min)
-            if (tentativasRef.current > 60) {
-                onUpdate("⚠️ Timeout da simulação.", "error");
+            // timeout: 240 tentativas × 10s = 40 minutos
+            if (tentativasRef.current > 240) {
+                onUpdate("⚠️ Tempo limite atingido. Verifique o histórico.", "error");
                 onError();
                 clearInterval(interval);
             }
         }, 10000);
 
-        // 🔥 primeira execução rápida
+        // primeira execução rápida
         const timeout = setTimeout(run, 2000);
 
         return () => {

@@ -19,7 +19,7 @@ ssh -o StrictHostKeyChecking=no -i "$PEM_PATH" ${EC2_USER}@${EC2_HOST} << EOF
   docker compose pull
 
   echo "▶️ Subindo aplicação com ${SIMULATION_DATE_WORKERS} workers de simulation por data..."
-  docker compose up -d --scale simulation_date_worker=${SIMULATION_DATE_WORKERS}
+  SIMULATION_DATE_WORKERS=${SIMULATION_DATE_WORKERS} docker compose up -d
 
   echo "📋 Status dos containers:"
   docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"

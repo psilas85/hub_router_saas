@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
 import {
@@ -6,6 +6,7 @@ import {
     ChevronLeft,
     ChevronRight,
     FileText,
+    FileSpreadsheet,
     Loader2,
     Map,
     RefreshCw,
@@ -19,9 +20,11 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import {
     listarClusterizacoesTransfer,
-    processarTransferRouting,
+    enqueueTransferJob,
+    getTransferJobStatus,
     type ClusterizacaoTransferDisponivel,
 } from "@/services/transferRouting";
+import { useTransferRoutingJob } from "@/hooks/useTransferRoutingJob";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -68,6 +71,7 @@ type Artefatos = {
     map_html_url?: string | null;
     map_png_url?: string | null;
     pdf_url?: string | null;
+    xlsx_url?: string | null;
     resumo?: {
         totais: TransferResumoTotais;
         totais_transferencia?: TransferResumoTotais;
@@ -129,6 +133,32 @@ function getErrorMessage(err: unknown) {
     if (typeof detail === "string") return detail;
     if (detail && typeof detail === "object" && "detail" in detail) return String((detail as { detail: unknown }).detail);
     return e?.message || "Erro não identificado";
+}
+
+function HelpHint({ text }: { text: string }) {
+    return (
+        <span className="group relative inline-flex align-middle">
+            <span className="inline-flex h-4.5 w-4.5 cursor-help items-center justify-center rounded-full border border-slate-300 bg-white text-[10px] font-semibold text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700">
+                ?
+            </span>
+            <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-56 -translate-x-1/2 rounded-2xl border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-medium leading-5 text-white shadow-xl group-hover:block">
+                {text}
+            </span>
+        </span>
+    );
+}
+
+function FieldLabel({ title, hint }: { title: string; hint?: string }) {
+    return (
+        <div className="mb-1 flex items-center gap-2 text-xs font-medium text-slate-600">
+            <span>{title}</span>
+            {hint ? <HelpHint text={hint} /> : null}
+        </div>
+    );
+}
+
+function FieldHelpText({ children }: { children: ReactNode }) {
+    return <p className="mt-1 text-xs leading-5 text-slate-500">{children}</p>;
 }
 
 // ─── Map sub-components ───────────────────────────────────────────────────────
@@ -204,7 +234,7 @@ function TransferMap({
                     icon={hubIcon}
                 >
                     <Popup>
-                        <strong>Hub Central</strong>
+                        <strong>Hub central</strong>
                     </Popup>
                 </Marker>
             )}
@@ -322,6 +352,8 @@ function ClusterizacaoCard({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+const TRANSFER_JOB_KEY = "transfer_pending_job";
+
 export default function RoutingPage() {
     const [data, setData] = useState("");
     const [clusterizacoes, setClusterizacoes] = useState<ClusterizacaoTransferDisponivel[]>([]);
@@ -333,19 +365,25 @@ export default function RoutingPage() {
 
     const [params, setParams] = useState({
         modo_forcar: false,
-        tempo_maximo: 1200,
+        tempo_maximo: 800,
         tempo_parada_leve: 10,
-        peso_leve_max: 50,
+        peso_leve_max: 600,
         tempo_parada_pesada: 20,
         tempo_por_volume: 0.4,
     });
     const [loading, setLoading] = useState(false);
     const [artefatosLoading, setArtefatosLoading] = useState(false);
+    const [xlsxLoading, setXlsxLoading] = useState(false);
     const [artefatos, setArtefatos] = useState<Artefatos | null>(null);
     const [geoData, setGeoData] = useState<GeoCollection | null>(null);
     const [geoLoading, setGeoLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<"mapa" | "rotas" | "downloads">("mapa");
     const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
+
+    const [pendingJobId, setPendingJobId] = useState<string | null>(null);
+    const [jobProgress, setJobProgress] = useState(0);
+    const [jobStep, setJobStep] = useState("");
+    const [jobBanner, setJobBanner] = useState<{ text: string; tone: "info" | "success" | "error" } | null>(null);
 
     const selecionada = useMemo(
         () => clusterizacoes.find((item) => item.data === data) || null,
@@ -370,6 +408,63 @@ export default function RoutingPage() {
             });
         return m;
     }, [geoData]);
+
+    const clearJobState = useCallback(() => {
+        setPendingJobId(null);
+        setJobProgress(0);
+        setJobStep("");
+        setJobBanner(null);
+        localStorage.removeItem(TRANSFER_JOB_KEY);
+    }, []);
+
+    // Recover pending job on mount
+    useEffect(() => {
+        const saved = localStorage.getItem(TRANSFER_JOB_KEY);
+        if (!saved) return;
+        let parsed: { jobId: string; startedAt: number };
+        try {
+            parsed = JSON.parse(saved);
+        } catch {
+            localStorage.removeItem(TRANSFER_JOB_KEY);
+            return;
+        }
+        if (Date.now() - parsed.startedAt > 40 * 60 * 1000) {
+            localStorage.removeItem(TRANSFER_JOB_KEY);
+            return;
+        }
+        getTransferJobStatus(parsed.jobId)
+            .then((status) => {
+                if (status.status === "finished") {
+                    setJobBanner({ text: status.mensagem || "✅ Roteirização concluída.", tone: "success" });
+                    localStorage.removeItem(TRANSFER_JOB_KEY);
+                } else if (status.status === "failed") {
+                    setJobBanner({ text: status.error || "❌ Roteirização falhou.", tone: "error" });
+                    localStorage.removeItem(TRANSFER_JOB_KEY);
+                } else {
+                    setPendingJobId(parsed.jobId);
+                    setJobProgress(status.progress ?? 0);
+                    setJobStep(status.step ?? "");
+                    setJobBanner({ text: "⏳ Roteirização em andamento — progresso recuperado.", tone: "info" });
+                }
+            })
+            .catch(() => localStorage.removeItem(TRANSFER_JOB_KEY));
+    }, []);
+
+    useTransferRoutingJob({
+        jobId: pendingJobId,
+        onUpdate: (msg, tone) => setJobBanner({ text: msg, tone }),
+        onProgress: (p, s) => { setJobProgress(p); setJobStep(s); },
+        onFinish: () => {
+            clearJobState();
+            toast.success("✅ Roteirização concluída.");
+            buscarArtefatos({ silencioso: true });
+            carregarClusterizacoes(offset, true);
+        },
+        onError: () => {
+            clearJobState();
+            toast.error("❌ Roteirização falhou.");
+        },
+    });
 
     async function carregarClusterizacoes(nextOffset = 0, usarFiltros = true) {
         setClusterizacoesLoading(true);
@@ -483,6 +578,28 @@ export default function RoutingPage() {
         }
     }
 
+    async function gerarXlsx() {
+        if (!canRun) {
+            toast.error("Selecione uma clusterização.");
+            return;
+        }
+        try {
+            setXlsxLoading(true);
+            const { data: resp } = await api.get<{ xlsx_url: string }>("/transfer_routing/xlsx", {
+                params: { envio_data: data },
+            });
+            if (resp.xlsx_url) {
+                const url = resolveUrl(resp.xlsx_url);
+                if (url) window.open(url, "_blank");
+                toast.success("Planilha gerada.");
+            }
+        } catch (err: unknown) {
+            toast.error("Erro ao gerar planilha: " + getErrorMessage(err));
+        } finally {
+            setXlsxLoading(false);
+        }
+    }
+
     async function processar() {
         if (!canRun) {
             toast.error("Selecione uma clusterização.");
@@ -490,7 +607,7 @@ export default function RoutingPage() {
         }
         try {
             setLoading(true);
-            const result = await processarTransferRouting({
+            const { job_id } = await enqueueTransferJob({
                 data_inicial: data,
                 modo_forcar: params.modo_forcar,
                 tempo_maximo: params.tempo_maximo,
@@ -499,18 +616,14 @@ export default function RoutingPage() {
                 tempo_parada_pesada: params.tempo_parada_pesada,
                 tempo_por_volume: params.tempo_por_volume,
             });
-            if (result?.status === "skipped_existing") {
-                toast(result.mensagem || "Roteirização já existente. Nenhum dado foi reprocessado.", {
-                    icon: "ℹ️",
-                });
-                await buscarArtefatos({ silencioso: true });
-            } else {
-                toast.success(result?.mensagem || "Roteirização processada com sucesso.");
-                await gerarArtefatos({ baixarPdf: false, silencioso: true });
-            }
-            await carregarClusterizacoes(offset, true);
+            localStorage.setItem(TRANSFER_JOB_KEY, JSON.stringify({ jobId: job_id, startedAt: Date.now() }));
+            setPendingJobId(job_id);
+            setJobProgress(0);
+            setJobStep("Na fila...");
+            setJobBanner({ text: "⏳ Roteirização enfileirada.", tone: "info" });
+            toast("Roteirização enfileirada. Acompanhe o progresso abaixo.", { icon: "⏳" });
         } catch (err: unknown) {
-            toast.error("Erro ao processar roteirização: " + getErrorMessage(err));
+            toast.error("Erro ao enfileirar roteirização: " + getErrorMessage(err));
         } finally {
             setLoading(false);
         }
@@ -536,8 +649,48 @@ export default function RoutingPage() {
             <div className="bg-white shadow rounded-2xl p-5">
                 <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
                     <Route className="w-5 h-5 text-emerald-600" />
-                    Middle-Mile • Roteirização
+                    Middle-mile • Rotas de transferência
                 </h2>
+                <p className="mb-4 text-sm text-slate-500">
+                    Monte as rotas de transferência a partir das clusterizações já geradas e acompanhe os resultados da operação.
+                </p>
+
+                {/* ── Job banner ── */}
+                {jobBanner && (
+                    <div
+                        className={`mb-4 rounded-xl border px-4 py-3 text-sm flex items-start gap-2 ${
+                            jobBanner.tone === "success"
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                : jobBanner.tone === "error"
+                                ? "border-red-200 bg-red-50 text-red-800"
+                                : "border-blue-200 bg-blue-50 text-blue-800"
+                        }`}
+                    >
+                        <span className="flex-1">{jobBanner.text}</span>
+                        <button onClick={clearJobState} className="ml-2 opacity-50 hover:opacity-100">
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                )}
+
+                {/* ── Progress bar ── */}
+                {pendingJobId !== null && (
+                    <div className="mb-4 rounded-[24px] border border-emerald-200 bg-white px-5 py-4 shadow-sm">
+                        <div className="mb-2 flex items-center justify-between text-sm">
+                            <span className="font-medium text-slate-700">{jobStep || "Processando..."}</span>
+                            <span className="font-semibold tabular-nums text-emerald-700">{jobProgress}%</span>
+                        </div>
+                        <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+                            <div
+                                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-700 ease-out"
+                                style={{ width: `${Math.max(jobProgress, 2)}%` }}
+                            />
+                        </div>
+                        <p className="mt-2 text-xs text-slate-400">
+                            O processamento pode levar alguns minutos. Você pode sair e voltar — o progresso será recuperado.
+                        </p>
+                    </div>
+                )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 items-start">
                     {/* ── Left: date list ── */}
@@ -545,7 +698,7 @@ export default function RoutingPage() {
                         <div className="flex items-center justify-between gap-2 mb-2">
                             <p className="text-sm font-medium flex items-center gap-1.5">
                                 <CalendarDays className="w-4 h-4 text-emerald-600" />
-                                Clusterizações disponíveis
+                                Bases clusterizadas disponíveis
                             </p>
                             {data && (
                                 <span className="text-xs text-slate-500 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5">
@@ -643,18 +796,18 @@ export default function RoutingPage() {
                     <div className="grid gap-3">
                         <div className="rounded-lg border bg-slate-50 p-3">
                             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
-                                Carga selecionada
+                                Resumo da base selecionada
                             </p>
                             {selecionada ? (
                                 <div className="grid grid-cols-2 gap-2 text-sm">
                                     <div className="rounded border bg-white p-2">
-                                        <p className="text-xs text-slate-500">CTEs</p>
+                                        <p className="text-xs text-slate-500">Entregas</p>
                                         <p className="font-semibold text-slate-800">
                                             {formatNumber(selecionada.quantidade_entregas)}
                                         </p>
                                     </div>
                                     <div className="rounded border bg-white p-2">
-                                        <p className="text-xs text-slate-500">Cargas</p>
+                                        <p className="text-xs text-slate-500">Cargas elegíveis</p>
                                         <p className="font-semibold text-slate-800">
                                             {formatNumber(selecionada.clusters_transferiveis)}
                                         </p>
@@ -678,8 +831,11 @@ export default function RoutingPage() {
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
-                            <label className="text-xs font-medium text-slate-600">
-                                Tempo máx. rota
+                            <label>
+                                <FieldLabel
+                                    title="Tempo máximo por rota de transferência (min)"
+                                    hint="Limite de duração para cada rota de transferência gerada neste módulo."
+                                />
                                 <input
                                     type="number"
                                     min={1}
@@ -689,9 +845,13 @@ export default function RoutingPage() {
                                     }
                                     className="mt-1 border rounded px-2 py-1.5 text-sm w-full text-right"
                                 />
+                                <FieldHelpText>Use o mesmo referencial de tempo da simulação para manter consistência operacional.</FieldHelpText>
                             </label>
-                            <label className="text-xs font-medium text-slate-600">
-                                Peso leve máx.
+                            <label>
+                                <FieldLabel
+                                    title="Peso máximo para veículo leve (kg)"
+                                    hint="Até esse peso a carga pode ser considerada compatível com veículo leve."
+                                />
                                 <input
                                     type="number"
                                     min={0}
@@ -701,9 +861,13 @@ export default function RoutingPage() {
                                     }
                                     className="mt-1 border rounded px-2 py-1.5 text-sm w-full text-right"
                                 />
+                                <FieldHelpText>Acima desse valor a operação passa a exigir parada pesada.</FieldHelpText>
                             </label>
-                            <label className="text-xs font-medium text-slate-600">
-                                Parada leve
+                            <label>
+                                <FieldLabel
+                                    title="Tempo de parada leve (min)"
+                                    hint="Tempo padrão para atendimentos de menor complexidade."
+                                />
                                 <input
                                     type="number"
                                     min={0}
@@ -716,9 +880,13 @@ export default function RoutingPage() {
                                     }
                                     className="mt-1 border rounded px-2 py-1.5 text-sm w-full text-right"
                                 />
+                                <FieldHelpText>Aplicado às cargas classificadas como leves.</FieldHelpText>
                             </label>
-                            <label className="text-xs font-medium text-slate-600">
-                                Parada pesada
+                            <label>
+                                <FieldLabel
+                                    title="Tempo de parada pesada (min)"
+                                    hint="Tempo padrão para atendimentos com maior esforço operacional."
+                                />
                                 <input
                                     type="number"
                                     min={0}
@@ -731,11 +899,15 @@ export default function RoutingPage() {
                                     }
                                     className="mt-1 border rounded px-2 py-1.5 text-sm w-full text-right"
                                 />
+                                <FieldHelpText>Aplicado às cargas acima do limite de veículo leve.</FieldHelpText>
                             </label>
                         </div>
 
-                        <label className="text-xs font-medium text-slate-600">
-                            Tempo por volume
+                        <label>
+                            <FieldLabel
+                                title="Tempo adicional por volume (min)"
+                                hint="Acréscimo de tempo aplicado para cada volume atendido em uma parada."
+                            />
                             <input
                                 type="number"
                                 step="0.01"
@@ -746,6 +918,7 @@ export default function RoutingPage() {
                                 }
                                 className="mt-1 border rounded px-2 py-1.5 text-sm w-full text-right"
                             />
+                            <FieldHelpText>Ajuda a aproximar o tempo real de carregamento e descarga.</FieldHelpText>
                         </label>
 
                         <label className="flex items-center gap-2 rounded-lg border bg-slate-50 p-3 text-sm text-slate-700">
@@ -757,7 +930,7 @@ export default function RoutingPage() {
                                 }
                                 className="h-4 w-4 text-emerald-600 border-gray-300 rounded"
                             />
-                            Forçar sobrescrita
+                            Substituir resultados já gerados
                         </label>
 
                         <button
@@ -771,7 +944,7 @@ export default function RoutingPage() {
                                 </>
                             ) : (
                                 <>
-                                    <Truck className="w-4 h-4" /> Processar roteirização
+                                    <Truck className="w-4 h-4" /> Iniciar roteirização
                                 </>
                             )}
                         </button>
@@ -787,7 +960,7 @@ export default function RoutingPage() {
                                 ) : (
                                     <RefreshCw className="w-4 h-4" />
                                 )}
-                                Artefatos
+                                Atualizar resultados
                             </button>
                             <button
                                 onClick={() => gerarArtefatos({ baixarPdf: true })}
@@ -820,31 +993,31 @@ export default function RoutingPage() {
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                 {[
                                     {
-                                        label: "Rotas transf.",
+                                        label: "Rotas de transferência",
                                         value: formatNumber(totaisTransferencia.rotas),
                                     },
                                     {
-                                        label: "Entregas transf.",
+                                        label: "Entregas em transferência",
                                         value: formatNumber(totaisTransferencia.entregas),
                                     },
                                     {
-                                        label: "Paradas transf.",
+                                        label: "Paradas de transferência",
                                         value: formatNumber(totaisTransferencia.paradas),
                                     },
                                     {
-                                        label: "Peso transf.",
+                                        label: "Peso em transferência",
                                         value: `${formatNumber(totaisTransferencia.peso_total_kg)} kg`,
                                     },
                                     {
-                                        label: "Volumes transf.",
+                                        label: "Volumes em transferência",
                                         value: formatNumber(totaisTransferencia.volumes),
                                     },
                                     {
-                                        label: "Dist. ida",
+                                        label: "Distância de ida",
                                         value: `${formatDecimal(totaisTransferencia.distancia_ida_km)} km`,
                                     },
                                     {
-                                        label: "Dist. total",
+                                        label: "Distância total",
                                         value: `${formatDecimal(totaisTransferencia.distancia_total_km)} km`,
                                     },
                                     {
@@ -873,10 +1046,10 @@ export default function RoutingPage() {
                                 <div className="flex flex-wrap items-start justify-between gap-3">
                                     <div>
                                         <p className="text-sm font-semibold text-amber-900">
-                                            Hub Central 9999 — validação de somatório
+                                            Hub central 9999 — conferência de volume
                                         </p>
                                         <p className="text-xs text-amber-800 mt-1">
-                                            Entregas já no Hub Central. Não geram rota de transferência e não
+                                            Entregas já posicionadas no hub central. Elas não geram rota de transferência e não
                                             aparecem no mapa.
                                         </p>
                                     </div>
@@ -921,7 +1094,7 @@ export default function RoutingPage() {
                                 onClick={() => setActiveTab("downloads")}
                                 className={tabCls("downloads")}
                             >
-                                <FileText className="w-4 h-4" /> Downloads
+                                <FileText className="w-4 h-4" /> Arquivos
                             </button>
                         </div>
 
@@ -955,7 +1128,7 @@ export default function RoutingPage() {
                                     <>
                                         <div className="px-4 py-2 border-b bg-slate-50">
                                             <p className="text-xs text-slate-500">
-                                                Clique em uma rota para destacá-la no mapa
+                                                Clique em uma rota para destacá-la no mapa.
                                             </p>
                                         </div>
                                         <div className="overflow-x-auto">
@@ -1095,11 +1268,23 @@ export default function RoutingPage() {
                                         <span>Relatório consolidado (PDF)</span>
                                     </a>
                                 )}
+                                <button
+                                    onClick={gerarXlsx}
+                                    disabled={!canRun || xlsxLoading}
+                                    className="flex items-center gap-2 rounded-lg border bg-white px-4 py-3 text-sm text-emerald-700 hover:bg-emerald-50 transition disabled:opacity-50"
+                                >
+                                    {xlsxLoading ? (
+                                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                                    ) : (
+                                        <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                                    )}
+                                    <span className="font-medium">Planilha de entregas (XLSX)</span>
+                                </button>
                                 {!artefatos?.map_html_url &&
                                     !artefatos?.map_png_url &&
                                     !artefatos?.pdf_url && (
                                         <p className="text-sm text-slate-500">
-                                            Nenhum artefato gerado ainda. Use o botão{" "}
+                                            Nenhum arquivo gerado ainda. Use o botão{" "}
                                             <strong>PDF</strong> para gerar os arquivos.
                                         </p>
                                     )}

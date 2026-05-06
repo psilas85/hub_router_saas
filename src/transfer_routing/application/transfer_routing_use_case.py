@@ -18,7 +18,8 @@ from transfer_routing.logs.logging_factory import LoggerFactory
 
 class TransferRoutingUseCase:
     def __init__(self, tenant_id: str, modo_forcar: bool, tempo_maximo: float, tempo_parada_leve: float,
-                 peso_leve_max: float, tempo_parada_pesada: float, tempo_por_volume: float):
+                 peso_leve_max: float, tempo_parada_pesada: float, tempo_por_volume: float,
+                 progress_callback=None):
         self.tenant_id = tenant_id
         self.modo_forcar = modo_forcar
         self.tempo_maximo = tempo_maximo
@@ -26,13 +27,19 @@ class TransferRoutingUseCase:
         self.peso_leve_max = peso_leve_max
         self.tempo_parada_pesada = tempo_parada_pesada
         self.tempo_por_volume = tempo_por_volume
+        self.progress_callback = progress_callback
         self.logger = LoggerFactory.get_logger("transfer_routing")
 
     def run(self, data_inicial: date, data_final: date):
+        def _progress(p: int, s: str):
+            if self.progress_callback:
+                self.progress_callback(p, s)
+
         conn_cluster = conectar_banco_cluster()
         conn_routing = conectar_banco_routing()
 
         try:
+            _progress(5, "Verificando dados existentes")
             resumo_count, detalhes_count = contar_roteirizacao_transferencias(
                 self.tenant_id,
                 data_inicial,
@@ -69,13 +76,15 @@ class TransferRoutingUseCase:
                         "detalhes_existentes": detalhes_count,
                     }
 
+            _progress(10, "Iniciando roteirização")
             planner = TransferPlanner(
                 tenant_id=self.tenant_id,
                 tempo_maximo=self.tempo_maximo,
                 tempo_parada_leve=self.tempo_parada_leve,
                 peso_leve_max=self.peso_leve_max,
                 tempo_parada_pesada=self.tempo_parada_pesada,
-                tempo_por_volume=self.tempo_por_volume
+                tempo_por_volume=self.tempo_por_volume,
+                progress_callback=_progress,
             )
 
             planner.executar(

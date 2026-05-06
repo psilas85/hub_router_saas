@@ -46,6 +46,43 @@ async def processar_transfer_routing(
     return result["content"]
 
 
+@router.post("/jobs", summary="Enfileirar job de transferência")
+async def enfileirar_transfer_job(
+    request: Request,
+    data_inicial: date = Query(..., description="Data inicial"),
+    modo_forcar: bool = Query(False, description="Forçar reprocessamento"),
+    tempo_maximo: float = Query(1200.0, description="Tempo máximo da rota (minutos)"),
+    tempo_parada_leve: float = Query(10.0, description="Tempo de parada leve"),
+    peso_leve_max: float = Query(50.0, description="Peso máximo para considerar parada leve"),
+    tempo_parada_pesada: float = Query(20.0, description="Tempo de parada pesada"),
+    tempo_por_volume: float = Query(0.4, description="Tempo de descarregamento por volume"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    headers = {"authorization": request.headers.get("authorization")}
+    params = {
+        "envio_data": data_inicial.isoformat(),
+        "modo_forcar": modo_forcar,
+        "tempo_maximo": tempo_maximo,
+        "tempo_parada_leve": tempo_parada_leve,
+        "peso_leve_max": peso_leve_max,
+        "tempo_parada_pesada": tempo_parada_pesada,
+        "tempo_por_volume": tempo_por_volume,
+    }
+    result = await forward_request("POST", f"{TRANSFER_ROUTING_URL}/transferencias/jobs", headers=headers, params=params)
+    return result["content"]
+
+
+@router.get("/jobs/{job_id}", summary="Status de job de transferência")
+async def status_transfer_job(
+    request: Request,
+    job_id: str,
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    headers = {"authorization": request.headers.get("authorization")}
+    result = await forward_request("GET", f"{TRANSFER_ROUTING_URL}/transferencias/jobs/{job_id}", headers=headers)
+    return result["content"]
+
+
 @router.get("/clusterizacoes-disponiveis", summary="Listar clusterizações disponíveis para transferência")
 async def listar_clusterizacoes_disponiveis(
     request: Request,
@@ -151,4 +188,17 @@ async def geojson_transferencias(
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     headers = {"authorization": auth} if auth else {}
     result = await forward_request("GET", url, headers=headers, params=params)
+    return result["content"]
+
+
+@router.get("/xlsx", summary="Gerar planilha XLSX de entregas por transferência")
+async def xlsx_transferencias(
+    request: Request,
+    envio_data: str = Query(..., description="YYYY-MM-DD"),
+    tenant_id: str = Depends(obter_tenant_id_do_token),
+):
+    url = f"{TRANSFER_ROUTING_URL}/transferencias/xlsx"
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    headers = {"authorization": auth} if auth else {}
+    result = await forward_request("GET", url, headers=headers, params={"envio_data": envio_data})
     return result["content"]

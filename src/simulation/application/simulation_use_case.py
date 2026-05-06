@@ -62,6 +62,7 @@ class SimulationUseCase:
         simulation_id=None,
         permitir_rotas_excedentes=True,
         hub_id=None,
+        progress_callback=None,
     ):
         self.tenant_id = tenant_id
         self.envio_data = envio_data
@@ -100,6 +101,7 @@ class SimulationUseCase:
         self.permitir_rotas_excedentes = permitir_rotas_excedentes
         self.hub_id = hub_id
         self.output_dir = "exports/simulation"
+        self.progress_callback = progress_callback
 
         # cenários inválidos
         self.cenarios_invalidados = []
@@ -156,6 +158,10 @@ class SimulationUseCase:
             simulation_db,
             logger
         )
+
+    def _notify_progress(self, progress, step):
+        if self.progress_callback:
+            self.progress_callback(progress, step)
 
     def exportar_excel_entregas_rotas(self):
         """
@@ -1391,6 +1397,7 @@ class SimulationUseCase:
 
         self.logger.info("🔁 Iniciando execução completa da simulação.")
         self.logger.info(f"🆔 Simulation ID: {self.simulation_id}")
+        self._notify_progress(35, f"Carregando entregas de {self.envio_data}")
 
         # =============================
         # 🔹 CARREGAMENTO
@@ -1402,6 +1409,7 @@ class SimulationUseCase:
         if df_entregas_original.empty:
             self.logger.warning("⚠️ Nenhuma entrega encontrada.")
             return None
+        self._notify_progress(42, f"Preparando dados de {self.envio_data}")
 
         # =============================
         # 🔹 PRÉ-PROCESSAMENTO
@@ -1462,6 +1470,7 @@ class SimulationUseCase:
         else:
             df_entregas = df_entregas_original.copy()
             df_hub = pd.DataFrame(columns=df_entregas.columns)
+        self._notify_progress(48, f"Organizando base operacional de {self.envio_data}")
 
         # =============================
         # 🔹 OUTLIERS
@@ -1549,6 +1558,7 @@ class SimulationUseCase:
         # 🔴 K0 primeiro
         # 🔴 K0 primeiro
         self.logger.info("🧪 Executando cenário k=0")
+        self._notify_progress(55, f"Executando cenário Hub único de {self.envio_data}")
 
         # 🔥 REGRA CORRETA: BASE TOTAL - OUTLIERS (SE ATIVADO)
         df_base_k0 = df_entregas_original.copy()
@@ -1577,14 +1587,26 @@ class SimulationUseCase:
             melhor_k = 0
             menor_custo = custo_k0
             melhor_resultado = resultado_k0
+        self._notify_progress(62, f"Consolidando cenário Hub único de {self.envio_data}")
 
 
         if executar_apenas_k0:
             k_values = []
 
-        for k in k_values:
+        total_cenarios_clusterizados = len(k_values)
+
+        for indice_cenario, k in enumerate(k_values, start=1):
+
+            if total_cenarios_clusterizados > 0:
+                progresso_cenario = 65 + int(((indice_cenario - 1) / total_cenarios_clusterizados) * 20)
+            else:
+                progresso_cenario = 65
 
             self.logger.info(f"🧪 Executando cenário k={k}")
+            self._notify_progress(
+                progresso_cenario,
+                f"Testando cenário k={k} de {self.envio_data} ({indice_cenario}/{total_cenarios_clusterizados})",
+            )
 
             resultado_k = self._executar_simulacao_para_k(
                 k,
@@ -1610,11 +1632,14 @@ class SimulationUseCase:
                     "quantidade_entregas": df_entregas_original["cte_numero"].nunique()
                 }
 
+        self._notify_progress(88, f"Finalizando artefatos de {self.envio_data}")
+
 
         # =============================
         # 🔴 RESULTADO FINAL
         # =============================
         if melhor_k is not None and melhor_resultado is not None:
+            self._notify_progress(95, f"Salvando melhor cenário de {self.envio_data}")
             return self._finalizar_melhor_resultado(
                 melhor_k,
                 menor_custo,

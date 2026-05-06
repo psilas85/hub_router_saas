@@ -15,7 +15,10 @@ import json
 
 from simulation.jobs import SIMULATION_JOBS_QUEUE, processar_simulacao
 from simulation.infrastructure.simulation_database_connection import conectar_simulation_db
-from simulation.infrastructure.simulation_database_reader import carregar_historico_simulation
+from simulation.infrastructure.simulation_database_reader import (
+    carregar_historico_simulation,
+    reconciliar_historico_simulation,
+)
 from authentication.utils.dependencies import obter_tenant_id_do_token
 
 from authentication.utils.dependencies import obter_tenant_id_do_token
@@ -36,7 +39,7 @@ from simulation.domain.entities import SimulationParams
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 # 🔌 Conexão com Redis para fila de jobs
-redis_conn = Redis(host="redis", port=6379, decode_responses=True)
+redis_conn = Redis(host="redis", port=6379)
 q = Queue(SIMULATION_JOBS_QUEUE, connection=redis_conn)
 
 logger = logging.getLogger("simulation_service")
@@ -651,6 +654,68 @@ def status_simulacao(job_id: str, tenant_id: str = Depends(obter_tenant_id_do_to
             return ultima.split(":", 1)[1].strip() or fallback
         return ultima
 
+    def progresso_subjob(child_job):
+        if child_job is None:
+            return 0, "Aguardando início"
+
+        if child_job.is_finished:
+            return 100, "Concluído"
+
+        if child_job.is_failed:
+            return 100, child_job.meta.get("step") or "Erro"
+
+        status = child_job.get_status(refresh=False)
+        progress = child_job.meta.get("progress")
+        step = child_job.meta.get("step")
+
+        if progress is None:
+            if status == "queued":
+                progress = 5
+            elif status in {"started", "deferred"}:
+                progress = 15
+            else:
+                progress = 0
+
+        if not step:
+            if status == "queued":
+                step = "Na fila"
+            elif status in {"started", "deferred"}:
+                step = "Processando"
+            else:
+                step = "Aguardando"
+
+        return max(0, min(int(progress), 99)), step
+
+    def consolidar_progresso_subjobs(parent_job):
+        subjobs = parent_job.meta.get("subjobs") or []
+        if not subjobs:
+            return None
+
+        child_jobs = Job.fetch_many(subjobs, connection=redis_conn)
+        total = len(subjobs)
+        concluidos = 0
+        progresso_total = 0
+        etapas_ativas = []
+
+        for child_job in child_jobs:
+            progress, step = progresso_subjob(child_job)
+            progresso_total += progress
+
+            if child_job is not None and child_job.is_finished:
+                concluidos += 1
+            elif step:
+                etapas_ativas.append(step)
+
+        progresso_medio = int(progresso_total / total) if total else 0
+
+        if concluidos == total and total > 0:
+            return 100, "Todas as datas processadas"
+
+        if etapas_ativas:
+            return max(1, min(progresso_medio, 99)), f"{etapas_ativas[0]} ({concluidos}/{total} concluídos)"
+
+        return max(1, min(progresso_medio, 99)), f"Aguardando subjobs ({concluidos}/{total})"
+
     # 1. Primeiro tenta buscar no Redis
     try:
         job = Job.fetch(job_id, connection=redis_conn)
@@ -681,12 +746,19 @@ def status_simulacao(job_id: str, tenant_id: str = Depends(obter_tenant_id_do_to
                 "error": extrair_mensagem_execucao(job.exc_info),
             }
         else:
+            progresso_consolidado = consolidar_progresso_subjobs(job)
+            progress = job.meta.get("progress", 0)
+            step = job.meta.get("step", "Em andamento")
+
+            if progresso_consolidado is not None:
+                progress, step = progresso_consolidado
+
             return {
                 "status": "processing",
                 "job_id": job.get_id(),
                 "tenant_id": tenant_id,
-                "progress": job.meta.get("progress", 0),
-                "step": job.meta.get("step", "Em andamento"),
+                "progress": progress,
+                "step": step,
             }
 
     except Exception:
@@ -694,6 +766,7 @@ def status_simulacao(job_id: str, tenant_id: str = Depends(obter_tenant_id_do_to
 
     # 2. Fallback no banco de histórico
     conn = conectar_simulation_db(); cur = conn.cursor()
+    reconciliar_historico_simulation(conn, tenant_id, [job_id])
     cur.execute("""
         SELECT status, mensagem, datas
         FROM historico_simulation

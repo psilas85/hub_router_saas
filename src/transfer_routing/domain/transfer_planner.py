@@ -15,13 +15,15 @@ from transfer_routing.domain.route_planning import gerar_rotas_transferencias
 
 class TransferPlanner:
     def __init__(self, tenant_id: str, tempo_maximo: float, tempo_parada_leve: float,
-                 peso_leve_max: float, tempo_parada_pesada: float, tempo_por_volume: float):
+                 peso_leve_max: float, tempo_parada_pesada: float, tempo_por_volume: float,
+                 progress_callback=None):
         self.tenant_id = tenant_id
         self.tempo_maximo = tempo_maximo
         self.tempo_parada_leve = tempo_parada_leve
         self.peso_leve_max = peso_leve_max
         self.tempo_parada_pesada = tempo_parada_pesada
         self.tempo_por_volume = tempo_por_volume
+        self.progress_callback = progress_callback
 
     def executar(self, envio_data: date, conn_cluster, conn_routing, logger):
         logger.info(f"Iniciando roteirização de transferências para {envio_data}.")
@@ -65,7 +67,8 @@ class TransferPlanner:
             conn=conn_routing,
             tenant_id=self.tenant_id,
             logger=logger,
-            hub_info=hub
+            hub_info=hub,
+            progress_callback=self.progress_callback,
         )
 
         # Adicionar rota do HUB_CENTRAL manualmente no resumo e detalhes
@@ -147,6 +150,8 @@ class TransferPlanner:
             )
 
         logger.info("Salvando dados no banco.")
+        if self.progress_callback:
+            self.progress_callback(93, "Salvando resultados no banco")
         salvar_transferencias(
             rotas_resumo, detalhes_transferencias, conn_routing,
             self.tenant_id, envio_data, logger

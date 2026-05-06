@@ -110,11 +110,63 @@ def _montar_mensagem_falha_data(envio_data, cenarios_invalidados):
     )
 
 
+def _atualizar_meta_job(job, progress, step, extra=None):
+    if not job:
+        return
+
+    job.meta["progress"] = max(0, min(int(progress), 100))
+    job.meta["step"] = step
+    if extra:
+        job.meta.update(extra)
+    job.save_meta()
+
+
+def _progresso_subjob(child_job):
+    if child_job is None:
+        return 0, "Aguardando início"
+
+    if child_job.is_finished:
+        return 100, "Concluído"
+
+    if child_job.is_failed:
+        return 100, child_job.meta.get("step") or "Erro"
+
+    status = child_job.get_status(refresh=False)
+    progress = child_job.meta.get("progress")
+    step = child_job.meta.get("step")
+
+    if progress is None:
+        if status == "queued":
+            progress = 5
+        elif status in {"started", "deferred"}:
+            progress = 15
+        else:
+            progress = 0
+
+    if not step:
+        if status == "queued":
+            step = "Na fila"
+        elif status in {"started", "deferred"}:
+            step = "Processando"
+        else:
+            step = "Aguardando"
+
+    return max(0, min(int(progress), 99)), step
+
+
 def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
     """Executa simulação para 1 data de envio (processo separado)."""
     simulation_id = str(uuid.uuid4())
     log_file = f"/app/logs/simulation_{envio_data}.log"
     logger = configurar_logger(log_file)
+    child_job = get_current_job()
+
+    _atualizar_meta_job(
+        child_job,
+        5,
+        f"Preparando data {envio_data}",
+        {"envio_data": str(envio_data)},
+    )
 
     clusterization_db = conectar_clusterization_db()
     simulation_db = conectar_simulation_db()
@@ -141,6 +193,12 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
             _json_log(params.dict()),
         )
 
+        _atualizar_meta_job(
+            child_job,
+            15,
+            f"Carregando dados de {envio_data}",
+        )
+
         use_case = SimulationUseCase(
             tenant_id=tenant_id,
             envio_data=envio_data,
@@ -152,9 +210,22 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
             modo_forcar=modo_forcar,
             simulation_id=simulation_id,
             permitir_rotas_excedentes=params.permitir_rotas_excedentes,
+            progress_callback=lambda progress, step: _atualizar_meta_job(child_job, progress, step),
+        )
+
+        _atualizar_meta_job(
+            child_job,
+            30,
+            f"Executando simulação de {envio_data}",
         )
 
         ponto = use_case.executar_simulacao_completa()
+
+        _atualizar_meta_job(
+            child_job,
+            90,
+            f"Consolidando resultados de {envio_data}",
+        )
 
         cenarios_invalidados = []
         if isinstance(ponto, dict):
@@ -170,6 +241,11 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
 
         if ponto and ponto.get("k_clusters") is not None:
             logger.info(f"✅ Simulação concluída para {envio_data}")
+            _atualizar_meta_job(
+                child_job,
+                100,
+                f"Data {envio_data} concluída",
+            )
             return (
                 "ok",
                 envio_data,
@@ -180,6 +256,11 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
             )
         else:
             logger.warning(f"⚠️ Simulação ignorada para {envio_data}")
+            _atualizar_meta_job(
+                child_job,
+                100,
+                f"Data {envio_data} sem cenário viável",
+            )
             return (
                 "ignorada",
                 envio_data,
@@ -190,6 +271,11 @@ def _processar_data_envio(envio_data, tenant_id, hub_id, params, modo_forcar):
 
     except Exception as e:
         logger.error(f"❌ Erro inesperado na simulação {envio_data}: {e}")
+        _atualizar_meta_job(
+            child_job,
+            100,
+            f"Erro na data {envio_data}",
+        )
         raise
     finally:
         clusterization_db.close()
@@ -251,6 +337,8 @@ def _aguardar_subjobs_simulacao(
             )
 
         finished = 0
+        progresso_total = 0
+        etapas_ativas = []
         jobs = Job.fetch_many(subjobs, connection=redis_conn)
 
         for child_job in jobs:
@@ -282,14 +370,26 @@ def _aguardar_subjobs_simulacao(
                     f"Subjob da simulation falhou: {child_job_id}. {mensagem_child}"
                 )
 
+            progresso_child, etapa_child = _progresso_subjob(child_job)
+            progresso_total += progresso_child
+            if not child_job.is_finished and etapa_child:
+                etapas_ativas.append(etapa_child)
+
         if job:
+            progresso_medio = int(progresso_total / len(subjobs)) if subjobs else 100
+            if finished == len(subjobs):
+                step = "Todas as datas processadas"
+                progress = 100
+            elif etapas_ativas:
+                step = f"{etapas_ativas[0]} ({finished}/{len(subjobs)} concluídos)"
+                progress = max(1, min(progresso_medio, 99))
+            else:
+                step = f"Aguardando subjobs ({finished}/{len(subjobs)})"
+                progress = max(1, min(progresso_medio, 99))
+
             job.meta["datas_processadas"] = sorted(results_by_data.keys())
-            job.meta["step"] = (
-                f"Aguardando subjobs ({finished}/{len(subjobs)})"
-            )
-            job.meta["progress"] = (
-                int((finished / len(subjobs)) * 100) if subjobs else 100
-            )
+            job.meta["step"] = step
+            job.meta["progress"] = progress
             job.save_meta()
 
         if finished == len(subjobs):
@@ -318,11 +418,7 @@ def processar_simulacao(
     """
 
     job = get_current_job()
-    if job:
-        job.meta["step"] = "Inicializando"
-        job.meta["progress"] = 0
-        job.meta["datas_processadas"] = []
-        job.save_meta()
+    _atualizar_meta_job(job, 0, "Inicializando", {"datas_processadas": []})
 
     data_inicial_dt = datetime.strptime(data_inicial, "%Y-%m-%d").date()
     data_final_dt = datetime.strptime(data_final, "%Y-%m-%d").date()
@@ -341,10 +437,12 @@ def processar_simulacao(
             modo_forcar=modo_forcar,
         )
 
-        if job:
-            job.meta["step"] = f"Subjobs enfileirados ({len(subjobs)})"
-            job.meta["subjobs"] = subjobs
-            job.save_meta()
+        _atualizar_meta_job(
+            job,
+            2,
+            f"Subjobs enfileirados ({len(subjobs)})",
+            {"subjobs": subjobs},
+        )
 
         results = _aguardar_subjobs_simulacao(
             job=job,
@@ -388,10 +486,7 @@ def processar_simulacao(
                     tenant_id
                 ))
 
-                if job:
-                    job.meta["step"] = "Erro"
-                    job.meta["progress"] = 100
-                    job.save_meta()
+                _atualizar_meta_job(job, 100, "Erro")
 
                 status_final = "error"
             else:
@@ -429,10 +524,7 @@ def processar_simulacao(
                         tenant_id
                     ))
 
-                    if job:
-                        job.meta["step"] = "Falhou"
-                        job.meta["progress"] = 100
-                        job.save_meta()
+                    _atualizar_meta_job(job, 100, "Falhou")
 
                     status_final = "error"
                 elif ignoradas:
@@ -460,10 +552,7 @@ def processar_simulacao(
                         tenant_id
                     ))
 
-                    if job:
-                        job.meta["step"] = "Finalizado"
-                        job.meta["progress"] = 100
-                        job.save_meta()
+                    _atualizar_meta_job(job, 100, "Finalizado")
 
                     status_final = "ok"
 
@@ -481,10 +570,7 @@ def processar_simulacao(
         }
 
     except Exception as e:
-        if job:
-            job.meta["step"] = "Erro"
-            job.meta["progress"] = 100
-            job.save_meta()
+        _atualizar_meta_job(job, 100, "Erro")
 
         mensagem_curta = _extrair_mensagem_execucao(
             str(e),

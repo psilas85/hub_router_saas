@@ -75,11 +75,14 @@ services:
       - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
       - REDIS_URL=redis://redis:6379
     depends_on:
-      - redis
-      - postgres
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - hub_router_network
     restart: always
+    stop_grace_period: 180s
 
   data_input_subjob_worker:
     image: psilas85/hub_router-data_input:latest
@@ -95,11 +98,16 @@ services:
       - AUTH_SECRET_KEY=MinhaChaveUltraSegura123
       - REDIS_URL=redis://redis:6379
     depends_on:
-      - redis
-      - postgres
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - hub_router_network
     restart: always
+    stop_grace_period: 300s
+    deploy:
+      replicas: ${DATA_INPUT_SUBJOB_WORKERS:-3}
 
   simulation_worker:
     image: psilas85/hub_router-simulation:latest
@@ -111,12 +119,16 @@ services:
       - ./src/simulation/.env
     environment:
       - PYTHONPATH=/app/src
+      - OSRM_HOST=osrm
     depends_on:
-      - redis
-      - postgres
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - hub_router_network
     restart: always
+    stop_grace_period: 120s
     logging:
       driver: "json-file"
       options:
@@ -134,12 +146,18 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - SIMULATION_INTERNAL_MAX_WORKERS=1
+      - OSRM_HOST=osrm
     depends_on:
-      - redis
-      - postgres
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - hub_router_network
     restart: always
+    stop_grace_period: 300s
+    deploy:
+      replicas: ${SIMULATION_DATE_WORKERS:-2}
     logging:
       driver: "json-file"
       options:
@@ -228,6 +246,28 @@ services:
       - hub_router_network
     restart: always
 
+  transfer_routing_worker:
+    image: psilas85/hub_router-transfer_routing:latest
+    command: rq worker -u redis://redis:6379 transfer_routing_jobs
+    volumes:
+      - ./src:/app/src
+      - ./exports/transfer_routing:/app/output
+    env_file:
+      - ./src/transfer_routing/.env
+    environment:
+      - PYTHONPATH=/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - hub_router_network
+    restart: always
+    stop_grace_period: 300s
+    deploy:
+      replicas: ${TRANSFER_ROUTING_WORKERS:-2}
+
   transfer_routing_service:
     build:
       context: .
@@ -243,8 +283,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       - PYTHONPATH=/app/src
+      - REDIS_URL=redis://redis:6379
     networks:
       - hub_router_network
     restart: always

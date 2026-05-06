@@ -7,6 +7,7 @@ from typing import Optional
 import os
 import json as _json
 from fastapi.responses import FileResponse
+import pandas as pd
 
 from authentication.utils.dependencies import get_current_user
 from authentication.domain.entities import UsuarioToken
@@ -27,6 +28,18 @@ from transfer_routing.infrastructure.database_connection import (
 
 router = APIRouter(tags=["Transfer Routing"])
 logger = LoggerFactory.get_logger("transfer_routing")
+
+_redis_conn = None
+_transfer_queue = None
+
+def _get_queue():
+    global _redis_conn, _transfer_queue
+    if _transfer_queue is None:
+        import redis as _redis_lib
+        from rq import Queue
+        _redis_conn = _redis_lib.from_url(os.getenv("REDIS_URL", "redis://redis:6379"))
+        _transfer_queue = Queue("transfer_routing_jobs", connection=_redis_conn)
+    return _transfer_queue
 
 
 def _json_safe(value):
@@ -177,6 +190,7 @@ def listar_clusterizacoes_disponiveis(
                     SELECT COUNT(*)
                     FROM transferencias_resumo
                     WHERE tenant_id = %s AND envio_data = %s
+                      AND rota_transf != 'HUB'
                     """,
                     (tenant_id, envio_data),
                 )
@@ -240,6 +254,80 @@ def executar_transferencias(
         "processed": True,
         "envio_data": str(envio_data),
         "mensagem": f"Transferências processadas com sucesso para {envio_data}.",
+    }
+
+
+@router.post("/transferencias/jobs", summary="Enfileirar job de transferência", tags=["Transferências"])
+def enfileirar_transfer_job(
+    envio_data: date = Query(..., description="Data do envio no formato YYYY-MM-DD"),
+    modo_forcar: bool = Query(False, description="Forçar sobrescrita de dados existentes"),
+    tempo_maximo: float = Query(1200.0, description="Tempo máximo da rota (minutos)"),
+    tempo_parada_leve: float = Query(10.0, description="Tempo de parada leve"),
+    peso_leve_max: float = Query(50.0, description="Limite de peso (kg) para parada leve"),
+    tempo_parada_pesada: float = Query(20.0, description="Tempo de parada pesada"),
+    tempo_por_volume: float = Query(0.4, description="Tempo de descarregamento por volume"),
+    usuario: UsuarioToken = Depends(get_current_user),
+):
+    from transfer_routing.workers.transfer_routing_job import processar_transfer_routing_job
+    job = _get_queue().enqueue(
+        processar_transfer_routing_job,
+        kwargs={
+            "tenant_id": usuario.tenant_id,
+            "envio_data": envio_data.isoformat(),
+            "modo_forcar": modo_forcar,
+            "tempo_maximo": tempo_maximo,
+            "tempo_parada_leve": tempo_parada_leve,
+            "peso_leve_max": peso_leve_max,
+            "tempo_parada_pesada": tempo_parada_pesada,
+            "tempo_por_volume": tempo_por_volume,
+        },
+        job_timeout=3600,
+        result_ttl=3600,
+        failure_ttl=3600,
+    )
+    return {"job_id": job.id, "status": "queued"}
+
+
+@router.get("/transferencias/jobs/{job_id}", summary="Status de job de transferência", tags=["Transferências"])
+def status_transfer_job(job_id: str, usuario: UsuarioToken = Depends(get_current_user)):
+    from rq.job import Job, NoSuchJobError
+    conn = _get_queue().connection
+    try:
+        job = Job.fetch(job_id, connection=conn)
+    except NoSuchJobError:
+        raise HTTPException(status_code=404, detail="Job não encontrado ou expirado.")
+
+    status_map = {
+        "queued": "queued",
+        "started": "running",
+        "finished": "finished",
+        "failed": "failed",
+        "stopped": "failed",
+        "canceled": "failed",
+        "deferred": "queued",
+    }
+    raw = job.get_status()
+    status = status_map.get(str(raw), str(raw))
+
+    meta = job.meta or {}
+    progress = meta.get("progress", 0)
+    step = meta.get("step", "")
+    result = meta.get("result")
+    error = meta.get("error") or (str(job.exc_info) if job.exc_info else None)
+
+    if status == "finished" and result is None:
+        result = job.result
+
+    mensagem = result.get("mensagem") if isinstance(result, dict) else None
+
+    return {
+        "job_id": job_id,
+        "status": status,
+        "progress": progress,
+        "step": step,
+        "mensagem": mensagem,
+        "result": result,
+        "error": error,
     }
 
 
@@ -690,3 +778,112 @@ def geojson_transferencias(
             "total_routes": sum(1 for f in features if f["properties"].get("feature_type") == "route"),
         },
     }
+
+
+@router.get("/transferencias/xlsx", summary="Gerar planilha XLSX de entregas por transferência", tags=["Transferências"])
+def xlsx_transferencias(
+    envio_data: date = Query(..., description="Data de envio (YYYY-MM-DD)"),
+    usuario: UsuarioToken = Depends(get_current_user),
+):
+    """
+    Gera planilha XLSX com uma linha por entrega na roteirização de transferência.
+    Faz JOIN de transferencias_detalhes (routing_db) com entregas (clusterization_db)
+    para incluir todos os dados de endereço e destinatário.
+    """
+    tenant_id = usuario.tenant_id
+    envio_data_str = envio_data.isoformat()
+
+    conn_routing = conectar_banco_routing()
+    conn_cluster = conectar_banco_cluster()
+    try:
+        df_det = pd.read_sql(
+            """
+            SELECT envio_data, cte_numero, hub_central_nome, cluster, rota_transf,
+                   cte_peso, cte_valor_nf, cte_valor_frete, cte_volumes,
+                   centro_lat, centro_lon
+            FROM transferencias_detalhes
+            WHERE tenant_id = %s AND envio_data = %s
+            ORDER BY rota_transf, cluster, cte_numero
+            """,
+            conn_routing,
+            params=(tenant_id, envio_data_str),
+        )
+
+        df_ent = pd.read_sql(
+            """
+            SELECT cte_numero, transportadora,
+                   remetente_cnpj, remetente_nome, remetente_cidade, remetente_uf,
+                   destinatario_nome, destinatario_cnpj,
+                   cte_rua, cte_bairro, cte_complemento, cte_cidade, cte_uf, cte_cep,
+                   endereco_completo, cte_nf, doc_min,
+                   destino_latitude, destino_longitude
+            FROM entregas
+            WHERE tenant_id = %s
+            """,
+            conn_cluster,
+            params=(tenant_id,),
+        )
+    finally:
+        fechar_conexao(conn_routing)
+        fechar_conexao(conn_cluster)
+
+    if df_det.empty:
+        raise HTTPException(status_code=404, detail="Nenhuma entrega de transferência encontrada para esta data.")
+
+    df = df_det.merge(df_ent, on="cte_numero", how="left")
+
+    colunas_prioritarias = [
+        "envio_data",
+        "rota_transf",
+        "cluster",
+        "cte_numero",
+        "hub_central_nome",
+        "remetente_nome",
+        "remetente_cidade",
+        "remetente_uf",
+        "destinatario_nome",
+        "destinatario_cnpj",
+        "cte_cidade",
+        "cte_uf",
+        "cte_rua",
+        "cte_bairro",
+        "cte_cep",
+        "endereco_completo",
+        "cte_volumes",
+        "cte_peso",
+        "cte_valor_nf",
+        "cte_valor_frete",
+        "centro_lat",
+        "centro_lon",
+        "destino_latitude",
+        "destino_longitude",
+    ]
+    colunas_ordenadas = [c for c in colunas_prioritarias if c in df.columns] + [
+        c for c in df.columns if c not in colunas_prioritarias
+    ]
+    df = df[colunas_ordenadas]
+
+    for col in df.select_dtypes(include=["datetimetz"]).columns:
+        df[col] = df[col].dt.tz_localize(None)
+
+    planilhas_dir = os.path.join("/app/output", tenant_id, "planilhas")
+    os.makedirs(planilhas_dir, exist_ok=True)
+    caminho_excel = os.path.join(planilhas_dir, f"transferencias_{envio_data_str}.xlsx")
+
+    with pd.ExcelWriter(caminho_excel, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Transferências")
+        ws = writer.sheets["Transferências"]
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        for col_cells in ws.columns:
+            header = str(col_cells[0].value or "")
+            max_len = max(
+                (len(str(c.value)) if c.value is not None else 0 for c in col_cells[:200]),
+                default=0,
+            )
+            ws.column_dimensions[col_cells[0].column_letter].width = min(max(max_len + 2, len(header) + 2), 42)
+
+    logger.info("✅ XLSX de transferências gerado: %s (tenant=%s, linhas=%s)", caminho_excel, tenant_id, len(df))
+
+    rel = os.path.relpath(caminho_excel, "/app/output")
+    return {"xlsx_url": f"/exports/transfer_routing/{rel}"}

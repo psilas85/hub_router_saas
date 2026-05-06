@@ -51,6 +51,38 @@ export async function processarTransferRouting(params: ProcessarParams) {
     return res.data;
 }
 
+export type EnqueueTransferParams = ProcessarParams;
+
+export type TransferJobStatus = {
+    job_id: string;
+    status: "queued" | "running" | "finished" | "failed" | string;
+    progress: number;
+    step: string;
+    mensagem?: string | null;
+    result?: unknown;
+    error?: string | null;
+};
+
+export async function enqueueTransferJob(params: EnqueueTransferParams): Promise<{ job_id: string; status: string }> {
+    const res = await api.post("/transfer_routing/jobs", null, {
+        params: {
+            data_inicial: params.data_inicial,
+            modo_forcar: params.modo_forcar,
+            tempo_maximo: params.tempo_maximo,
+            tempo_parada_leve: params.tempo_parada_leve,
+            peso_leve_max: params.peso_leve_max,
+            tempo_parada_pesada: params.tempo_parada_pesada,
+            tempo_por_volume: params.tempo_por_volume,
+        },
+    });
+    return res.data;
+}
+
+export async function getTransferJobStatus(jobId: string): Promise<TransferJobStatus> {
+    const res = await api.get(`/transfer_routing/jobs/${jobId}`);
+    return res.data;
+}
+
 export async function baixarRelatorioPDF(data_inicial: string, data_final?: string) {
     const res = await api.get("/transfer_routing/visualizacao", {
         params: { data_inicial, data_final },

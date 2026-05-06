@@ -1,5 +1,5 @@
 // src/pages/Clusterization/ClusterizationPage.tsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import api from "@/services/api";
 import toast from "react-hot-toast";
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Loader2, Network, PlayCircle, FileText, Map, Search, X, CheckCircle2, Circle, AlertCircle } from "lucide-react";
@@ -324,11 +324,37 @@ function getErrorMessage(err: any) {
     return normalizeErrorDetail(err.response?.data?.detail) || err.message;
 }
 
+function HelpHint({ text }: { text: string }) {
+    return (
+        <span className="group relative inline-flex align-middle">
+            <span className="inline-flex h-4.5 w-4.5 cursor-help items-center justify-center rounded-full border border-slate-300 bg-white text-[10px] font-semibold text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700">
+                ?
+            </span>
+            <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-56 -translate-x-1/2 rounded-2xl border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-medium leading-5 text-white shadow-xl group-hover:block">
+                {text}
+            </span>
+        </span>
+    );
+}
+
+function FieldLabel({ title, hint }: { title: string; hint?: string }) {
+    return (
+        <div className="mb-1 flex items-center gap-2 text-xs font-medium text-slate-600">
+            <span>{title}</span>
+            {hint ? <HelpHint text={hint} /> : null}
+        </div>
+    );
+}
+
+function FieldHelpText({ children }: { children: ReactNode }) {
+    return <p className="mt-1 text-xs leading-5 text-slate-500">{children}</p>;
+}
+
 export default function ClusterizationPage() {
     const [data, setData] = useState(""); // apenas uma data
     const [modo, setModo] = useState<"automatico" | "predefinido">("automatico");
-    const [minEntregasClusterAlvo, setMinEntregasClusterAlvo] = useState(10);
-    const [maxEntregasClusterAlvo, setMaxEntregasClusterAlvo] = useState(100);
+    const [minEntregasClusterAlvo, setMinEntregasClusterAlvo] = useState(30);
+    const [maxEntregasClusterAlvo, setMaxEntregasClusterAlvo] = useState(120);
     const [hubCentralId, setHubCentralId] = useState("");
     const [raioHub, setRaioHub] = useState(80.0);
     const [centrosSelecionados, setCentrosSelecionados] = useState<number[]>([]);
@@ -450,7 +476,7 @@ export default function ClusterizationPage() {
             return;
         }
         if (!hubCentralId) {
-            toast.error("Selecione o Hub Central.");
+            toast.error("Selecione o hub central.");
             return;
         }
         setLoading(true);
@@ -612,6 +638,9 @@ export default function ClusterizationPage() {
                     <Network className="w-5 h-5 text-emerald-600" />
                     Clusterização
                 </h2>
+                <p className="mb-4 text-sm text-slate-500">
+                    Defina como os clusters devem ser formados e qual hub central servirá como referência operacional.
+                </p>
 
                 {/* ── Layout 2 colunas ── */}
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 items-start">
@@ -717,7 +746,7 @@ export default function ClusterizationPage() {
 
                         {/* Modo */}
                         <div className="rounded-lg border bg-slate-50 p-3">
-                            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Modo</p>
+                            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Como definir os clusters</p>
                             <div className="grid grid-cols-2 gap-1.5">
                                 {(["automatico", "predefinido"] as const).map((m) => (
                                     <button
@@ -729,66 +758,89 @@ export default function ClusterizationPage() {
                                                 : "bg-white hover:bg-slate-100 text-slate-600"
                                         }`}
                                     >
-                                        {m === "automatico" ? "Automático" : "Pré-definido"}
+                                        {m === "automatico" ? "Automático" : "Centros pré-definidos"}
                                     </button>
                                 ))}
                             </div>
+                            <FieldHelpText>
+                                Use o modo automático para deixar o sistema montar os clusters. Use centros pré-definidos quando você já souber quais bases deseja usar.
+                            </FieldHelpText>
                         </div>
 
                         {/* Parâmetros do modo */}
                         {modo === "automatico" ? (
                             <div className="grid grid-cols-2 gap-2">
-                                <label className="text-xs font-medium text-slate-600">
-                                    Mín. entregas/cluster
+                                <label>
+                                    <FieldLabel
+                                        title="Entregas mínimas por cluster"
+                                        hint="Quantidade mínima desejada de entregas em cada cluster formado automaticamente."
+                                    />
                                     <input type="number" min={1} value={minEntregasClusterAlvo}
                                         onChange={(e) => setMinEntregasClusterAlvo(Number(e.target.value))}
                                         className="mt-1 border rounded px-2 py-1.5 text-sm w-full" />
+                                    <FieldHelpText>Ajuda a evitar clusters muito pequenos.</FieldHelpText>
                                 </label>
-                                <label className="text-xs font-medium text-slate-600">
-                                    Máx. entregas/cluster
+                                <label>
+                                    <FieldLabel
+                                        title="Entregas máximas por cluster"
+                                        hint="Quantidade máxima desejada de entregas em cada cluster formado automaticamente."
+                                    />
                                     <input type="number" min={minEntregasClusterAlvo} value={maxEntregasClusterAlvo}
                                         onChange={(e) => setMaxEntregasClusterAlvo(Number(e.target.value))}
                                         className="mt-1 border rounded px-2 py-1.5 text-sm w-full" />
+                                    <FieldHelpText>Use esse limite para evitar clusters grandes demais para a operação.</FieldHelpText>
                                 </label>
                             </div>
                         ) : (
                             <div>
-                                <p className="text-xs font-medium text-slate-600 mb-1">Centros pré-definidos</p>
+                                <FieldLabel
+                                    title="Centros pré-definidos"
+                                    hint="Selecione os hubs que poderão atuar como centros dos clusters neste processamento."
+                                />
                                 <MultiSelectCentros
                                     options={hubsCentroCluster}
                                     selected={centrosSelecionados}
                                     onChange={setCentrosSelecionados}
                                     loading={hubsLoading}
                                 />
+                                <FieldHelpText>Esses centros serão usados como base fixa para distribuir as entregas.</FieldHelpText>
                                 {!hubsLoading && hubsCentroCluster.length === 0 && (
                                     <p className="mt-1 text-xs text-red-600">
-                                        Nenhum hub marcado como Centro de Cluster ativo.
+                                        Nenhum hub marcado como centro de cluster está ativo.
                                     </p>
                                 )}
                             </div>
                         )}
 
                         {/* Hub Central */}
-                        <label className="text-xs font-medium text-slate-600">
-                            Hub Central
+                        <label>
+                            <FieldLabel
+                                title="Hub central"
+                                hint="Hub usado como referência principal para consolidar a operação e calcular o raio de influência."
+                            />
                             <select value={hubCentralId} onChange={(e) => setHubCentralId(e.target.value)}
                                 className="mt-1 border rounded px-2 py-1.5 text-sm w-full" disabled={hubsLoading}>
-                                <option value="">{hubsLoading ? "Carregando..." : "Selecione o Hub Central"}</option>
+                                <option value="">{hubsLoading ? "Carregando..." : "Selecione o hub central"}</option>
                                 {hubsCentrais.map((hub) => (
                                     <option key={hub.id} value={hub.id}>{hub.nome} — {hub.endereco}</option>
                                 ))}
                             </select>
+                            <FieldHelpText>Esse hub funciona como ponto principal de referência para a clusterização.</FieldHelpText>
                             {!hubsLoading && hubsCentrais.length === 0 && (
-                                <p className="mt-1 text-xs text-red-600">Cadastre um hub como Hub Central.</p>
+                                <p className="mt-1 text-xs text-red-600">Cadastre um hub como hub central.</p>
                             )}
                         </label>
 
                         {/* Raio */}
-                        <label className="text-xs font-medium text-slate-600">
-                            Raio cluster Hub Central (km)
+                        <label>
+                            <FieldLabel
+                                title="Raio de influência do hub (km)"
+                                hint="Distância máxima para considerar entregas atendidas pelo agrupamento do hub central."
+                            />
                             <input type="number" step="0.1" value={raioHub}
                                 onChange={(e) => setRaioHub(Number(e.target.value))}
                                 className="mt-1 border rounded px-2 py-1.5 text-sm w-full" />
+                            <FieldHelpText>Quanto maior o raio, maior a área atendida diretamente pelo hub central.</FieldHelpText>
                         </label>
 
                         {/* Botão executar */}
@@ -799,7 +851,7 @@ export default function ClusterizationPage() {
                         >
                             {loading
                                 ? <><Loader2 className="w-4 h-4 animate-spin" /> Processando...</>
-                                : <><PlayCircle className="w-4 h-4" /> Executar</>}
+                                : <><PlayCircle className="w-4 h-4" /> Iniciar clusterização</>}
                         </button>
                     </div>
                 </div>

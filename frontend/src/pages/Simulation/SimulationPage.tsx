@@ -1,5 +1,5 @@
 // hub_router_1.0.1/frontend/src/pages/Simulation/SimulationPage.tsx
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { useSimulationJob } from "@/hooks/useSimulationJob";
 import {
     runSimulation,
@@ -9,7 +9,8 @@ import {
     getKFixo,
     getFrotaKFixo,
     listHubs,
-    getHistorico,          // 👈 novo
+    getHistorico,
+    getSimulationStatus,
     type HistoricoSimulation,
     type VisualizeSimulationResponse,
     type DistribuicaoKResponse,
@@ -167,6 +168,45 @@ function formatPercent(value: number | null | undefined, digits = 1) {
     return `${(Number(value || 0) * 100).toFixed(digits)}%`;
 }
 
+function formatDateTimeSaoPaulo(value: string | null | undefined) {
+    if (!value) return "-";
+
+    const rawValue = String(value).trim();
+    const hasTimezone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(rawValue);
+    const normalizedValue = hasTimezone ? rawValue : `${rawValue.replace(" ", "T")}Z`;
+    const parsedDate = new Date(normalizedValue);
+
+    if (Number.isNaN(parsedDate.getTime())) {
+        return rawValue;
+    }
+
+    return new Intl.DateTimeFormat("pt-BR", {
+        dateStyle: "short",
+        timeStyle: "short",
+        timeZone: "America/Sao_Paulo",
+    }).format(parsedDate);
+}
+
+function formatSimulationModeLabel(value: string | null | undefined) {
+    const normalized = String(value || "").trim().toLowerCase();
+
+    if (normalized === "padrao") return "Padrão";
+    if (normalized === "balanceado") return "Balanceado";
+    if (normalized === "time_windows") return "Janelas especiais";
+
+    return String(value || "-");
+}
+
+function formatCompactNumber(value: unknown) {
+    const numericValue = Number(value);
+
+    if (!Number.isFinite(numericValue)) {
+        return String(value ?? "-");
+    }
+
+    return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(numericValue);
+}
+
 function CostsScenarioTooltip({ active, payload, label }: any) {
     if (!active || !payload?.length) return null;
 
@@ -262,6 +302,34 @@ function FieldLabel({ title, hint }: { title: string; hint?: string }) {
     );
 }
 
+function FieldHelpText({ children }: { children: React.ReactNode }) {
+    return <p className="mt-2 text-xs leading-5 text-slate-500">{children}</p>;
+}
+
+function ParameterSection({
+    title,
+    description,
+    tone = "neutral",
+}: {
+    title: string;
+    description: string;
+    tone?: "neutral" | "essential" | "advanced";
+}) {
+    const sectionToneClassName =
+        tone === "essential"
+            ? "border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-teal-50"
+            : tone === "advanced"
+              ? "border-amber-200 bg-gradient-to-r from-amber-50 via-white to-orange-50"
+              : "border-slate-200 bg-gradient-to-r from-white via-white to-slate-50";
+
+    return (
+        <div className={`rounded-[24px] border px-4 py-4 shadow-[0_10px_35px_rgba(15,23,42,0.04)] ${sectionToneClassName}`}>
+            <div className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">{title}</div>
+            <p className="mt-1 text-sm leading-6 text-slate-600">{description}</p>
+        </div>
+    );
+}
+
 function HelpHint({ text }: { text: string }) {
     return (
         <span className="group relative inline-flex">
@@ -319,6 +387,15 @@ function isJobSuccess(status: string) {
 
 function isJobFailure(status: string) {
     return status === "error" || status === "failed";
+}
+
+function formatJobStatusLabel(status: string | null | undefined) {
+    if (status === "finished" || status === "done") return "Concluído";
+    if (status === "failed" || status === "error") return "Falhou";
+    if (status === "processing") return "Em processamento";
+    if (status === "queued") return "Na fila";
+
+    return String(status || "-");
 }
 
 function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
@@ -390,6 +467,9 @@ function FrotaChartTable({ data, chartId }: { data: any[]; chartId: string }) {
 }
 
 export default function SimulationPage() {
+    const HISTORY_FETCH_LIMIT = 25;
+    const HISTORY_PAGE_SIZE = 5;
+
     const [activeTab, setActiveTab] = useState<TabKey>("simulacao");
     const [dataInicial, setDataInicial] = useState("");
     const [dataFinal, setDataFinal] = useState("");
@@ -397,10 +477,116 @@ export default function SimulationPage() {
     const [loading, setLoading] = useState(false);
     const [banner, setBanner] = useState<BannerState | null>(null);
     const [pendingJobId, setPendingJobId] = useState<string | null>(null);
+    const [jobProgress, setJobProgress] = useState(0);
+    const [jobStep, setJobStep] = useState("");
     const [artefatos, setArtefatos] = useState<VisualizeSimulationResponse | null>(null);
     const [minCobertura, setMinCobertura] = useState(100);
     const [historico, setHistorico] = useState<HistoricoSimulation[]>([]);
     const [loadingHistorico, setLoadingHistorico] = useState(false);
+    const [historicoPaginaAtual, setHistoricoPaginaAtual] = useState(1);
+    const [historicoExpandidoId, setHistoricoExpandidoId] = useState<number | null>(null);
+
+    const SIM_JOB_KEY = "sim_pending_job";
+
+    const totalPaginasHistorico = Math.max(1, Math.ceil(historico.length / HISTORY_PAGE_SIZE));
+
+    const historicoPaginado = useMemo(() => {
+        const inicio = (historicoPaginaAtual - 1) * HISTORY_PAGE_SIZE;
+        return historico.slice(inicio, inicio + HISTORY_PAGE_SIZE);
+    }, [historico, historicoPaginaAtual, HISTORY_PAGE_SIZE]);
+
+    const clearJobState = useCallback(() => {
+        setPendingJobId(null);
+        setJobProgress(0);
+        setJobStep("");
+        localStorage.removeItem(SIM_JOB_KEY);
+    }, []);
+
+    const mostrarStatusHistorico = useCallback((job: HistoricoSimulation) => {
+        if (job.status && isJobSuccess(job.status)) {
+            clearJobState();
+            setBanner({
+                text: job.mensagem || "✅ Simulação concluída com sucesso.",
+                tone: "success",
+            });
+            return;
+        }
+
+        if (job.status && isJobFailure(job.status)) {
+            clearJobState();
+            setBanner({
+                text: job.mensagem || "❌ A simulação falhou.",
+                tone: "error",
+            });
+            return;
+        }
+
+        setPendingJobId(job.job_id);
+        setJobProgress(0);
+        setJobStep("Consultando andamento...");
+        localStorage.setItem(SIM_JOB_KEY, JSON.stringify({
+            jobId: job.job_id,
+            startedAt: Date.now(),
+        }));
+        setBanner({
+            text: job.mensagem || "⏳ Recuperando andamento da simulação.",
+            tone: "info",
+        });
+    }, [clearJobState]);
+
+    // Recovery: ao montar a página, verifica se há job em andamento no localStorage
+    useEffect(() => {
+        const saved = localStorage.getItem(SIM_JOB_KEY);
+        if (!saved) return;
+
+        let parsed: { jobId: string; startedAt: number };
+        try {
+            parsed = JSON.parse(saved);
+        } catch {
+            localStorage.removeItem(SIM_JOB_KEY);
+            return;
+        }
+
+        // Descarta entradas com mais de 40 minutos (limite do polling)
+        if (Date.now() - parsed.startedAt > 40 * 60 * 1000) {
+            localStorage.removeItem(SIM_JOB_KEY);
+            return;
+        }
+
+        getSimulationStatus(parsed.jobId)
+            .then((status) => {
+                if (status.status === "done" || status.status === "finished") {
+                    clearJobState();
+                    setBanner({ text: status.mensagem || "✅ Simulação concluída.", tone: "success" });
+                } else if (status.status === "error" || status.status === "failed") {
+                    clearJobState();
+                    setBanner({ text: status.mensagem || "❌ Simulação falhou.", tone: "error" });
+                } else {
+                    setPendingJobId(parsed.jobId);
+                    setJobProgress(status.progress ?? 0);
+                    setJobStep(status.step ?? "");
+                    setBanner({ text: "⏳ Simulação em andamento — progresso recuperado.", tone: "info" });
+                }
+            })
+            .catch((err) => {
+                if (err?.response?.status === 404) {
+                    getHistorico(HISTORY_FETCH_LIMIT)
+                        .then((hist) => {
+                            const job = hist.historico?.find((h: HistoricoSimulation) => h.job_id === parsed.jobId);
+                            if (job?.status === "finished") {
+                                clearJobState();
+                                setBanner({ text: job.mensagem || "✅ Simulação concluída.", tone: "success" });
+                            } else if (job?.status === "failed") {
+                                clearJobState();
+                                setBanner({ text: job.mensagem || "❌ Simulação falhou.", tone: "error" });
+                            }
+                        })
+                        .finally(() => localStorage.removeItem(SIM_JOB_KEY));
+                } else {
+                    localStorage.removeItem(SIM_JOB_KEY);
+                }
+            });
+    }, [clearJobState]);
 
 
 
@@ -408,8 +594,8 @@ export default function SimulationPage() {
     const [params, setParams] = useState<ParamState>({
         modo_simulacao: "padrao",
 
-        min_entregas_por_cluster_alvo: 10,
-        max_entregas_por_cluster_alvo: 100,
+        min_entregas_por_cluster_alvo: 30,
+        max_entregas_por_cluster_alvo: 120,
 
         desativar_cluster_hub: false,
         raio_hub_km: 80.0,
@@ -420,18 +606,18 @@ export default function SimulationPage() {
         tempo_parada_leve: 10,
         tempo_parada_pesada: 20,
         tempo_por_volume: 0.4,
-        limite_peso_parada: 200,
+        limite_peso_parada: 600,
 
         velocidade_kmh: 45.0,
 
         limite_peso_veiculo: 50.0,
         peso_max_transferencia: 18000.0,
 
-        tempo_max_transferencia: 600,
-        tempo_max_roteirizacao: 600,
+        tempo_max_transferencia: 800,
+        tempo_max_roteirizacao: 800,
 
         // 🔥 ADICIONAR AQUI
-        tempo_max_k0: 1200,
+        tempo_max_k0: 1600,
 
         entregas_por_rota: 25,
 
@@ -558,6 +744,15 @@ export default function SimulationPage() {
             const novoPendingJobId = response.job_id ?? null;
 
             setPendingJobId(novoPendingJobId);
+            setJobProgress(0);
+            setJobStep("Inicializando");
+
+            if (novoPendingJobId) {
+                localStorage.setItem(SIM_JOB_KEY, JSON.stringify({
+                    jobId: novoPendingJobId,
+                    startedAt: Date.now(),
+                }));
+            }
 
             setBanner({
                 text: "⏳ Simulação enviada para processamento.",
@@ -575,7 +770,7 @@ export default function SimulationPage() {
     async function carregarHistorico(jobIdEmAcompanhamento?: string | null) {
         try {
             setLoadingHistorico(true);
-            const dados = await getHistorico(10);
+            const dados = await getHistorico(HISTORY_FETCH_LIMIT);
             const historicoAtualizado = dados.historico || [];
 
             setHistorico(historicoAtualizado);
@@ -584,17 +779,17 @@ export default function SimulationPage() {
                 const jobAtual = historicoAtualizado.find((item) => item.job_id === jobIdEmAcompanhamento);
 
                 if (jobAtual?.status && isJobSuccess(jobAtual.status)) {
+                    clearJobState();
                     setBanner({
                         text: jobAtual.mensagem || "✅ Simulação concluída com sucesso.",
                         tone: "success",
                     });
-                    setPendingJobId(null);
                 } else if (jobAtual?.status && isJobFailure(jobAtual.status)) {
+                    clearJobState();
                     setBanner({
                         text: jobAtual.mensagem || "❌ A simulação falhou.",
                         tone: "error",
                     });
-                    setPendingJobId(null);
                 } else if (jobAtual?.status === "processing") {
                     setBanner({
                         text: jobAtual.mensagem || "⏳ Simulação em processamento.",
@@ -607,24 +802,43 @@ export default function SimulationPage() {
         } finally {
             setLoadingHistorico(false);
         }
-    }
+            }
 
 
     useEffect(() => {
         carregarHistorico();
     }, []);
 
+    useEffect(() => {
+        if (!pendingJobId) {
+            return;
+        }
+
+        const jobAtual = historico.find((item) => item.job_id === pendingJobId);
+        if (!jobAtual) {
+            return;
+        }
+
+        if (jobAtual.status && (isJobSuccess(jobAtual.status) || isJobFailure(jobAtual.status))) {
+            mostrarStatusHistorico(jobAtual);
+        }
+    }, [historico, pendingJobId, mostrarStatusHistorico]);
+
     useSimulationJob({
         jobId: pendingJobId,
         onUpdate: (msg, tone) => {
             setBanner({ text: msg, tone });
         },
+        onProgress: (progress, step) => {
+            setJobProgress(progress);
+            setJobStep(step);
+        },
         onFinish: () => {
-            setPendingJobId(null);
+            clearJobState();
             carregarHistorico();
         },
         onError: () => {
-            setPendingJobId(null);
+            clearJobState();
         },
     });
 
@@ -918,6 +1132,55 @@ export default function SimulationPage() {
     const [loadingFrota, setLoadingFrota] = useState(false);
     const modoSelecionado = params.modo_simulacao ?? "padrao";
 
+    const resumoParametrosHistorico = useCallback((job: HistoricoSimulation) => {
+        const parametros = job.parametros && typeof job.parametros === "object" ? job.parametros : {};
+        const hub = hubs.find((item) => String(item.hub_id) === String(parametros.hub_id));
+        const periodoInicial = parametros.data_inicial;
+        const periodoFinal = parametros.data_final;
+        const periodo = periodoInicial
+            ? periodoFinal && periodoFinal !== periodoInicial
+                ? `${periodoInicial} a ${periodoFinal}`
+                : String(periodoInicial)
+            : null;
+
+        return [
+            periodo ? { label: "Período", value: periodo } : null,
+            parametros.modo_simulacao ? { label: "Modo", value: formatSimulationModeLabel(parametros.modo_simulacao) } : null,
+            parametros.hub_id ? { label: "Hub", value: hub ? `${hub.nome} (${hub.cidade})` : `Hub ${parametros.hub_id}` } : null,
+            parametros.min_entregas_por_cluster_alvo != null && parametros.max_entregas_por_cluster_alvo != null
+                ? {
+                    label: "Clusters alvo",
+                    value: `${formatCompactNumber(parametros.min_entregas_por_cluster_alvo)}-${formatCompactNumber(parametros.max_entregas_por_cluster_alvo)} entregas`,
+                }
+                : null,
+            parametros.tempo_max_roteirizacao != null ? { label: "Rota clusterizada", value: `${formatCompactNumber(parametros.tempo_max_roteirizacao)} min` } : null,
+            parametros.tempo_max_transferencia != null ? { label: "Transferência", value: `${formatCompactNumber(parametros.tempo_max_transferencia)} min` } : null,
+            parametros.tempo_max_k0 != null ? { label: "Hub único", value: `${formatCompactNumber(parametros.tempo_max_k0)} min` } : null,
+            parametros.entregas_por_rota != null ? { label: "Entregas por rota", value: formatCompactNumber(parametros.entregas_por_rota) } : null,
+            parametros.limite_peso_parada != null ? { label: "Peso por parada", value: `${formatCompactNumber(parametros.limite_peso_parada)} kg` } : null,
+            parametros.velocidade_kmh != null ? { label: "Velocidade média", value: `${formatCompactNumber(parametros.velocidade_kmh)} km/h` } : null,
+            parametros.modo_simulacao === "time_windows" && parametros.tempo_especial_min != null && parametros.tempo_especial_max != null
+                ? {
+                    label: "Janelas especiais",
+                    value: `${formatCompactNumber(parametros.tempo_especial_min)}-${formatCompactNumber(parametros.tempo_especial_max)} min`,
+                }
+                : null,
+            parametros.max_especiais_por_rota != null && parametros.modo_simulacao === "time_windows"
+                ? { label: "Especiais por rota", value: formatCompactNumber(parametros.max_especiais_por_rota) }
+                : null,
+        ].filter((item): item is { label: string; value: string } => Boolean(item));
+    }, [hubs]);
+
+    useEffect(() => {
+        setHistoricoPaginaAtual((paginaAtual) => Math.min(paginaAtual, totalPaginasHistorico));
+    }, [totalPaginasHistorico]);
+
+    useEffect(() => {
+        if (historicoExpandidoId !== null && !historico.some((item) => item.id === historicoExpandidoId)) {
+            setHistoricoExpandidoId(null);
+        }
+    }, [historico, historicoExpandidoId]);
+
     const periodoFrotaDefault = useMemo(() => {
         const end =
             dataFinal && dataFinal >= (dataInicial || "")
@@ -1039,6 +1302,28 @@ export default function SimulationPage() {
                         </div>
                     ) : null}
 
+                    {pendingJobId !== null && (
+                        <div className="mb-4 rounded-[24px] border border-emerald-200 bg-white px-5 py-4 shadow-sm">
+                            <div className="mb-2 flex items-center justify-between text-sm">
+                                <span className="font-medium text-slate-700">
+                                    {jobStep || "Processando..."}
+                                </span>
+                                <span className="font-semibold tabular-nums text-emerald-700">
+                                    {jobProgress}%
+                                </span>
+                            </div>
+                            <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+                                <div
+                                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-700 ease-out"
+                                    style={{ width: `${Math.max(jobProgress, 2)}%` }}
+                                />
+                            </div>
+                            <p className="mt-2 text-xs text-slate-400">
+                                O processamento pode levar até 30 minutos. Você pode sair e voltar — o progresso será recuperado.
+                            </p>
+                        </div>
+                    )}
+
                     <div className="mb-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
                         <div className="space-y-3">
                             <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -1046,9 +1331,15 @@ export default function SimulationPage() {
                                 Parâmetros da simulação
                             </div>
 
-                            <Accordion title="Estratégia" subtitle="cenários e clusterização" defaultOpen>
+                            <ParameterSection
+                                title="Parâmetros Essenciais"
+                                description="Use estes campos no dia a dia. Eles controlam clusterização, duração das rotas e principais limites operacionais."
+                                tone="essential"
+                            />
+
+                            <Accordion title="Configuração base" subtitle="modo da simulação e tamanho dos clusters" defaultOpen>
                                 <div>
-                                    <FieldLabel title="Modo de simulação" />
+                                    <FieldLabel title="Modo da simulação" hint="Define a lógica principal usada para montar os cenários e executar a roteirização." />
                                     <select
                                         value={params.modo_simulacao}
                                         onChange={(e) =>
@@ -1062,38 +1353,134 @@ export default function SimulationPage() {
                                         <option value="balanceado">Balanceado</option>
                                         <option value="time_windows">Time Windows</option>
                                     </select>
-                                    <p className="mt-2 text-xs text-slate-500">
+                                    <FieldHelpText>
                                         O modo define automaticamente a clusterização e a roteirização last-mile.
-                                    </p>
+                                    </FieldHelpText>
                                 </div>
 
                                 <div>
-                                    <FieldLabel title="Mín. entregas por cluster alvo" />
+                                    <FieldLabel title="Entregas mínimas por cluster" hint="Quantidade mínima desejada de entregas em cada cluster gerado." />
                                     <input
                                         type="number"
                                         value={params.min_entregas_por_cluster_alvo ?? ""}
                                         onChange={(e) => updateNumericParam("min_entregas_por_cluster_alvo", e.target.value)}
                                         className="input"
                                     />
+                                    <FieldHelpText>
+                                        Aumente esse valor quando quiser evitar clusters muito pequenos e pulverizados.
+                                    </FieldHelpText>
                                 </div>
 
                                 <div>
-                                    <FieldLabel title="Máx. entregas por cluster alvo" />
+                                    <FieldLabel title="Entregas máximas por cluster" hint="Quantidade máxima desejada de entregas em cada cluster gerado." />
                                     <input
                                         type="number"
                                         value={params.max_entregas_por_cluster_alvo ?? ""}
                                         onChange={(e) => updateNumericParam("max_entregas_por_cluster_alvo", e.target.value)}
                                         className="input"
                                     />
+                                    <FieldHelpText>
+                                        Reduza esse valor quando quiser forçar clusters mais compactos e com menos carga por rota.
+                                    </FieldHelpText>
                                 </div>
 
                             </Accordion>
 
+                            <Accordion title="Tempos operacionais" subtitle="limites de rota e tempo de atendimento">
+                                <div>
+                                    <FieldLabel title="Tempo de parada leve (min)" hint="Tempo padrão para paradas de menor complexidade." />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_parada_leve ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_parada_leve", e.target.value)}
+                                        className="input"
+                                    />
+                                    <FieldHelpText>
+                                        Use um valor menor quando as entregas forem rápidas e com baixa necessidade de conferência.
+                                    </FieldHelpText>
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Tempo de parada pesada (min)" hint="Tempo padrão para paradas com maior esforço operacional." />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_parada_pesada ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_parada_pesada", e.target.value)}
+                                        className="input"
+                                    />
+                                    <FieldHelpText>
+                                        Aumente quando as paradas exigirem descarga, conferência ou atendimento mais demorado.
+                                    </FieldHelpText>
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Tempo adicional por volume (min)" hint="Acréscimo de tempo aplicado para cada volume atendido." />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_por_volume ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_por_volume", e.target.value)}
+                                        className="input"
+                                    />
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Tempo máximo por rota clusterizada (min)" hint="Limite de duração das rotas quando o cenário possui clusters (k maior que zero)." />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_max_roteirizacao ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_max_roteirizacao", e.target.value)}
+                                        className="input"
+                                    />
+                                    <FieldHelpText>
+                                        Este é um dos principais controles da operação. Reduza para rotas mais curtas; aumente para ganhar consolidação.
+                                    </FieldHelpText>
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Tempo máximo de transferência (min)" hint="Limite de duração para rotas de transferência entre hubs ou centros." />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_max_transferencia ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_max_transferencia", e.target.value)}
+                                        className="input"
+                                    />
+                                    <FieldHelpText>
+                                        Ajuste este campo quando a malha entre centros exigir viagens mais longas ou mais curtas.
+                                    </FieldHelpText>
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Tempo máximo no cenário Hub único (min)" hint="Limite de duração quando toda a operação roda sem clusterização (k igual a zero)." />
+                                    <input
+                                        type="number"
+                                        value={params.tempo_max_k0 ?? ""}
+                                        onChange={(e) => updateNumericParam("tempo_max_k0", e.target.value)}
+                                        className="input"
+                                    />
+                                    <FieldHelpText>
+                                        Use um limite mais alto aqui porque o cenário Hub único concentra mais entregas em menos rotas.
+                                    </FieldHelpText>
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Entregas alvo por rota" hint="Quantidade desejada de entregas distribuídas em cada rota last-mile." />
+                                    <input
+                                        type="number"
+                                        value={params.entregas_por_rota ?? ""}
+                                        onChange={(e) => updateNumericParam("entregas_por_rota", e.target.value)}
+                                        className="input"
+                                    />
+                                    <FieldHelpText>
+                                        Serve como alvo de balanceamento. Não é uma trava rígida, mas influencia a montagem das rotas.
+                                    </FieldHelpText>
+                                </div>
+                            </Accordion>
+
                             {modoSelecionado === "time_windows" && (
-                                <Accordion title="Time Windows" subtitle="restrições especiais">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <Accordion title="Janelas especiais de atendimento" subtitle="regras adicionais para paradas com atendimento especial">
+                                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                                         <div>
-                                            <FieldLabel title="Min. especial (min)" />
+                                            <FieldLabel title="Janela especial mínima (min)" hint="Menor duração considerada para uma parada com tratamento especial." />
                                             <input
                                                 type="number"
                                                 value={params.tempo_especial_min ?? ""}
@@ -1103,7 +1490,7 @@ export default function SimulationPage() {
                                         </div>
 
                                         <div>
-                                            <FieldLabel title="Max. especial (min)" />
+                                            <FieldLabel title="Janela especial máxima (min)" hint="Maior duração considerada para uma parada com tratamento especial." />
                                             <input
                                                 type="number"
                                                 value={params.tempo_especial_max ?? ""}
@@ -1113,7 +1500,7 @@ export default function SimulationPage() {
                                         </div>
 
                                         <div>
-                                            <FieldLabel title="Máx. especiais/rota" />
+                                            <FieldLabel title="Máximo de especiais por rota" hint="Limita quantas paradas especiais podem existir dentro da mesma rota." />
                                             <input
                                                 type="number"
                                                 value={params.max_especiais_por_rota ?? ""}
@@ -1125,118 +1512,9 @@ export default function SimulationPage() {
                                 </Accordion>
                             )}
 
-                            <Accordion title="Hub e outliers">
+                            <Accordion title="Capacidade da operação" subtitle="peso, velocidade e restrições físicas">
                                 <div>
-                                    <FieldLabel title="Raio do hub (km)" />
-                                    <input
-                                        type="number"
-                                        value={params.raio_hub_km ?? ""}
-                                        onChange={(e) => updateNumericParam("raio_hub_km", e.target.value)}
-                                        className="input"
-                                    />
-                                </div>
-
-                                <div>
-                                    <FieldLabel title="Distância outlier (km)" />
-                                    <input
-                                        type="number"
-                                        disabled={!params.usar_outlier}
-                                        value={params.distancia_outlier_km ?? ""}
-                                        onChange={(e) => updateNumericParam("distancia_outlier_km", e.target.value)}
-                                        className="input"
-                                    />
-                                </div>
-
-                                <ToggleField
-                                    title="Desativar cluster hub"
-                                    hint="Ignora agrupamento pelo hub"
-                                    checked={params.desativar_cluster_hub ?? false}
-                                    onChange={(checked) => updateParam("desativar_cluster_hub", checked)}
-                                />
-
-                                <ToggleField
-                                    title="Separar outliers"
-                                    hint="Cria clusters separados para pontos distantes"
-                                    checked={params.usar_outlier ?? false}
-                                    onChange={(checked) => updateParam("usar_outlier", checked)}
-                                />
-                            </Accordion>
-
-                            <Accordion title="Tempos">
-                                <div>
-                                    <FieldLabel title="Parada leve (min)" />
-                                    <input
-                                        type="number"
-                                        value={params.tempo_parada_leve ?? ""}
-                                        onChange={(e) => updateNumericParam("tempo_parada_leve", e.target.value)}
-                                        className="input"
-                                    />
-                                </div>
-
-                                <div>
-                                    <FieldLabel title="Parada pesada (min)" />
-                                    <input
-                                        type="number"
-                                        value={params.tempo_parada_pesada ?? ""}
-                                        onChange={(e) => updateNumericParam("tempo_parada_pesada", e.target.value)}
-                                        className="input"
-                                    />
-                                </div>
-
-                                <div>
-                                    <FieldLabel title="Tempo por volume" />
-                                    <input
-                                        type="number"
-                                        value={params.tempo_por_volume ?? ""}
-                                        onChange={(e) => updateNumericParam("tempo_por_volume", e.target.value)}
-                                        className="input"
-                                    />
-                                </div>
-
-                                <div>
-                                    <FieldLabel title="Tempo máx. rotas (k > 0)" />
-                                    <input
-                                        type="number"
-                                        value={params.tempo_max_roteirizacao ?? ""}
-                                        onChange={(e) => updateNumericParam("tempo_max_roteirizacao", e.target.value)}
-                                        className="input"
-                                    />
-                                </div>
-
-                                <div>
-                                    <FieldLabel title="Tempo máx. transferência" />
-                                    <input
-                                        type="number"
-                                        value={params.tempo_max_transferencia ?? ""}
-                                        onChange={(e) => updateNumericParam("tempo_max_transferencia", e.target.value)}
-                                        className="input"
-                                    />
-                                </div>
-
-                                <div>
-                                    <FieldLabel title="Tempo máx. hub único (k=0)" />
-                                    <input
-                                        type="number"
-                                        value={params.tempo_max_k0 ?? ""}
-                                        onChange={(e) => updateNumericParam("tempo_max_k0", e.target.value)}
-                                        className="input"
-                                    />
-                                </div>
-
-                                <div>
-                                    <FieldLabel title="Entregas por rota" />
-                                    <input
-                                        type="number"
-                                        value={params.entregas_por_rota ?? ""}
-                                        onChange={(e) => updateNumericParam("entregas_por_rota", e.target.value)}
-                                        className="input"
-                                    />
-                                </div>
-                            </Accordion>
-
-                            <Accordion title="Capacidade">
-                                <div>
-                                    <FieldLabel title="Velocidade (km/h)" />
+                                    <FieldLabel title="Velocidade média (km/h)" hint="Velocidade média usada para estimar o tempo total das rotas." />
                                     <input
                                         type="number"
                                         value={params.velocidade_kmh ?? ""}
@@ -1246,7 +1524,7 @@ export default function SimulationPage() {
                                 </div>
 
                                 <div>
-                                    <FieldLabel title="Limite peso veículo (kg)" />
+                                    <FieldLabel title="Peso máximo para veículo leve (kg)" hint="Acima desse peso, a entrega deixa de ser elegível para veículo leve." />
                                     <input
                                         type="number"
                                         value={params.limite_peso_veiculo ?? ""}
@@ -1256,17 +1534,20 @@ export default function SimulationPage() {
                                 </div>
 
                                 <div>
-                                    <FieldLabel title="Limite peso parada (kg)" />
+                                    <FieldLabel title="Peso máximo por parada (kg)" hint="Peso máximo permitido para uma única parada de entrega." />
                                     <input
                                         type="number"
                                         value={params.limite_peso_parada ?? ""}
                                         onChange={(e) => updateNumericParam("limite_peso_parada", e.target.value)}
                                         className="input"
                                     />
+                                    <FieldHelpText>
+                                        Campo sensível para a operação. Use um valor compatível com descarga, acesso e capacidade do veículo no ponto de entrega.
+                                    </FieldHelpText>
                                 </div>
 
                                 <div>
-                                    <FieldLabel title="Peso máx. transferência" />
+                                    <FieldLabel title="Peso máximo por transferência (kg)" hint="Limite total de peso considerado em cada rota de transferência." />
                                     <input
                                         type="number"
                                         value={params.peso_max_transferencia ?? ""}
@@ -1276,19 +1557,68 @@ export default function SimulationPage() {
                                 </div>
 
                                 <ToggleField
-                                    title="Permitir rotas excedentes"
-                                    hint="Permite rotas acima do tempo máximo"
+                                    title="Permitir rotas acima do limite"
+                                    hint="Autoriza rotas que ultrapassem o tempo máximo configurado quando não houver alternativa melhor."
                                     checked={params.permitir_rotas_excedentes ?? true}
                                     onChange={(checked) => updateParam("permitir_rotas_excedentes", checked)}
                                 />
 
                                 <ToggleField
-                                    title="Permitir veículo leve intermunicipal"
-                                    hint="Permite motos/utilitários atenderem cidades diferentes"
+                                    title="Permitir veículo leve entre cidades"
+                                    hint="Permite que motos e utilitários leves atendam rotas com municípios diferentes."
                                     checked={params.permitir_veiculo_leve_intermunicipal ?? false}
                                     onChange={(checked) =>
                                         updateParam("permitir_veiculo_leve_intermunicipal", checked)
                                     }
+                                />
+                            </Accordion>
+
+                            <ParameterSection
+                                title="Parâmetros Avançados"
+                                description="Altere estes campos só quando houver uma regra operacional específica. Eles têm mais impacto técnico e menos uso no dia a dia."
+                                tone="advanced"
+                            />
+
+                            <Accordion title="Hub e pontos fora do padrão" subtitle="tratamento avançado de agrupamento e outliers">
+                                <div>
+                                    <FieldLabel title="Raio de influência do hub (km)" hint="Distância máxima para considerar entregas atendidas pelo agrupamento do hub central." />
+                                    <input
+                                        type="number"
+                                        value={params.raio_hub_km ?? ""}
+                                        onChange={(e) => updateNumericParam("raio_hub_km", e.target.value)}
+                                        className="input"
+                                    />
+                                    <FieldHelpText>
+                                        Em geral, só vale mexer aqui quando a área de influência do hub estiver claramente sub ou superdimensionada.
+                                    </FieldHelpText>
+                                </div>
+
+                                <div>
+                                    <FieldLabel title="Distância para outlier (km)" hint="Acima dessa distância, a entrega pode ser tratada como ponto fora do padrão." />
+                                    <input
+                                        type="number"
+                                        disabled={!params.usar_outlier}
+                                        value={params.distancia_outlier_km ?? ""}
+                                        onChange={(e) => updateNumericParam("distancia_outlier_km", e.target.value)}
+                                        className="input"
+                                    />
+                                    <FieldHelpText>
+                                        Só é usado quando o tratamento de outliers estiver ativado.
+                                    </FieldHelpText>
+                                </div>
+
+                                <ToggleField
+                                    title="Ignorar agrupamento pelo hub"
+                                    hint="Desconsidera a etapa que cria agrupamentos com base no hub central."
+                                    checked={params.desativar_cluster_hub ?? false}
+                                    onChange={(checked) => updateParam("desativar_cluster_hub", checked)}
+                                />
+
+                                <ToggleField
+                                    title="Tratar outliers separadamente"
+                                    hint="Cria clusters específicos para entregas muito distantes do padrão principal."
+                                    checked={params.usar_outlier ?? false}
+                                    onChange={(checked) => updateParam("usar_outlier", checked)}
                                 />
                             </Accordion>
                         </div>
@@ -1490,53 +1820,146 @@ export default function SimulationPage() {
                                 </div>
                             ) : null}
 
-                            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
-                                <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                                            <History className="h-4 w-4 text-emerald-600" />
-                                            Histórico recente
-                                        </div>
-                                        <p className="mt-1 text-sm text-slate-500">Acompanhe os últimos jobs.</p>
-                                    </div>
-                                    <button onClick={() => carregarHistorico()} disabled={loadingHistorico} className="btn-secondary gap-2 rounded-xl px-3 py-2 text-sm">
-                                        {loadingHistorico ? <Loader2 className="h-4 w-4 animate-spin" /> : <TimerReset className="h-4 w-4" />}
-                                        Atualizar
-                                    </button>
-                                </div>
+                        </div>
+                    </div>
 
-                                <div className="mt-4 space-y-3">
-                                    {historico.length > 0 ? (
-                                        historico.map((h) => (
-                                            <div key={h.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-                                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                                    <div>
-                                                        <div className="text-sm font-medium text-slate-900">
-                                                            {new Date(h.criado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
-                                                        </div>
-                                                        <div className="mt-1 text-xs font-mono text-slate-500" title={h.job_id}>{h.job_id}</div>
-                                                    </div>
-                                                    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${h.status === "finished" ? "bg-emerald-100 text-emerald-700" : h.status === "failed" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>
-                                                        {h.status}
-                                                    </span>
-                                                </div>
-                                                <p className="mt-3 line-clamp-2 text-sm text-slate-600" title={h.mensagem}>{h.mensagem}</p>
-                                                <div className="mt-3 flex justify-end">
-                                                    <button onClick={() => setPendingJobId(h.job_id)} className="btn-secondary gap-2 rounded-xl px-3 py-2 text-sm">
-                                                        <TimerReset className="h-4 w-4" />
-                                                        Ver status
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">
-                                            Nenhum histórico encontrado.
-                                        </div>
-                                    )}
+                    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                                    <History className="h-4 w-4 text-emerald-600" />
+                                    Histórico recente
                                 </div>
+                                <p className="mt-1 text-sm text-slate-500">
+                                    Últimos {historico.length} jobs carregados, com 5 cards por página e resumo dos parâmetros usados.
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">
+                                    Página {historicoPaginaAtual} de {totalPaginasHistorico}
+                                </div>
+                                <button onClick={() => carregarHistorico()} disabled={loadingHistorico} className="btn-secondary gap-2 rounded-xl px-3 py-2 text-sm">
+                                    {loadingHistorico ? <Loader2 className="h-4 w-4 animate-spin" /> : <TimerReset className="h-4 w-4" />}
+                                    Atualizar
+                                </button>
                             </div>
                         </div>
+
+                        <div className="mt-4 space-y-4">
+                            {historico.length > 0 ? (
+                                historicoPaginado.map((h) => {
+                                    const parametrosResumo = resumoParametrosHistorico(h);
+                                    const resumoLinha = parametrosResumo.slice(0, 3);
+                                    const detalhesParametros = parametrosResumo.slice(3);
+                                    const expandido = historicoExpandidoId === h.id;
+
+                                    return (
+                                        <div key={h.id} className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
+                                            <button
+                                                type="button"
+                                                onClick={() => setHistoricoExpandidoId((atual) => (atual === h.id ? null : h.id))}
+                                                className="w-full text-left"
+                                            >
+                                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex flex-wrap items-center gap-3">
+                                                            <div className="text-sm font-medium text-slate-900">
+                                                                {formatDateTimeSaoPaulo(h.criado_em)}
+                                                            </div>
+                                                            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${h.status === "finished" ? "bg-emerald-100 text-emerald-700" : h.status === "failed" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>
+                                                                {formatJobStatusLabel(h.status)}
+                                                            </span>
+                                                            <span className="text-xs font-mono text-slate-400" title={h.job_id}>{h.job_id}</span>
+                                                        </div>
+                                                        <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600" title={h.mensagem}>{h.mensagem}</p>
+                                                        <div className="mt-3 flex flex-wrap gap-2">
+                                                            {resumoLinha.map((item) => (
+                                                                <div key={`${h.id}-resumo-${item.label}`} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
+                                                                    <span className="font-medium text-slate-800">{item.label}:</span> {item.value}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="text-xs font-medium uppercase tracking-[0.12em] text-slate-400">
+                                                            {expandido ? "Ocultar detalhes" : "Ver detalhes"}
+                                                        </span>
+                                                        <ChevronDown className={`h-5 w-5 text-slate-400 transition-transform ${expandido ? "rotate-180" : ""}`} />
+                                                    </div>
+                                                </div>
+                                            </button>
+
+                                            {expandido ? (
+                                                <div className="mt-4 grid gap-5 border-t border-slate-200 pt-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)]">
+                                                    <div>
+                                                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                                                            <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Criado em SP</span>
+                                                            {h.updated_at ? <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Atualizado: {formatDateTimeSaoPaulo(h.updated_at)}</span> : null}
+                                                            {h.datas ? <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Datas processadas registradas</span> : null}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="rounded-[20px] border border-slate-200 bg-white p-4">
+                                                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                                                            Parâmetros usados
+                                                        </div>
+                                                        {detalhesParametros.length > 0 ? (
+                                                            <div className="mt-3 flex flex-wrap gap-2">
+                                                                {detalhesParametros.map((item) => (
+                                                                    <div key={`${h.id}-${item.label}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                                                        <span className="font-medium text-slate-900">{item.label}:</span> {item.value}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : parametrosResumo.length > 0 ? (
+                                                            <p className="mt-3 text-sm text-slate-500">Os principais parâmetros já estão resumidos na linha acima.</p>
+                                                        ) : (
+                                                            <p className="mt-3 text-sm text-slate-500">Os parâmetros deste job não foram encontrados no histórico.</p>
+                                                        )}
+
+                                                        <div className="mt-4 flex justify-end">
+                                                            <button onClick={() => mostrarStatusHistorico(h)} className="btn-secondary gap-2 rounded-xl px-3 py-2 text-sm">
+                                                                <TimerReset className="h-4 w-4" />
+                                                                Ver status
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    );
+                                })
+                            ) : (
+                                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">
+                                    Nenhum histórico encontrado.
+                                </div>
+                            )}
+                        </div>
+
+                        {historico.length > HISTORY_PAGE_SIZE ? (
+                            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                                <div className="text-sm text-slate-500">
+                                    Mostrando {Math.min((historicoPaginaAtual - 1) * HISTORY_PAGE_SIZE + 1, historico.length)}-{Math.min(historicoPaginaAtual * HISTORY_PAGE_SIZE, historico.length)} de {historico.length} registros carregados.
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setHistoricoPaginaAtual((pagina) => Math.max(1, pagina - 1))}
+                                        disabled={historicoPaginaAtual === 1}
+                                        className="btn-secondary rounded-xl px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        Anterior
+                                    </button>
+                                    <button
+                                        onClick={() => setHistoricoPaginaAtual((pagina) => Math.min(totalPaginasHistorico, pagina + 1))}
+                                        disabled={historicoPaginaAtual === totalPaginasHistorico}
+                                        className="btn-secondary rounded-xl px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        Próxima
+                                    </button>
+                                </div>
+                            </div>
+                        ) : null}
                     </div>
                 </>
             )

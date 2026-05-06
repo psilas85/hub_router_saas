@@ -1,6 +1,129 @@
 #simulation_database_reader.py
 
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
+from redis import Redis
+from rq.job import Job
+
+
+_SIMULATION_HISTORY_RECONCILE_GRACE = timedelta(minutes=5)
+
+
+def _extrair_mensagem_execucao(exc_info, fallback="Erro não identificado"):
+    texto = str(exc_info or "").strip()
+    if not texto:
+        return fallback
+
+    linhas = [linha.strip() for linha in texto.splitlines() if linha.strip()]
+    if not linhas:
+        return fallback
+
+    ultima = linhas[-1]
+    if ":" in ultima:
+        return ultima.split(":", 1)[1].strip() or fallback
+    return ultima
+
+
+def _normalizar_datetime_utc(valor) -> datetime | None:
+    if valor is None:
+        return None
+    if isinstance(valor, pd.Timestamp):
+        valor = valor.to_pydatetime()
+    if not isinstance(valor, datetime):
+        return None
+    if valor.tzinfo is None:
+        return valor.replace(tzinfo=timezone.utc)
+    return valor.astimezone(timezone.utc)
+
+
+def reconciliar_historico_simulation(
+    db_conn,
+    tenant_id: str,
+    job_ids: list[str] | None = None,
+) -> None:
+    query = """
+        SELECT job_id, criado_em
+        FROM historico_simulation
+        WHERE tenant_id = %s AND status = 'processing'
+    """
+    params: list[object] = [tenant_id]
+    if job_ids:
+        query += " AND job_id::text = ANY(%s)"
+        params.append(job_ids)
+
+    df = pd.read_sql(query, db_conn, params=tuple(params))
+    if df.empty:
+        return
+
+    try:
+        redis_conn = Redis(host="redis", port=6379, decode_responses=True)
+        redis_conn.ping()
+    except Exception:
+        return
+
+    agora = datetime.now(timezone.utc)
+    atualizacoes = []
+
+    for registro in df.to_dict(orient="records"):
+        job_id = str(registro["job_id"])
+        criado_em = _normalizar_datetime_utc(registro.get("criado_em"))
+
+        try:
+            job = Job.fetch(job_id, connection=redis_conn)
+        except Exception:
+            if criado_em and agora - criado_em < _SIMULATION_HISTORY_RECONCILE_GRACE:
+                continue
+
+            atualizacoes.append(
+                (
+                    "failed",
+                    "Registro órfão corrigido automaticamente: job não encontrado no Redis durante a reconciliação do histórico.",
+                    job_id,
+                    tenant_id,
+                )
+            )
+            continue
+
+        if job.is_finished:
+            result = job.result if isinstance(job.result, dict) else None
+            mensagem = None
+            if result:
+                mensagem = result.get("mensagem") or result.get("message")
+            atualizacoes.append(
+                (
+                    "finished",
+                    mensagem or "Simulação finalizada automaticamente após reconciliação com Redis.",
+                    job_id,
+                    tenant_id,
+                )
+            )
+        elif job.is_failed:
+            atualizacoes.append(
+                (
+                    "failed",
+                    f"Erro na simulação: {_extrair_mensagem_execucao(job.exc_info)}",
+                    job_id,
+                    tenant_id,
+                )
+            )
+
+    if not atualizacoes:
+        return
+
+    cursor = db_conn.cursor()
+    try:
+        cursor.executemany(
+            """
+            UPDATE historico_simulation
+            SET status = %s, mensagem = %s
+            WHERE job_id = %s AND tenant_id = %s AND status = 'processing'
+            """,
+            atualizacoes,
+        )
+        db_conn.commit()
+    finally:
+        cursor.close()
 
 
 def carregar_tarifas_transferencia(db_conn, tenant_id: str) -> pd.DataFrame:
@@ -579,6 +702,8 @@ __all__ = [
 
 
 def carregar_historico_simulation(db_conn, tenant_id: str, limit: int = 10) -> pd.DataFrame:
+    reconciliar_historico_simulation(db_conn, tenant_id)
+
     query = """
         SELECT job_id, status, mensagem, datas, parametros, criado_em
         FROM historico_simulation
