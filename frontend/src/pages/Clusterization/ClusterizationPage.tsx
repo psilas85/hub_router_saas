@@ -10,9 +10,9 @@ import "leaflet/dist/leaflet.css";
 
 // ─── Paleta de cores por cluster ───────────────────────────────────────────
 const CLUSTER_COLORS = [
-    "#2563eb","#16a34a","#dc2626","#d97706","#7c3aed",
-    "#0891b2","#be185d","#65a30d","#ea580c","#0d9488",
-    "#6d28d9","#b45309","#047857","#1d4ed8","#c026d3",
+    "#2563eb", "#16a34a", "#dc2626", "#d97706", "#7c3aed",
+    "#0891b2", "#be185d", "#65a30d", "#ea580c", "#0d9488",
+    "#6d28d9", "#b45309", "#047857", "#1d4ed8", "#c026d3",
 ];
 function clusterColor(clusterId: any): string {
     if (String(clusterId) === "9999") return "#6b7280";
@@ -148,13 +148,13 @@ function Stepper({ step, isError }: { step: string; isError: boolean }) {
                         )}
                         <div className={`relative z-10 w-6 h-6 rounded-full flex items-center justify-center text-xs
                             ${isError ? "bg-red-100 text-red-500" :
-                              done ? "bg-emerald-500 text-white" :
-                              active ? "bg-emerald-600 text-white ring-4 ring-emerald-100" :
-                              "bg-slate-200 text-slate-400"}`}>
+                                done ? "bg-emerald-500 text-white" :
+                                    active ? "bg-emerald-600 text-white ring-4 ring-emerald-100" :
+                                        "bg-slate-200 text-slate-400"}`}>
                             {isError ? <AlertCircle className="w-3.5 h-3.5" /> :
-                             done ? <CheckCircle2 className="w-3.5 h-3.5" /> :
-                             active ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
-                             <Circle className="w-3.5 h-3.5" />}
+                                done ? <CheckCircle2 className="w-3.5 h-3.5" /> :
+                                    active ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+                                        <Circle className="w-3.5 h-3.5" />}
                         </div>
                         <span className={`mt-1 text-[10px] text-center leading-tight hidden sm:block
                             ${done ? "text-emerald-600" : active ? "text-emerald-700 font-medium" : "text-slate-400"}`}>
@@ -199,8 +199,8 @@ function MultiSelectCentros({
         selected.length === 0
             ? "Selecione os centros pré-definidos"
             : selected.length === options.length
-            ? "Todos os centros selecionados"
-            : `${selected.length} centro${selected.length > 1 ? "s" : ""} selecionado${selected.length > 1 ? "s" : ""}`;
+                ? "Todos os centros selecionados"
+                : `${selected.length} centro${selected.length > 1 ? "s" : ""} selecionado${selected.length > 1 ? "s" : ""}`;
 
     return (
         <div ref={ref} className="relative">
@@ -707,11 +707,10 @@ export default function ClusterizationPage() {
                                 <button
                                     key={item.data}
                                     onClick={() => setData(item.data)}
-                                    className={`flex items-center justify-between gap-2 rounded border px-3 py-2 text-left text-sm transition ${
-                                        data === item.data
+                                    className={`flex items-center justify-between gap-2 rounded border px-3 py-2 text-left text-sm transition ${data === item.data
                                             ? "border-emerald-500 bg-emerald-50 text-emerald-800"
                                             : "bg-white hover:bg-slate-50 text-slate-700"
-                                    }`}
+                                        }`}
                                 >
                                     <span className="font-medium">{item.data}</span>
                                     <span className="text-xs text-slate-400">{item.quantidade_entregas} entregas</span>
@@ -752,11 +751,10 @@ export default function ClusterizationPage() {
                                     <button
                                         key={m}
                                         onClick={() => setModo(m)}
-                                        className={`rounded-lg border py-2 text-sm font-medium transition ${
-                                            modo === m
+                                        className={`rounded-lg border py-2 text-sm font-medium transition ${modo === m
                                                 ? "border-emerald-600 bg-emerald-50 text-emerald-700"
                                                 : "bg-white hover:bg-slate-100 text-slate-600"
-                                        }`}
+                                            }`}
                                     >
                                         {m === "automatico" ? "Automático" : "Centros pré-definidos"}
                                     </button>

@@ -319,8 +319,8 @@ function ParameterSection({
         tone === "essential"
             ? "border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-teal-50"
             : tone === "advanced"
-              ? "border-amber-200 bg-gradient-to-r from-amber-50 via-white to-orange-50"
-              : "border-slate-200 bg-gradient-to-r from-white via-white to-slate-50";
+                ? "border-amber-200 bg-gradient-to-r from-amber-50 via-white to-orange-50"
+                : "border-slate-200 bg-gradient-to-r from-white via-white to-slate-50";
 
     return (
         <div className={`rounded-[24px] border px-4 py-4 shadow-[0_10px_35px_rgba(15,23,42,0.04)] ${sectionToneClassName}`}>
@@ -802,7 +802,7 @@ export default function SimulationPage() {
         } finally {
             setLoadingHistorico(false);
         }
-            }
+    }
 
 
     useEffect(() => {

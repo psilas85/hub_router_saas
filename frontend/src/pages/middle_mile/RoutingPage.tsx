@@ -48,8 +48,8 @@ type GeoFeatureProp = {
 type GeoFeature = {
     type: "Feature";
     geometry:
-        | { type: "Point"; coordinates: [number, number] }
-        | { type: "LineString"; coordinates: [number, number][] };
+    | { type: "Point"; coordinates: [number, number] }
+    | { type: "LineString"; coordinates: [number, number][] };
     properties: GeoFeatureProp;
 };
 
@@ -201,9 +201,9 @@ function TransferMap({
 
     const center: [number, number] = hub
         ? [
-              (hub.geometry.coordinates as [number, number])[1],
-              (hub.geometry.coordinates as [number, number])[0],
-          ]
+            (hub.geometry.coordinates as [number, number])[1],
+            (hub.geometry.coordinates as [number, number])[0],
+        ]
         : [-15, -47];
 
     const hubIcon = L.divIcon({
@@ -323,20 +323,18 @@ function ClusterizacaoCard({
     return (
         <button
             onClick={onClick}
-            className={`rounded-lg border px-3 py-2 text-left text-sm transition ${
-                active
+            className={`rounded-lg border px-3 py-2 text-left text-sm transition ${active
                     ? "border-emerald-500 bg-emerald-50 text-emerald-900"
                     : "bg-white hover:bg-slate-50 text-slate-700"
-            }`}
+                }`}
         >
             <div className="flex items-center justify-between gap-3">
                 <span className="font-medium">{item.data}</span>
                 <span
-                    className={`rounded px-2 py-0.5 text-[11px] ${
-                        item.roteirizacao_existente
+                    className={`rounded px-2 py-0.5 text-[11px] ${item.roteirizacao_existente
                             ? "bg-emerald-100 text-emerald-700"
                             : "bg-slate-100 text-slate-500"
-                    }`}
+                        }`}
                 >
                     {item.roteirizacao_existente ? `${item.rotas_processadas} rotas` : "pendente"}
                 </span>
@@ -638,10 +636,9 @@ export default function RoutingPage() {
 
     // ── Tab helper ────────────────────────────────────────────
     const tabCls = (tab: string) =>
-        `flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition ${
-            activeTab === tab
-                ? "border-emerald-600 text-emerald-700"
-                : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+        `flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition ${activeTab === tab
+            ? "border-emerald-600 text-emerald-700"
+            : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
         }`;
 
     return (
@@ -658,13 +655,12 @@ export default function RoutingPage() {
                 {/* ── Job banner ── */}
                 {jobBanner && (
                     <div
-                        className={`mb-4 rounded-xl border px-4 py-3 text-sm flex items-start gap-2 ${
-                            jobBanner.tone === "success"
+                        className={`mb-4 rounded-xl border px-4 py-3 text-sm flex items-start gap-2 ${jobBanner.tone === "success"
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                                 : jobBanner.tone === "error"
-                                ? "border-red-200 bg-red-50 text-red-800"
-                                : "border-blue-200 bg-blue-50 text-blue-800"
-                        }`}
+                                    ? "border-red-200 bg-red-50 text-red-800"
+                                    : "border-blue-200 bg-blue-50 text-blue-800"
+                            }`}
                     >
                         <span className="flex-1">{jobBanner.text}</span>
                         <button onClick={clearJobState} className="ml-2 opacity-50 hover:opacity-100">
@@ -1193,8 +1189,8 @@ export default function RoutingPage() {
                                                                 <td className="px-3 py-2 text-right">
                                                                     {formatDecimal(
                                                                         rota.peso_total_kg ||
-                                                                            rota.cte_peso ||
-                                                                            0,
+                                                                        rota.cte_peso ||
+                                                                        0,
                                                                         2,
                                                                     )}
                                                                 </td>
