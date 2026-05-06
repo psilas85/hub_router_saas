@@ -373,7 +373,7 @@ def distribuicao_k(
     if (data_final - data_inicial).days > 365:
         raise HTTPException(status_code=400, detail="Período máximo permitido é 12 meses.")
 
-    filename, data = gerar_grafico_distribuicao_k(
+    filename, data, dias_semana = gerar_grafico_distribuicao_k(
         tenant_id=tenant_id,
         data_inicial=str(data_inicial),
         data_final=str(data_final),
@@ -386,8 +386,9 @@ def distribuicao_k(
         "status": "ok",
         "data_inicial": str(data_inicial),
         "data_final": str(data_final),
-        "grafico": filename.replace("./", "/"),
-        "dados": data  # lista de {k_clusters, qtd}
+        "grafico": filename.replace("./", "/") if filename else None,
+        "dados": data,
+        "dias_semana": dias_semana or [],
     }
 
 @router.get("/frequencia_cidades", summary="Frequência de cidades em pontos ótimos")

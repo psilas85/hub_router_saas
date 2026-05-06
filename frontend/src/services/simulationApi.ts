@@ -145,6 +145,12 @@ export type DistribuicaoKResponse = {
     data_final: string;
     grafico: string;
     dados: { k_clusters: number; qtd: number }[];
+    dias_semana: {
+        dia_semana_ordem: number;
+        dia_semana: string;
+        total: number;
+        contagens: { k_clusters: number; qtd: number }[];
+    }[];
 };
 
 export async function getDistribuicaoK(params: {
@@ -170,6 +176,12 @@ export type FrequenciaCidadesResponse = {
         hub_cidade: string | null;
     };
     dados: { cluster_cidade: string; qtd: number }[];
+    dias_semana: {
+        dia_semana_ordem: number;
+        dia_semana: string;
+        total: number;
+        contagens: { cluster_cidade: string; qtd: number }[];
+    }[];
 };
 
 export async function getFrequenciaCidades(params: {

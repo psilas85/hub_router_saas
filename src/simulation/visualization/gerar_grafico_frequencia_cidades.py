@@ -10,6 +10,17 @@ from simulation.infrastructure.simulation_database_connection import conectar_si
 from simulation.utils.path_builder import build_output_path
 
 
+DIAS_SEMANA_PT = {
+    0: "Seg",
+    1: "Ter",
+    2: "Qua",
+    3: "Qui",
+    4: "Sex",
+    5: "Sab",
+    6: "Dom",
+}
+
+
 def gerar_grafico_frequencia_cidades(
     tenant_id: str,
     data_inicial: str,
@@ -61,7 +72,40 @@ def gerar_grafico_frequencia_cidades(
     """
 
     df = pd.read_sql(query, conn, params=(tenant_id, data_inicial, data_final))
+
+    query_dias_semana = """
+        SELECT DISTINCT ec.cluster_cidade, ec.envio_data
+        FROM entregas_clusterizadas ec
+        JOIN resultados_simulacao r
+          ON ec.simulation_id = r.simulation_id
+         AND ec.k_clusters = r.k_clusters
+         AND ec.tenant_id = r.tenant_id
+         AND ec.envio_data = r.envio_data
+        WHERE ec.tenant_id = %s
+          AND ec.envio_data BETWEEN %s AND %s
+          AND r.is_ponto_otimo = TRUE
+    """
+    df_dias = pd.read_sql(query_dias_semana, conn, params=(tenant_id, data_inicial, data_final))
     conn.close()
+
+    top_cidades = df["cluster_cidade"].tolist()
+    dias_semana = []
+    if not df_dias.empty:
+        df_dias["envio_data"] = pd.to_datetime(df_dias["envio_data"])
+        df_dias["dia_semana_ordem"] = df_dias["envio_data"].dt.dayofweek
+        for ordem, rotulo in DIAS_SEMANA_PT.items():
+            df_dia = df_dias[df_dias["dia_semana_ordem"] == ordem]
+            contagem_por_cidade = df_dia.groupby("cluster_cidade").size().to_dict()
+            contagens = [
+                {"cluster_cidade": c, "qtd": int(contagem_por_cidade.get(c, 0))}
+                for c in top_cidades
+            ]
+            dias_semana.append({
+                "dia_semana_ordem": ordem,
+                "dia_semana": rotulo,
+                "total": int(sum(item["qtd"] for item in contagens)),
+                "contagens": contagens,
+            })
 
     hub_cidade = None
     if somente_hub_unico and not df.empty:
@@ -84,6 +128,7 @@ def gerar_grafico_frequencia_cidades(
             "csv": None,
             "dados": [],
             "contexto": contexto,
+            "dias_semana": [],
         }
 
     # 🔥 PADRÃO NOVO
@@ -116,6 +161,7 @@ def gerar_grafico_frequencia_cidades(
             "csv": filename_csv if os.path.exists(filename_csv) else None,
             "dados": df.to_dict(orient="records"),
             "contexto": contexto,
+            "dias_semana": dias_semana,
         }
 
     # =========================
@@ -167,4 +213,5 @@ def gerar_grafico_frequencia_cidades(
         "csv": filename_csv,
         "dados": df.to_dict(orient="records"),
         "contexto": contexto,
+        "dias_semana": dias_semana,
     }

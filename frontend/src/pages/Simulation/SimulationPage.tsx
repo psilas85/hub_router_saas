@@ -44,9 +44,12 @@ import {
     ResponsiveContainer,
     Label,
     Cell,
+    Legend,
 } from "recharts";
 
 import { getColorForString } from "@/utils/colors";
+
+const WEEKDAY_CHART_COLORS = ["#2563eb","#16a34a","#dc2626","#d97706","#7c3aed","#0891b2","#db2777","#65a30d","#b45309","#0f766e"];
 
 function formatKLabel(k: string | number) {
     return String(k) === "0" ? "Hub único" : String(k);
@@ -154,6 +157,15 @@ function DistributionKTooltip({ active, payload, label }: any) {
             <div className="text-slate-600">Venceu em {value} dia(s)</div>
             <div className="text-slate-500">{pct}% dos dias com cenário vencedor</div>
         </div>
+    );
+}
+
+function getWeekdayScenarioCount(
+    row: DistribuicaoKResponse["dias_semana"][number],
+    kClusters: number
+) {
+    return Number(
+        row.contagens.find((item) => Number(item.k_clusters) === Number(kClusters))?.qtd || 0
     );
 }
 
@@ -868,6 +880,8 @@ export default function SimulationPage() {
     // =========================
     const [distKData, setDistKData] =
         useState<DistribuicaoKResponse["dados"]>([]);
+    const [distKWeekdayData, setDistKWeekdayData] =
+        useState<DistribuicaoKResponse["dias_semana"]>([]);
     const [distKGraficoUrl, setDistKGraficoUrl] = useState<string | null>(null);
     const [loadingDistK, setLoadingDistK] = useState(false);
 
@@ -888,6 +902,20 @@ export default function SimulationPage() {
             data: distKData.map((item) => ({ ...item, total_qtd: totalDiasComVencedor })),
         };
     }, [distKData]);
+
+    const distKWeekdayTable = useMemo(() => {
+        if (!distKWeekdayData.length || !distKData.length) {
+            return [];
+        }
+
+        return distKWeekdayData.map((row) => ({
+            ...row,
+            valores: distKData.map((item) => ({
+                k_clusters: item.k_clusters,
+                qtd: getWeekdayScenarioCount(row, item.k_clusters),
+            })),
+        }));
+    }, [distKData, distKWeekdayData]);
 
     const periodoDistribuicaoDefault = useMemo(() => {
         // padrão: últimos 90 dias (limitado a 12 meses no backend)
@@ -923,11 +951,13 @@ export default function SimulationPage() {
                 data_final: df,
             });
             setDistKData(result.dados || []);
+            setDistKWeekdayData(result.dias_semana || []);
             setDistKGraficoUrl(result.grafico ? resolveUrl(result.grafico) : null);
             setDistKEmptyMessage(null);
             toast.success("Distribuição de k carregada!");
         } catch (err: any) {
             setDistKData([]);
+            setDistKWeekdayData([]);
             setDistKGraficoUrl(null);
             if (isNoDataResponse(err)) {
                 setDistKEmptyMessage("Nenhum cenário vencedor foi encontrado para o período selecionado.");
@@ -945,6 +975,8 @@ export default function SimulationPage() {
     // =========================
     const [freqCidadesData, setFreqCidadesData] =
         useState<FrequenciaCidadesResponse["dados"]>([]);
+    const [freqCidadesDiasSemanData, setFreqCidadesDiasSemanData] =
+        useState<FrequenciaCidadesResponse["dias_semana"]>([]);
     const [freqCidadesContexto, setFreqCidadesContexto] =
         useState<FrequenciaCidadesResponse["contexto"] | null>(null);
     const [freqCidadesGraficoUrl, setFreqCidadesGraficoUrl] = useState<string | null>(
@@ -980,6 +1012,20 @@ export default function SimulationPage() {
         };
     }, [freqCidadesContexto?.somente_hub_unico, freqCidadesData]);
 
+    const freqCidadesWeekdayChart = useMemo(() => {
+        if (!freqCidadesDiasSemanData.length || !freqCidadesData.length) return { data: [], topCidades: [] };
+        const topCidades = freqCidadesData.slice(0, 8).map((d) => d.cluster_cidade);
+        const data = freqCidadesDiasSemanData.map((row) => {
+            const entry: Record<string, string | number> = { dia: row.dia_semana };
+            for (const c of topCidades) {
+                const found = row.contagens.find((x) => x.cluster_cidade === c);
+                entry[formatCenterLabel(c)] = found?.qtd ?? 0;
+            }
+            return entry;
+        });
+        return { data, topCidades: topCidades.map(formatCenterLabel) };
+    }, [freqCidadesDiasSemanData, freqCidadesData]);
+
     const periodoCidadesDefault = useMemo(() => {
         const end =
             dataFinal && dataFinal >= (dataInicial || "")
@@ -1013,6 +1059,7 @@ export default function SimulationPage() {
                 data_final: df,
             });
             setFreqCidadesData(result.dados || []);
+            setFreqCidadesDiasSemanData(result.dias_semana || []);
             setFreqCidadesContexto(result.contexto || null);
             setFreqCidadesGraficoUrl(
                 result.grafico ? resolveUrl(result.grafico) : null
@@ -1024,6 +1071,7 @@ export default function SimulationPage() {
             toast.success("Frequência de cidades carregada!");
         } catch (err: any) {
             setFreqCidadesData([]);
+            setFreqCidadesDiasSemanData([]);
             setFreqCidadesContexto(null);
             setFreqCidadesGraficoUrl(null);
             setFreqCidadesCsvUrl(null);
@@ -2062,6 +2110,88 @@ export default function SimulationPage() {
                                     </ResponsiveContainer>
                                 </div>
 
+                                {distKWeekdayTable.length > 0 && (
+                                    <>
+                                        {/* Gráfico agrupado por dia da semana */}
+                                        <div className="mt-6 rounded-2xl border border-slate-200 overflow-hidden">
+                                            <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+                                                <h3 className="text-sm font-semibold text-slate-900">Frequência por dia da semana</h3>
+                                                <p className="mt-1 text-xs text-slate-600">
+                                                    Quantidade de vezes que cada cenário venceu em cada dia da semana no período.
+                                                </p>
+                                            </div>
+                                            <div className="p-4 w-full h-[320px]">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <RBarChart
+                                                        data={distKWeekdayTable.map((row) => ({
+                                                            dia: row.dia_semana,
+                                                            ...Object.fromEntries(
+                                                                row.valores.map((v) => [formatScenarioAxisLabel(v.k_clusters), v.qtd])
+                                                            ),
+                                                        }))}
+                                                        margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+                                                    >
+                                                        <CartesianGrid strokeDasharray="3 3" />
+                                                        <XAxis dataKey="dia" tickMargin={6} />
+                                                        <YAxis allowDecimals={false} tickMargin={6} />
+                                                        <Tooltip />
+                                                        <Legend />
+                                                        {distKData.map((item, i) => (
+                                                            <Bar
+                                                                key={`weekday-bar-${item.k_clusters}`}
+                                                                dataKey={formatScenarioAxisLabel(item.k_clusters)}
+                                                                fill={WEEKDAY_CHART_COLORS[i % WEEKDAY_CHART_COLORS.length]}
+                                                                radius={[3, 3, 0, 0]}
+                                                            />
+                                                        ))}
+                                                    </RBarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
+                                    <div className="mt-6 rounded-2xl border border-slate-200 overflow-hidden">
+                                        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+                                            <h3 className="text-sm font-semibold text-slate-900">Cenários vencedores por dia da semana</h3>
+                                            <p className="mt-1 text-xs text-slate-600">
+                                                A tabela cruza os dias da semana com os cenários vencedores para mostrar em quais dias cada configuração apareceu de segunda a domingo.
+                                            </p>
+                                        </div>
+
+                                        <div className="overflow-x-auto">
+                                            <table className="min-w-full text-sm">
+                                                <thead className="bg-slate-50 text-slate-600">
+                                                    <tr>
+                                                        <th className="px-4 py-3 text-left font-medium">Dia</th>
+                                                        {distKData.map((item) => (
+                                                            <th key={`weekday-header-${item.k_clusters}`} className="px-4 py-3 text-center font-medium whitespace-nowrap">
+                                                                {formatScenarioAxisLabel(item.k_clusters)}
+                                                            </th>
+                                                        ))}
+                                                        <th className="px-4 py-3 text-center font-medium">Total</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {distKWeekdayTable.map((row) => (
+                                                        <tr key={`weekday-row-${row.dia_semana_ordem}`} className="border-t border-slate-100">
+                                                            <td className="px-4 py-3 font-medium text-slate-900">{row.dia_semana}</td>
+                                                            {row.valores.map((item) => (
+                                                                <td
+                                                                    key={`weekday-cell-${row.dia_semana_ordem}-${item.k_clusters}`}
+                                                                    className={`px-4 py-3 text-center ${item.qtd > 0 ? "text-slate-900 font-semibold" : "text-slate-400"}`}
+                                                                >
+                                                                    {item.qtd}
+                                                                </td>
+                                                            ))}
+                                                            <td className="px-4 py-3 text-center font-semibold text-slate-900">{row.total}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    </>
+                                )}
+
                                 {distKGraficoUrl && (
                                     <div className="mt-4 text-right">
                                         <a
@@ -2216,6 +2346,40 @@ export default function SimulationPage() {
                                         </RBarChart>
                                     </ResponsiveContainer>
                                 </div>
+
+                                {/* Gráfico por dia da semana */}
+                                {freqCidadesWeekdayChart.data.length > 0 && (
+                                    <div className="mt-6 rounded-2xl border border-slate-200 overflow-hidden">
+                                        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+                                            <h3 className="text-sm font-semibold text-slate-900">Frequência de centros por dia da semana</h3>
+                                            <p className="mt-1 text-xs text-slate-600">
+                                                Quantidade de dias em que cada centro apareceu no cenário vencedor, agrupado por dia da semana (top 8 centros).
+                                            </p>
+                                        </div>
+                                        <div className="p-4 w-full h-[320px]">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <RBarChart
+                                                    data={freqCidadesWeekdayChart.data}
+                                                    margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+                                                >
+                                                    <CartesianGrid strokeDasharray="3 3" />
+                                                    <XAxis dataKey="dia" tickMargin={6} />
+                                                    <YAxis allowDecimals={false} tickMargin={6} />
+                                                    <Tooltip />
+                                                    <Legend />
+                                                    {freqCidadesWeekdayChart.topCidades.map((cidade, i) => (
+                                                        <Bar
+                                                            key={`centro-weekday-${cidade}`}
+                                                            dataKey={cidade}
+                                                            fill={WEEKDAY_CHART_COLORS[i % WEEKDAY_CHART_COLORS.length]}
+                                                            radius={[3, 3, 0, 0]}
+                                                        />
+                                                    ))}
+                                                </RBarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Links de download */}
                                 <div className="flex justify-between items-center mt-2">

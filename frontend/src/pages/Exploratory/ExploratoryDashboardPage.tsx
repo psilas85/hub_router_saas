@@ -383,8 +383,8 @@ function TemporalPanel({ d }: { d: TemporalDados }) {
         d.granularidade === "mensal"
             ? "mês"
             : d.granularidade === "anual"
-            ? "ano"
-            : "dia";
+                ? "ano"
+                : "dia";
 
     return (
         <div>
@@ -709,10 +709,10 @@ function GeograficoPanel({ d }: { d: GeograficoDados }) {
     const pctComCoord =
         d.total_com_coordenadas + d.total_sem_coordenadas > 0
             ? Math.round(
-                  (d.total_com_coordenadas /
-                      (d.total_com_coordenadas + d.total_sem_coordenadas)) *
-                      100
-              )
+                (d.total_com_coordenadas /
+                    (d.total_com_coordenadas + d.total_sem_coordenadas)) *
+                100
+            )
             : 0;
 
     return (
@@ -853,8 +853,8 @@ function CorrelacaoPanel({ d }: { d: CorrelacaoDados }) {
                                             {Math.abs(r) >= 0.7
                                                 ? "forte"
                                                 : Math.abs(r) >= 0.3
-                                                ? "moderada"
-                                                : "fraca"}
+                                                    ? "moderada"
+                                                    : "fraca"}
                                         </span>
                                     )}
                                 </div>
@@ -1148,11 +1148,10 @@ export default function ExploratoryDashboardPage({ embedded = false }: Explorato
                             <button
                                 key={tab.key}
                                 onClick={() => setActiveTab(tab.key)}
-                                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-                                    activeTab === tab.key
+                                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === tab.key
                                         ? "bg-white border border-b-white -mb-px text-blue-600 shadow-sm"
                                         : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
-                                }`}
+                                    }`}
                             >
                                 {tab.label}
                             </button>
