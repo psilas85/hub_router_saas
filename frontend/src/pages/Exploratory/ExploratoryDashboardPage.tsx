@@ -1006,7 +1006,11 @@ type TabKey = (typeof TABS)[number]["key"];
 
 // ─── main page ───────────────────────────────────────────────────────────────
 
-export default function ExploratoryDashboardPage() {
+type ExploratoryDashboardPageProps = {
+    embedded?: boolean;
+};
+
+export default function ExploratoryDashboardPage({ embedded = false }: ExploratoryDashboardPageProps) {
     const today = new Date().toISOString().split("T")[0];
     const sixMonthsAgo = new Date(Date.now() - 180 * 86400000).toISOString().split("T")[0];
 
@@ -1063,13 +1067,15 @@ export default function ExploratoryDashboardPage() {
     const hasData = resumo !== null;
 
     return (
-        <div className="p-5 max-w-6xl mx-auto">
-            <div className="mb-5">
-                <h1 className="text-2xl font-bold text-gray-800">Análise Exploratória</h1>
-                <p className="text-sm text-gray-400 mt-0.5">
-                    Diagnóstico completo da operação logística no período selecionado
-                </p>
-            </div>
+        <div className={embedded ? "max-w-6xl mx-auto px-6 pb-6" : "p-5 max-w-6xl mx-auto"}>
+            {!embedded ? (
+                <div className="mb-5">
+                    <h1 className="text-2xl font-bold text-gray-800">Explorador de Dados</h1>
+                    <p className="text-sm text-gray-400 mt-0.5">
+                        Diagnóstico completo da operação logística no período selecionado
+                    </p>
+                </div>
+            ) : null}
 
             {/* Filter bar */}
             <div className="flex flex-wrap gap-4 items-end bg-white border rounded-xl p-4 mb-5 shadow-sm">

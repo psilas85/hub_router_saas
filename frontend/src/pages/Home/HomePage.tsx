@@ -113,16 +113,16 @@ export default function HomePage() {
             {/* AÇÕES RÁPIDAS */}
             <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <ActionCard
-                    title="Upload de Dados"
-                    description="Envie o CSV e valide colunas."
+                    title="Entrada de Dados"
+                    description="Upload, acompanhamento e análise exploratória."
                     icon={<Upload className="h-5 w-5 text-emerald-600" />}
-                    onClick={() => navigate("/data-input")}
+                    onClick={() => navigate("/entrada-dados")}
                 />
                 <ActionCard
-                    title="Explorar Entregas (EDA)"
-                    description="Boxplots, rankings e mapas."
+                    title="Explorador de Dados"
+                    description="Resumo, rankings, mapas e qualidade dos dados."
                     icon={<Sparkles className="h-5 w-5 text-purple-600" />}
-                    onClick={() => navigate("/eda")}
+                    onClick={() => navigate("/entrada-dados/explorador")}
                 />
                 <ActionCard
                     title="Simulação"

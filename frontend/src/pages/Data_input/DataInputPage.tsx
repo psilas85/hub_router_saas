@@ -70,7 +70,11 @@ const DEFAULT_LIMITE_PESO = 15000;
 
 const isHistoricoManual = (item: Historico) => item.tipo_processamento === "manual";
 
-export default function DataInputPage() {
+type DataInputPageProps = {
+    embedded?: boolean;
+};
+
+export default function DataInputPage({ embedded = false }: DataInputPageProps) {
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [file, setFile] = useState<File | null>(null);
     const [modoForcar, setModoForcar] = useState(false);
@@ -456,16 +460,18 @@ export default function DataInputPage() {
     };
 
     return (
-        <div className="max-w-6xl mx-auto p-6 space-y-6">
-            <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-6 h-6 text-emerald-600" />
-                <div>
-                    <h1 className="text-2xl font-semibold text-gray-900">Data Input</h1>
-                    <p className="text-sm text-gray-500">
-                        Envie a planilha, acompanhe o processamento e baixe o resultado.
-                    </p>
+        <div className={embedded ? "max-w-6xl mx-auto px-6 pb-6 space-y-6" : "max-w-6xl mx-auto p-6 space-y-6"}>
+            {!embedded ? (
+                <div className="flex items-center gap-2">
+                    <FileSpreadsheet className="w-6 h-6 text-emerald-600" />
+                    <div>
+                        <h1 className="text-2xl font-semibold text-gray-900">Upload</h1>
+                        <p className="text-sm text-gray-500">
+                            Envie a planilha, acompanhe o processamento e baixe o resultado.
+                        </p>
+                    </div>
                 </div>
-            </div>
+            ) : null}
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 space-y-5">
                 <div className="space-y-3">

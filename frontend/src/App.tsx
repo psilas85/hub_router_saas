@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import HomePage from "@/pages/Home/HomePage";
 import LoginPage from "@/pages/Login/LoginPage";
 import DataInputPage from "@/pages/Data_input/DataInputPage";
+import DataWorkspacePage from "@/pages/Data_input/DataWorkspacePage";
 import ClusterizationPage from "@/pages/Clusterization/ClusterizationPage";
 import ClusterizationHubsPage from "@/pages/Clusterization/ClusterizationHubsPage";
 import ProfilePage from "@/pages/Profile/ProfilePage";
@@ -57,34 +58,35 @@ export default function App() {
             }
           />
 
-          {/* Exploratory (Streamlit via iframe) */}
           <Route
-            path="/exploratory_analysis_ui"
+            path="/entrada-dados"
             element={
               <ProtectedRoute>
                 <Layout>
-                  <ExploratoryDashboardPage />
+                  <DataWorkspacePage />
                 </Layout>
               </ProtectedRoute>
             }
+          >
+            <Route index element={<Navigate to="upload" replace />} />
+            <Route path="upload" element={<DataInputPage embedded />} />
+            <Route path="explorador" element={<ExploratoryDashboardPage embedded />} />
+          </Route>
+
+          <Route
+            path="/data-input"
+            element={<Navigate to="/entrada-dados/upload" replace />}
           />
-          {/* Alias curto para EDA */}
+          <Route
+            path="/exploratory_analysis_ui"
+            element={<Navigate to="/entrada-dados/explorador" replace />}
+          />
           <Route
             path="/eda"
-            element={<Navigate to="/exploratory_analysis_ui" replace />}
+            element={<Navigate to="/entrada-dados/explorador" replace />}
           />
 
           {/* Data Input & Clusterization */}
-          <Route
-            path="/data-input"
-            element={
-              <ProtectedRoute>
-                <Layout>
-                  <DataInputPage />
-                </Layout>
-              </ProtectedRoute>
-            }
-          />
           <Route
             path="/clusterization"
             element={
@@ -182,7 +184,7 @@ export default function App() {
             }
           />
           <Route
-            path="/simulation/hubs"
+            path="/simulation-admin/hubs"
             element={
               <ProtectedRoute>
                 <Layout>
@@ -192,7 +194,7 @@ export default function App() {
             }
           />
           <Route
-            path="/simulation/cluster_costs"
+            path="/simulation-admin/cluster_costs"
             element={
               <ProtectedRoute>
                 <Layout>
@@ -235,7 +237,7 @@ export default function App() {
           />
 
           <Route
-            path="/simulation/lastmile_vehicles"
+            path="/simulation-admin/lastmile_vehicles"
             element={
               <ProtectedRoute>
                 <Layout>
@@ -246,7 +248,7 @@ export default function App() {
           />
 
           <Route
-            path="/simulation/transfer_vehicles"
+            path="/simulation-admin/transfer_vehicles"
             element={
               <ProtectedRoute>
                 <Layout>

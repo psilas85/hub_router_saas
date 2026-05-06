@@ -110,7 +110,7 @@ export default function Navbar() {
         setOpen,
         children,
     }: {
-        title: string;
+        title: ReactNode;
         icon: ReactNode;
         open: boolean;
         setOpen: (v: boolean | ((p: boolean) => boolean)) => void;
@@ -165,29 +165,17 @@ export default function Navbar() {
 
             {/* Navegação */}
             <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
-                {/* Input de Dados (com badge de processamento) */}
                 <Item
-                    to="/data-input"
+                    to="/entrada-dados"
                     icon={<Upload size={16} />}
                     onClick={() => setDrawerOpen(false)}
                 >
                     <span className="flex items-center gap-2">
-                        Input de Dados
-                        {processing && (
-                            <span className="ml-2 text-xs text-amber-300 animate-pulse">
-                                ⏳
-                            </span>
-                        )}
+                        Entrada de Dados
+                        {processing ? (
+                            <span className="text-xs text-amber-300 animate-pulse">⏳</span>
+                        ) : null}
                     </span>
-                </Item>
-
-                {/* EDA */}
-                <Item
-                    to="/exploratory_analysis_ui"
-                    icon={<BarChart3 size={16} />}
-                    onClick={() => setDrawerOpen(false)}
-                >
-                    EDA
                 </Item>
 
                 {/* Clusterização */}
@@ -268,28 +256,28 @@ export default function Navbar() {
                         Processamento
                     </Item>
                     <Item
-                        to="/simulation/hubs"
+                        to="/simulation-admin/hubs"
                         icon={<span className="text-base leading-none">📍</span>}
                         onClick={() => setDrawerOpen(false)}
                     >
                         Cadastro de Hubs
                     </Item>
                     <Item
-                        to="/simulation/cluster_costs"
+                        to="/simulation-admin/cluster_costs"
                         icon={<span className="text-base leading-none">💰</span>}
                         onClick={() => setDrawerOpen(false)}
                     >
                         Custos de Centros
                     </Item>
                     <Item
-                        to="/simulation/lastmile_vehicles"
+                        to="/simulation-admin/lastmile_vehicles"
                         icon={<span className="text-base leading-none">🚐</span>}
                         onClick={() => setDrawerOpen(false)}
                     >
                         Veículos Last-Mile
                     </Item>
                     <Item
-                        to="/simulation/transfer_vehicles"
+                        to="/simulation-admin/transfer_vehicles"
                         icon={<span className="text-base leading-none">🚛</span>}
                         onClick={() => setDrawerOpen(false)}
                     >
